@@ -42,7 +42,7 @@ loads at runtime goes in `lib/<command-name>/` and is referenced as
 |---|---|---|---|
 | dsh | `$DSH_AGENTS_HOME ?? ~/.agents/skills` | `<repo>/.agents/skills` | **native** — no config |
 | Claude Code | `~/.claude/skills`, `~/.claude/commands` | `<repo>/.claude/skills` | symlink |
-| pi | `~/.agents/skills` **natively**; `~/.pi/agent/prompts` | ancestor `<dir>/.agents/skills` to the git root | native for skills, symlink for commands |
+| pi | `~/.agents/skills` **natively**; `~/.pi/agent/prompts` | ancestor `<dir>/.agents/skills` — **only in a trusted repo** | native for skills, symlink for commands |
 
 Verified against pi 0.84.1 (`dist/core/skills.js:330-334`, `dist/config.js:445`): it reads
 `<agentDir>/skills` and `<agentDir>/prompts`, **follows symlinks** for both skill dirs and
@@ -62,6 +62,12 @@ pi's system prompt on *every request of the agentic loop*, not once per user mes
 captured at the wire on 2026-08-31: one `pi -p` prompt produced **9 API requests, all 9
 carrying the block**. Skills are cheap to add and not free to keep. Which skills a given
 client sees is a filtering question, answered by tags (below) rather than by moving files.
+
+**One asymmetry to know about project scope.** dsh reads `<repo>/.agents/skills`
+unconditionally; pi puts it behind its project-trust gate (`~/.pi/agent/trust.json`),
+while treating the user-level `~/.agents/skills` as always trusted. So a headless
+`pi -p` in an untrusted repo sees global skills and silently no project ones — it
+cannot prompt for trust. Verified against both real agents on 2026-08-31.
 
 ## Scope, applicability, context
 
@@ -94,7 +100,7 @@ can be told — that part lives in the consuming repo
 | Harness | How the selection is applied |
 |---|---|
 | claude | `~/.claude/skills` points at a rendered **view** — a directory of symlinks. Claude has no exclude mechanism, so the directory is the filter. |
-| dsh | `$DSH_AGENTS_HOME` points at a rendered view root, same reason. |
+| dsh | `agentsHome` on its `skill-filesystem` row points at a rendered view root, same reason. Config rather than `$DSH_AGENTS_HOME`: an env var only reaches shells that export it, and a dsh started from a desktop entry or a unit was getting the whole tree. |
 | pi | No view is possible (it hardcodes `$HOME/.agents/skills`), so its own `!<glob>` **excludes** are generated instead. |
 
 Two consequences worth knowing. A tag exclusion is applied at *render* time, so an
