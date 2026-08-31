@@ -2,6 +2,7 @@
 description: Review a GitHub PR with two independent CLI reviewers (Claude Code and Codex) in parallel, then reconcile their findings into one evidence-backed consensus set.
 argument-hint: "<PR url or number> [— review instructions] [claude:<model>/<effort>] [codex:<model>/<effort>]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, WebFetch
+harness: [claude]
 ---
 
 # /dual-agent-pr-review

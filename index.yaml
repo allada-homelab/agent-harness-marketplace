@@ -51,8 +51,6 @@ entries:
   path: commands/dual-agent-pr-review.md
   harness:
   - claude
-  - dsh
-  - pi
   tags: []
   summary: Review a GitHub PR with two independent CLI reviewers (Claude Code and Codex) in parallel,
     then reconcile their findings into one evidence-backed consensus set.
