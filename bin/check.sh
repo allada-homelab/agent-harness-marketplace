@@ -34,7 +34,9 @@ print("  ok" if not bad else f"  {bad} problem(s)")
 sys.exit(1 if bad else 0)
 PY
 
-step "policy regexes compile under BOTH engines"
+step "every policy regex compiles under BOTH engines"
+# Both, every time: a pattern only one engine accepts would silently disable
+# the guard on the harnesses using the other.
 uv run --python 3.12 python - <<'PY' || fail=1
 import json, re
 d = json.load(open("policy/secrets.json"))
@@ -42,7 +44,9 @@ for p in d["deny_read_paths"]: re.compile(p["pattern"], re.I)
 for p in d["redaction"]["shape_patterns"]: re.compile(p["pattern"])
 re.compile(d["redaction"]["named_assignment"]["pattern"], re.I)
 re.compile(d["redaction"]["benign_value"]["pattern"], re.I)
-print("  python: ok")
+b = json.load(open("policy/bash.json"))
+for r in b["deny_bash"]: re.compile(r["pattern"])
+print(f"  python: ok ({len(b['deny_bash'])} bash rules)")
 PY
 node -e '
 const d = require("./policy/secrets.json");
@@ -50,7 +54,9 @@ for (const p of d.deny_read_paths) new RegExp(p.pattern, "i");
 for (const p of d.redaction.shape_patterns) new RegExp(p.pattern, "g");
 new RegExp(d.redaction.named_assignment.pattern, "gi");
 new RegExp(d.redaction.benign_value.pattern, "i");
-console.log("  node: ok");' || fail=1
+const b = require("./policy/bash.json");
+b.deny_bash.forEach((r) => new RegExp(r.pattern));
+console.log(`  node: ok (${b.deny_bash.length} bash rules)`);' || fail=1
 
 step "skill unit tests"
 uv run --with pytest --python 3.12 pytest -q tests/ || fail=1

@@ -17,12 +17,15 @@ which is also what installs the links below.
 ├── commands/<name>.md       # slash commands (Claude) / prompts (pi)
 ├── lib/<name>/…             # support assets for a command or skill (NOT auto-discovered)
 ├── policy/secrets.json      # credential policy every harness enforces
+├── policy/bash.json         # bash commands refused before they run
 ├── index.yaml               # generated catalog — who each thing is for
 └── hooks/<name>.py          # Claude hook contract; pi + dsh runners pending
 ```
 
-`policy/` holds enforcement *data*, not code: the credential patterns and
-deny-read paths that `claude/hooks/redact-secret-output.py`, pi's
+`policy/` holds enforcement *data*, not code. `bash.json` is the short,
+high-confidence list of unrecoverable commands refused before they run, compiled
+by pi's `bash-guard.ts` and the dsh `bash-guard` plugin. `secrets.json` holds the
+credential patterns and deny-read paths that `claude/hooks/redact-secret-output.py`, pi's
 `secret-guard.ts` and the dsh guard plugin all compile at runtime. They were
 transcribed by hand into each language before, which is exactly how they drifted
 — one copy knew `sk-example` was a placeholder and another did not. Regexes are
