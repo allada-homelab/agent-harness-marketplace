@@ -16,8 +16,20 @@ which is also what installs the links below.
 ├── skills/<name>/SKILL.md   # Agent Skills spec — all three harnesses
 ├── commands/<name>.md       # slash commands (Claude) / prompts (pi)
 ├── lib/<name>/…             # support assets for a command or skill (NOT auto-discovered)
+├── policy/secrets.json      # credential policy every harness enforces
+├── index.yaml               # generated catalog — who each thing is for
 └── hooks/<name>.py          # Claude hook contract; pi + dsh runners pending
 ```
+
+`policy/` holds enforcement *data*, not code: the credential patterns and
+deny-read paths that `claude/hooks/redact-secret-output.py`, pi's
+`secret-guard.ts` and the dsh guard plugin all compile at runtime. They were
+transcribed by hand into each language before, which is exactly how they drifted
+— one copy knew `sk-example` was a placeholder and another did not. Regexes are
+written in the Python∩JavaScript intersection (numbered groups, no verbose mode,
+`[\s\S]` instead of a dotall flag) so both engines take them unmodified, and
+every consumer fails **open and loud** if the file is missing: a redactor that
+wedges the tool loop is worse than the leak it prevents.
 
 `lib/` exists because every `*.md` under `commands/` is discovered as a command — a
 workflow file or prompt template placed there would register as one. Anything a command
