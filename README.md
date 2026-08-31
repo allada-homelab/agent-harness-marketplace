@@ -51,23 +51,44 @@ captured at the wire on 2026-08-31: one `pi -p` prompt produced **9 API requests
 carrying the block**. Skills are cheap to add and not free to keep. Which skills a given
 client sees is a filtering question, answered by tags (below) rather than by moving files.
 
-## Scope: location, not a flag
+## Scope, applicability, context
 
-Where a thing lives settles **scope**. `~/.agents/` is portable content; `<repo>/.agents/`
-is content *about that repo* — e.g. the setup repo's own `.agents/skills/` holds
-`harbor-evals` and `shift-enter-audit`, which only mean anything inside it.
+Three orthogonal questions, three different answers.
 
-What location does *not* settle is **harness applicability**, so frontmatter carries that
-and only that:
+**Scope is location.** `~/.agents/` is portable content; `<repo>/.agents/` is content
+*about that repo* — e.g. the setup repo's own `.agents/skills/` holds `harbor-evals` and
+`shift-enter-audit`, which only mean anything inside it.
+
+**Applicability and context are frontmatter**, on the skill or command itself:
 
 ```yaml
-harness: [claude]      # omitted ⇒ portable to every harness
+harness: [claude]        # who can use it. Omitted ⇒ every harness.
+tags: [homelab]          # what it is about. A client may exclude by tag.
 ```
 
-Today the marker is documentation — nothing filters on it. It is here because the
-constraint is real (`claude-transcript-*` read `~/.claude/projects`), and because the
-generators that will read it (a Claude plugin manifest, the pi/dsh hook runners) need it
-declared before they can.
+`index.yaml` collects both into one catalog so a client can select a subset without
+opening every file. It is **generated** — never hand-edit it:
+
+```sh
+uv run --script bin/agents-index.py --write     # regenerate after adding a skill
+uv run --script bin/agents-index.py --check     # fail if stale
+uv run --script bin/agents-index.py --select --harness pi --exclude-tag homelab
+```
+
+Selection is then materialized differently per harness, because they differ in what they
+can be told — that part lives in the consuming repo
+(`scripts/render-agent-views.py` in `.davidallada-developer-setup`):
+
+| Harness | How the selection is applied |
+|---|---|
+| claude | `~/.claude/skills` points at a rendered **view** — a directory of symlinks. Claude has no exclude mechanism, so the directory is the filter. |
+| dsh | `$DSH_AGENTS_HOME` points at a rendered view root, same reason. |
+| pi | No view is possible (it hardcodes `$HOME/.agents/skills`), so its own `!<glob>` **excludes** are generated instead. |
+
+Two consequences worth knowing. A tag exclusion is applied at *render* time, so an
+excluded skill never reaches the harness's context at all — that is the point for
+`homelab` on a work machine. And because views are symlink farms, editing a skill is live,
+while adding or removing one needs a re-render (any `bootstrap sync` does it).
 
 ## Hooks
 
@@ -86,9 +107,11 @@ ports at full strength.
 ## Adding something
 
 1. Pick the scope: portable → here; about one repo → that repo's `.agents/`.
-2. Add `harness:` only if it genuinely cannot run everywhere.
+2. Add `harness:` only if it genuinely cannot run everywhere; add `tags:` for anything a
+   machine might want to opt out of wholesale (`homelab` is the live example).
 3. Runtime assets → `lib/<name>/`, referenced as `~/.agents/lib/<name>/…`.
-4. Nothing to regenerate — dsh reads this tree directly and the other two are symlinked.
+4. `uv run --script bin/agents-index.py --write`, and commit the index with the skill.
+5. On each machine, `bootstrap sync` re-renders the views.
 
 Design record: `docs/superpowers/plans/2026-08-31-fleet-consolidation-analysis.md` in the
 setup repo.

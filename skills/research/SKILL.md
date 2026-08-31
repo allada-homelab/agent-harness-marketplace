@@ -3,6 +3,7 @@ name: research
 description: Run the research-before-acting ladder as an explicit step — scale depth to blast radius, fan out parallel read-only agents, and return a scope with a recommendation. Use when a task is unfamiliar, multi-file, or high-blast, or when choosing between options that are expensive to get wrong.
 argument-hint: "[what to research]"
 disable-model-invocation: true
+tags: [doctrine]
 ---
 
 Research: **$ARGUMENTS**

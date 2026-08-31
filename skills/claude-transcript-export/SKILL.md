@@ -4,6 +4,7 @@ description: Export Claude Code transcript JSONL out of the host and dev-contain
 context: fork
 background: false
 harness: [claude]
+tags: [observability]
 ---
 
 # claude-transcript-export

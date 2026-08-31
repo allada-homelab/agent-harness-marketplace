@@ -1,6 +1,7 @@
 ---
 name: pi-delegate
 description: Delegate a routine task to the pi.dev coding agent (running on the user's self-hosted open-weight LLM). Use when a task is well-defined and self-contained, when you want to save Anthropic credits/tokens on something simple, or as a fallback when the Anthropic API is down or rate-limited. Pi runs locally with a deliberately lean, injection-audited config (hash-anchored edits, tool repair, MCP proxy, guard extensions — see pi/README.md).
+tags: [homelab, delegation]
 ---
 
 # Pi delegate

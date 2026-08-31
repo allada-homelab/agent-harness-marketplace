@@ -4,6 +4,7 @@ description: Analyze exported Claude Code transcripts for hook fire rates, CLAUD
 context: fork
 background: false
 harness: [claude]
+tags: [observability]
 ---
 
 # claude-transcript-analyze
