@@ -122,6 +122,18 @@ continue; dsh's `agent/turn-stopping` returns `void` and pi's `turn_end` is obse
 Turn-level hooks therefore degrade to annotations off Claude. Every **tool-level** hook
 ports at full strength.
 
+## Checking it
+
+```sh
+bin/check.sh
+```
+
+Index currency, every skill against the strictest parser (dsh requires both `name`
+and `description` — it has no directory-name fallback), the policy regexes
+compiled under **both** engines, the skill unit tests, and a guard that no
+globally-scoped artifact references a path only the setup repo has. There is no
+CI here yet, so this is the gate; run it before pushing.
+
 ## Adding something
 
 1. Pick the scope: portable → here; about one repo → that repo's `.agents/`.

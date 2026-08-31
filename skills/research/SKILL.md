@@ -8,6 +8,13 @@ tags: [doctrine]
 
 Research: **$ARGUMENTS**
 
+<!-- $ARGUMENTS is substituted by Claude Code, which treats a `disable-model-invocation`
+     skill as user-invocable (/research <topic>). pi and dsh do NOT substitute inside a
+     SKILL.md — only prompt templates get placeholder expansion — so there the line
+     renders literally and the topic is whatever the caller said in their message.
+     Kept as a skill rather than moved to commands/ because dsh has no commands root
+     and would lose it entirely; the cost is a literal token on two harnesses. -->
+
 CLAUDE.md already carries the doctrine; this skill is the invocation. Follow it in order and don't skip the cheap rungs.
 
 ## 1. Check the cheap context first

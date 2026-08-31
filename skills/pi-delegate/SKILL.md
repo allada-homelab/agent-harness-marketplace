@@ -45,7 +45,7 @@ pi -p --mode json "<task>"
 
 ### Model selection
 
-`pi/models.json` defines 4 IDs — stable aliases, not fixed models. The backing model behind each alias changes server-side (llama-swap); this doc describes capability ORDERING, not architecture. For which model currently backs which alias, see `pi/README.md`'s dated backing-model table — that's the single source of truth, not this skill.
+`~/.davidallada-developer-setup/pi/models.json` defines 4 IDs — stable aliases, not fixed models. The backing model behind each alias changes server-side (llama-swap); this doc describes capability ORDERING, not architecture. For which model currently backs which alias, see `~/.davidallada-developer-setup/pi/README.md`'s dated backing-model table — that's the single source of truth, not this skill.
 
 | ID | Relative capability | Thinking |
 |---|---|---|
@@ -73,7 +73,7 @@ Thinking is selected by the alias suffix, server-side — `--thinking off` is in
 pi -p --model llama-swap/fast-default:no-think-agent "<task>"
 ```
 
-The default model is set in `pi/settings.json`.
+The default model is set in `~/.davidallada-developer-setup/pi/settings.json`.
 
 To pass file context like the main Claude does with `@`-mentions:
 
@@ -87,16 +87,16 @@ To make the call ephemeral, skip the session file with `--no-session`:
 pi -p --no-session "<task>"
 ```
 
-Sessions are otherwise archived as JSONL transcripts under the configured `sessionDir` (`~/.local/share/pi/sessions`, set in `pi/settings.json`) and kept for later export/analysis — so reserve `--no-session` for genuinely throwaway calls; a delegation you might want to review later should keep its session.
+Sessions are otherwise archived as JSONL transcripts under the configured `sessionDir` (`~/.local/share/pi/sessions`, set in `~/.davidallada-developer-setup/pi/settings.json`) and kept for later export/analysis — so reserve `--no-session` for genuinely throwaway calls; a delegation you might want to review later should keep its session.
 
 ## Pi's environment (what it can do)
 
-Pi runs the deliberately lean 2026-08-11 configuration (`pi/README.md` is authoritative):
+Pi runs the deliberately lean 2026-08-11 configuration (`~/.davidallada-developer-setup/pi/README.md` is authoritative):
 
-- **Two local guards** (`pi/extensions/`): shell-guard (heredocs blocked — put multi-line scripts in a file) and bash-guard (catastrophic bash blocked). No plan-mode, todo, or preset extensions exist anymore.
-- **Five pinned packages**: hash-anchored `read`/`edit` (LINE#HASH anchors — edits abort on stale anchors), pi-tool-repair, MCP adapter (coding-only subset — serena, plane, coder; arr/recipes/home-automation/label-gateway are disabled in `pi/mcp.json`), statusline, compact-transcript. The adapter is proxy-only via a single `mcp` tool (`mcpScript` is off via `scriptMode:false`). MCP is configured but does **not** attach under `pi -p` — init races the single request (see `pi/README.md`) — so never delegate a task needing serena/plane MCP to this skill.
+- **Two local guards** (`~/.davidallada-developer-setup/pi/extensions/`): shell-guard (heredocs blocked — put multi-line scripts in a file) and bash-guard (catastrophic bash blocked). No plan-mode, todo, or preset extensions exist anymore.
+- **Five pinned packages**: hash-anchored `read`/`edit` (LINE#HASH anchors — edits abort on stale anchors), pi-tool-repair, MCP adapter (coding-only subset — serena, plane, coder; arr/recipes/home-automation/label-gateway are disabled in `~/.davidallada-developer-setup/pi/mcp.json`), statusline, compact-transcript. The adapter is proxy-only via a single `mcp` tool (`mcpScript` is off via `scriptMode:false`). MCP is configured but does **not** attach under `pi -p` — init races the single request (see `~/.davidallada-developer-setup/pi/README.md`) — so never delegate a task needing serena/plane MCP to this skill.
 - **No subagents and no slash-command prompts** — they were removed 2026-08-11. Don't tell pi to use a scout/planner/worker or `/commit`-style commands; give it the task directly. For fresh-context review, `pi --print` sub-sessions.
-- **No shared skills and no claude-derived system prompt** — pi is self-contained; its only doctrine is the ~20-line `pi/APPEND_SYSTEM.md`. Anything pi must know goes in your prompt.
+- **No shared skills and no claude-derived system prompt** — pi is self-contained; its only doctrine is the ~20-line `~/.davidallada-developer-setup/pi/APPEND_SYSTEM.md`. Anything pi must know goes in your prompt.
 
 ## Output handling
 
