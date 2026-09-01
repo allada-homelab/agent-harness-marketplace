@@ -1,0 +1,36 @@
+# The gate that used to run only when someone remembered.
+#
+# bin/check.sh is the whole contract: index currency, every skill against the
+# STRICTEST parser (dsh requires name and description — it has no directory-name
+# fallback), every policy regex compiled under BOTH Python and JavaScript, the
+# conformance corpus's internal consistency, the skill unit tests, and a guard
+# against a globally-scoped artifact citing a path only the setup repo has.
+#
+# Both engines matter: a pattern only one accepts would silently disable a guard
+# on the harnesses using the other, and that failure is invisible at runtime
+# because every consumer fails OPEN by design.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.5.x'
+
+      - name: bin/check.sh
+        run: ./bin/check.sh

@@ -152,8 +152,10 @@ bin/check.sh
 Index currency, every skill against the strictest parser (dsh requires both `name`
 and `description` — it has no directory-name fallback), the policy regexes
 compiled under **both** engines, the skill unit tests, and a guard that no
-globally-scoped artifact references a path only the setup repo has. There is no
-CI here yet, so this is the gate; run it before pushing.
+globally-scoped artifact references a path only the setup repo has. It also runs in CI on every push and pull request
+(.github/workflows/check.yml) — run it locally before pushing anyway, since the
+failure it catches is invisible at runtime: every consumer of these policies fails
+OPEN by design.
 
 ## Adding something
 
