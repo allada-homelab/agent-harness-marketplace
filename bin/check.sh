@@ -37,26 +37,47 @@ PY
 step "every policy regex compiles under BOTH engines"
 # Both, every time: a pattern only one engine accepts would silently disable
 # the guard on the harnesses using the other.
-uv run --python 3.12 python - <<'PY' || fail=1
+uv run --python 3.12 python - <<'PYCHK' || fail=1
 import json, re
-d = json.load(open("policy/secrets.json"))
-for p in d["deny_read_paths"]: re.compile(p["pattern"], re.I)
-for p in d["redaction"]["shape_patterns"]: re.compile(p["pattern"])
-re.compile(d["redaction"]["named_assignment"]["pattern"], re.I)
-re.compile(d["redaction"]["benign_value"]["pattern"], re.I)
+s = json.load(open("policy/secrets.json"))
+for d in s["deny_read_paths"]: re.compile(d["pattern"], re.I)
+for r in s["redaction"]["rules"]:
+    re.compile(r["pattern"])
+    assert r["keywords"], f"{r['id']}: no keyword prefilter — it would run on every scan"
+re.compile(s["redaction"]["named_assignment"]["pattern"], re.I)
+re.compile(s["redaction"]["benign_value"]["pattern"], re.I)
 b = json.load(open("policy/bash.json"))
 for r in b["deny_bash"]: re.compile(r["pattern"])
-print(f"  python: ok ({len(b['deny_bash'])} bash rules)")
-PY
+print(f"  python: ok ({len(s['redaction']['rules'])} secret rules, {len(b['deny_bash'])} bash rules)")
+PYCHK
 node -e '
-const d = require("./policy/secrets.json");
-for (const p of d.deny_read_paths) new RegExp(p.pattern, "i");
-for (const p of d.redaction.shape_patterns) new RegExp(p.pattern, "g");
-new RegExp(d.redaction.named_assignment.pattern, "gi");
-new RegExp(d.redaction.benign_value.pattern, "i");
+const s = require("./policy/secrets.json");
+for (const d of s.deny_read_paths) new RegExp(d.pattern, "i");
+for (const r of s.redaction.rules) new RegExp(r.pattern, "g");
+new RegExp(s.redaction.named_assignment.pattern, "gi");
+new RegExp(s.redaction.benign_value.pattern, "i");
 const b = require("./policy/bash.json");
 b.deny_bash.forEach((r) => new RegExp(r.pattern));
-console.log(`  node: ok (${b.deny_bash.length} bash rules)`);' || fail=1
+console.log(`  node: ok (${s.redaction.rules.length} secret rules, ${b.deny_bash.length} bash rules)`);' || fail=1
+
+step "the conformance corpus is internally consistent"
+uv run --python 3.12 python - <<'PYCOR' || fail=1
+import json
+c = json.load(open("policy/testcases.json"))
+ids = {r["id"] for r in json.load(open("policy/secrets.json"))["redaction"]["rules"]}
+bad = 0
+for case in c["redact"]:
+    if case["rule"] not in ids:
+        print(f"  FAIL redact case names unknown rule {case['rule']!r}"); bad += 1
+redact_inputs = {case["input"] for case in c["redact"]}
+for case in c["allow"]:
+    if case["input"] in redact_inputs:
+        print(f"  FAIL {case['input'][:40]!r} is in BOTH redact and allow"); bad += 1
+    if not case.get("why"):
+        print(f"  FAIL allow case has no stated reason: {case['input'][:40]!r}"); bad += 1
+print(f"  ok ({len(c['redact'])} redact, {len(c['allow'])} allow)" if not bad else f"  {bad} problem(s)")
+raise SystemExit(1 if bad else 0)
+PYCOR
 
 step "skill unit tests"
 uv run --with pytest --python 3.12 pytest -q tests/ || fail=1

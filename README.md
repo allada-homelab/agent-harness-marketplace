@@ -16,13 +16,27 @@ which is also what installs the links below.
 ├── skills/<name>/SKILL.md   # Agent Skills spec — all three harnesses
 ├── commands/<name>.md       # slash commands (Claude) / prompts (pi)
 ├── lib/<name>/…             # support assets for a command or skill (NOT auto-discovered)
-├── policy/secrets.json      # credential policy every harness enforces
+├── policy/secrets.json      # 52 credential detection rules
+├── policy/testcases.json    # conformance corpus all three engines must pass
 ├── policy/bash.json         # bash commands refused before they run
 ├── index.yaml               # generated catalog — who each thing is for
 └── hooks/<name>.py          # Claude hook contract; pi + dsh runners pending
 ```
 
-`policy/` holds enforcement *data*, not code. `bash.json` is the short,
+`policy/` holds enforcement *data*, not code — and `testcases.json` is what makes
+that hold. Rules can be shared as data, but the matching **engine** has to be
+written once per language, so a shared corpus is the only thing that stops three
+implementations drifting in behaviour: every one of them runs those cases in its
+own test suite.
+
+`secrets.json` follows the Gitleaks rule shape — regex, a literal `keywords`
+prefilter (the regex only runs when a keyword is present, which is what makes a
+52-rule catalog affordable on every tool result), an optional Shannon-entropy
+floor, an allowlist, and an optional `secret_group` so a connection string keeps
+its host and loses only its password. It is deliberately **stage 1**:
+prefix-anchored vendor tokens plus structural indicators (PEM blocks, JWTs,
+credentials in URLs, `.netrc`). Generic high-entropy rules are the highest
+false-positive class in every scanner and are not shipped. `bash.json` is the short,
 high-confidence list of unrecoverable commands refused before they run, compiled
 by pi's `bash-guard.ts` and the dsh `bash-guard` plugin. `secrets.json` holds the
 credential patterns and deny-read paths that `claude/hooks/redact-secret-output.py`, pi's
