@@ -6,6 +6,13 @@
   "description": "Run the research-before-acting ladder as an explicit step and return a scope with a recommendation.",
   "license": "MIT",
   "pi": {
-    "skills": ["skills/*"]
+    "skills": [
+      "skills/*"
+    ]
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }

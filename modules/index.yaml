@@ -7,6 +7,7 @@ modules:
   version: 0.1.0
   kinds:
   - skills
+  - dsh-plugin
   harness:
   - claude
   description: Export Claude Code transcripts out of dev containers and analyze hook fire rates, CLAUDE.md
@@ -44,6 +45,7 @@ modules:
   version: 0.1.0
   kinds:
   - skills
+  - dsh-plugin
   harness:
   - claude
   description: Review a GitHub PR with Claude Code and Codex in parallel, then reconcile their findings
@@ -61,6 +63,7 @@ modules:
   version: 0.1.0
   kinds:
   - skills
+  - dsh-plugin
   harness:
   - claude
   - pi
@@ -84,6 +87,7 @@ modules:
   version: 0.1.0
   kinds:
   - skills
+  - dsh-plugin
   harness:
   - claude
   description: 'The Claude Code face of get-shit-done: /get-shit-done-claude:run drives the checked Workflow
@@ -119,6 +123,7 @@ modules:
   version: 0.1.0
   kinds:
   - skills
+  - dsh-plugin
   harness:
   - claude
   - pi
@@ -141,6 +146,7 @@ modules:
   version: 0.1.0
   kinds:
   - skills
+  - dsh-plugin
   harness:
   - claude
   - pi

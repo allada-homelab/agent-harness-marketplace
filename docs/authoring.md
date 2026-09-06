@@ -5,8 +5,9 @@
 ```
 modules/<name>/
   .claude-plugin/plugin.json   # Claude: {name, version, description, author, license} — name == directory
-  package.json                 # every module: {"name": "@allada-homelab/<name>", "version", "pi": {…}}
-                               #   + "dsh": {"bundle": {"patch": "./cordis.patch.yml"}} on dsh code modules
+  package.json                 # every module: {"name": "@allada-homelab/<name>", "version", "pi": {…},
+                               #   "dsh": {"bundle": {"patch": "./cordis.patch.yml"}}} — content modules too,
+                               #   or dsh installs the package as a plain dependency and ignores the patch
   cordis.patch.yml             # dsh loader rows; a content module inserts one dsh-module-skills row
   skills/<skill>/SKILL.md      # THE shared content — commands are skills
   extensions/<n>.ts            # pi adapter (optional; event-only, no registerTool)

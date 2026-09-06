@@ -6,6 +6,13 @@
   "description": "A pragmatic, anti-over-engineering pull-request reviewer with a warm, Socratic voice.",
   "license": "MIT",
   "pi": {
-    "skills": ["skills/*"]
+    "skills": [
+      "skills/*"
+    ]
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }

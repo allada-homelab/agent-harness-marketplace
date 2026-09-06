@@ -6,6 +6,13 @@
   "description": "Review a GitHub PR with Claude Code and Codex in parallel, then reconcile their findings into one consensus set.",
   "license": "MIT",
   "pi": {
-    "skills": ["skills/*"]
+    "skills": [
+      "skills/*"
+    ]
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }
