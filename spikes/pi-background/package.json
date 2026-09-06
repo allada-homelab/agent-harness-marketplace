@@ -1,0 +1,10 @@
+{
+  "name": "@spike/pi-background",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MEASUREMENT SPIKE — spawn a detached `pi -p` child from agent_settled and inject its result. Not a marketplace module.",
+  "pi": {
+    "extensions": ["extensions/*.ts"]
+  },
+  "license": "MIT"
+}
