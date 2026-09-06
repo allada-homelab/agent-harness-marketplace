@@ -76,7 +76,7 @@
           "event": "tools/pre-execute",
           "name": "read",
           "args": {
-            "path": "/tmp/x.txt"
+            "file_path": "/tmp/x.txt"
           }
         }
       },
@@ -119,7 +119,7 @@
           "event": "tools/pre-execute",
           "name": "read",
           "args": {
-            "path": "/tmp/x.txt"
+            "file_path": "/tmp/x.txt"
           }
         }
       },
@@ -769,7 +769,7 @@
           "event": "tools/pre-execute",
           "name": "write",
           "args": {
-            "path": "/tmp/a.txt",
+            "file_path": "/tmp/a.txt",
             "content": "hello"
           }
         }
@@ -820,7 +820,7 @@
           "event": "tools/pre-execute",
           "name": "edit",
           "args": {
-            "path": "/tmp/a.txt",
+            "file_path": "/tmp/a.txt",
             "old_string": "a",
             "new_string": "b"
           }
@@ -877,7 +877,7 @@
           "event": "tools/pre-execute",
           "name": "edit",
           "args": {
-            "path": "/tmp/a.txt",
+            "file_path": "/tmp/a.txt",
             "old_string": "a",
             "new_string": "b"
           }

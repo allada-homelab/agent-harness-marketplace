@@ -25,8 +25,8 @@ export function isSkillName(name) {
  * @returns {boolean | undefined | null} the value, `undefined` when absent, or
  *   `null` when present but not boolean-shaped (the caller drops the skill).
  */
-function frontmatterBoolean(data, key) {
-  if (!Object.hasOwn(data, key)) return undefined;
+export function frontmatterBoolean(data, key) {
+  if (data === null || typeof data !== 'object' || !Object.hasOwn(data, key)) return undefined;
   const value = data[key];
   if (typeof value === 'boolean') return value;
   if (value === 1 || value === '1') return true;

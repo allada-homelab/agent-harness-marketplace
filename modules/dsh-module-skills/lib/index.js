@@ -20,9 +20,12 @@
  * `ctx.logger` does not reach journald on a service-managed dsh.
  */
 
+import { randomUUID } from 'node:crypto';
+import { readdirSync, watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { resolveRoots } from './roots.js';
-import { scanRoot, parseSkill } from './skills.js';
+import { scanRoot, parseSkill, frontmatterBoolean } from './skills.js';
 import { expandArguments, usesArguments } from './expand.js';
 
 export const name = 'module-skills';
@@ -45,6 +48,14 @@ const PROVIDER = 'module-skills';
  */
 const SOURCE = 'custom';
 const RANK = 600;
+
+/**
+ * How long a burst of filesystem events is allowed to settle before the
+ * catalog is invalidated. An editor writing a SKILL.md, or `dsh plugin add`
+ * unpacking a module, produces dozens of events; one rescan per burst is the
+ * point of the delay.
+ */
+const WATCH_DEBOUNCE_MS = 300;
 
 /** One-line failure reporting on the channel a service manager actually sees. */
 function warn(message) {
@@ -71,11 +82,20 @@ export function apply(ctx, config = {}) {
   // provider name within a layer, and per-root isolation is a property of the
   // scan loop below (a failing root drops itself), not of the registration.
   try {
-    ctx.skills.registerProvider(() => ({
-      name: provider,
-      list: () => listCandidates(roots, provider),
-      get: (candidate) => loadCandidate(candidate, provider),
-    }));
+    ctx.skills.registerProvider((control) => {
+      // `control.invalidate` drops the completed catalogs and notifies
+      // consumers; `control.signal` aborts when THIS registration is disposed
+      // (@deepseek-ai/dsh-skill lib/types/index.d.ts:190-195), which is the
+      // watcher's cleanup seam.
+      const stop = watchRoots(roots, () => control?.invalidate?.(), warn);
+      if (control?.signal?.aborted) stop();
+      else control?.signal?.addEventListener?.('abort', stop, { once: true });
+      return {
+        name: provider,
+        list: () => listCandidates(roots, provider),
+        get: (candidate) => loadCandidate(candidate, provider),
+      };
+    });
   } catch (error) {
     warn(`provider registration failed, no module skills are visible: ${String(error)}`);
     return;
@@ -88,6 +108,82 @@ export function apply(ctx, config = {}) {
   return registerCommands(ctx, roots).catch((error) => {
     warn(`command registration failed: ${String(error)}`);
   });
+}
+
+/**
+ * Watch every root so a skill added after boot appears without a restart.
+ *
+ * `fs.watch` recursive is not available on every platform, so a root that
+ * refuses it falls back to watching the root plus each bundle directory —
+ * enough to see a new bundle appear and a SKILL.md change inside an existing
+ * one. Watching is a convenience, never a requirement: a root that cannot be
+ * watched costs one stderr line and keeps its skills, which still refresh
+ * whenever dsh rebuilds the catalog for its own reasons.
+ *
+ * @param {string[]} roots - resolved skill roots.
+ * @param {() => void} onChange - debounced invalidation callback.
+ * @param {(message: string) => void} warn - one-line failure reporter.
+ * @param {number} [debounceMs] - settle window; the default is {@link WATCH_DEBOUNCE_MS}.
+ * @returns {() => void} an idempotent disposer.
+ */
+export function watchRoots(roots, onChange, warn, debounceMs = WATCH_DEBOUNCE_MS) {
+  const watchers = [];
+  let timer;
+
+  const fire = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = undefined;
+      try {
+        onChange();
+      } catch (error) {
+        warn(`skill catalog invalidation failed: ${String(error)}`);
+      }
+    }, debounceMs);
+    // A pending rescan must never be the reason the process stays alive.
+    timer.unref?.();
+  };
+
+  /** Attach one watcher; a later watcher error must not become an unhandled throw. */
+  const attach = (path, options) => {
+    const watcher = watch(path, { persistent: false, ...options }, fire);
+    watcher.on('error', (error) => warn(`skill root ${path} is no longer watched: ${String(error)}`));
+    watchers.push(watcher);
+  };
+
+  for (const root of roots) {
+    try {
+      attach(root, { recursive: true });
+      continue;
+    } catch (error) {
+      if (error?.code !== 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM') {
+        warn(`skill root ${root} is not watched, a new skill needs a restart: ${String(error)}`);
+        continue;
+      }
+    }
+    try {
+      attach(root, {});
+      for (const entry of readdirSync(root, { withFileTypes: true, encoding: 'utf8' })) {
+        if (entry.isDirectory() || entry.isSymbolicLink()) attach(join(root, entry.name), {});
+      }
+    } catch (error) {
+      warn(`skill root ${root} is not watched, a new skill needs a restart: ${String(error)}`);
+    }
+  }
+
+  let stopped = false;
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    clearTimeout(timer);
+    for (const watcher of watchers) {
+      try {
+        watcher.close();
+      } catch {
+        /* already closed */
+      }
+    }
+  };
 }
 
 /** Scan every root once and build the merged candidate list. */
@@ -164,10 +260,37 @@ async function loadCandidate(candidate, provider = PROVIDER) {
  * adding any. A body containing `$ARGUMENTS` or `$N` is the case dsh cannot
  * serve, because nothing in its slash path substitutes anything.
  *
+ * Token detection is a heuristic — `$5 million` in prose is indistinguishable
+ * from a positional argument — so `metadata.dsh-command` overrides it in both
+ * directions. See {@link wantsCommand}.
+ *
  * @param {object} ctx - the cordis context.
  * @param {string[]} roots - resolved skill roots.
- * @param {Function} [factory] - dsh's `createUserMessage`; imported when omitted.
+ * @param {Function} [factory] - message factory; {@link createUserMessage} when omitted.
  */
+/**
+ * Whether this skill should get a `/name` command.
+ *
+ * `metadata.dsh-command` is authoritative in both directions: `false` keeps a
+ * skill off the command surface even though its prose happens to contain
+ * `$5 million`, and `true` registers one even though the body has no token —
+ * the case where the author wants the argument string appended rather than
+ * substituted. `metadata` is the portable frontmatter key every harness
+ * carries through untouched, so an opt-out costs a skill nothing elsewhere.
+ * Absent (or unparsable, which is one loud line), token detection decides.
+ *
+ * @param {object} skill - a parsed skill.
+ * @returns {boolean} whether to register a command for it.
+ */
+export function wantsCommand(skill) {
+  const declared = frontmatterBoolean(skill.metadata, 'dsh-command');
+  if (declared === true || declared === false) return declared;
+  if (declared === null) {
+    warn(`skill ${skill.name}: metadata.dsh-command must be true or false; falling back to token detection`);
+  }
+  return usesArguments(skill.content);
+}
+
 export async function registerCommands(ctx, roots, factory) {
   const commands = ctx.get?.('commands') ?? ctx.commands;
   if (commands?.register === undefined) return;
@@ -182,7 +305,7 @@ export async function registerCommands(ctx, roots, factory) {
       continue;
     }
     for (const skill of found) {
-      if (!skill.invocation.userInvocable || !usesArguments(skill.content)) continue;
+      if (!skill.invocation.userInvocable || !wantsCommand(skill)) continue;
       if (claimed.has(skill.name)) {
         warn(`command /${skill.name} from ${skill.path} skipped: that name is already registered`);
         continue;
@@ -193,14 +316,7 @@ export async function registerCommands(ctx, roots, factory) {
   }
   if (wanted.length === 0) return;
 
-  // `Agent.followup` takes an IDENTIFIED, frozen message; only dsh can mint one
-  // (`createUserMessage` stamps `id`/`role`, and the inbox rejects a message
-  // without an identity). dsh-llm is resolvable from any profile through the
-  // flat fallback `<dshHome>/profiles/node_modules`, but it is not a declared
-  // dependency of this package, so the import is dynamic and its absence costs
-  // only the commands — the provider above still publishes every skill.
-  const createUserMessage = factory ?? await importCreateUserMessage();
-  if (createUserMessage === undefined) return;
+  const mint = factory ?? createUserMessage;
 
   for (const skill of wanted) {
     try {
@@ -208,7 +324,7 @@ export async function registerCommands(ctx, roots, factory) {
         name: skill.name,
         description: skill.description,
         ...skill.argumentHint !== undefined ? { input: { hint: skill.argumentHint } } : {},
-        handler: (invocation) => runSkillCommand(skill, invocation, createUserMessage),
+        handler: (invocation) => runSkillCommand(skill, invocation, mint),
       });
     } catch (error) {
       // dsh owns the global command namespace; a collision is its call, not
@@ -218,16 +334,23 @@ export async function registerCommands(ctx, roots, factory) {
   }
 }
 
-/** Borrow dsh's own message factory; `undefined` when it is not resolvable. */
-async function importCreateUserMessage() {
-  try {
-    const { createUserMessage } = await import('@deepseek-ai/dsh-llm');
-    if (typeof createUserMessage === 'function') return createUserMessage;
-    warn('commands disabled: @deepseek-ai/dsh-llm exports no createUserMessage');
-  } catch (error) {
-    warn(`commands disabled: @deepseek-ai/dsh-llm is not resolvable: ${String(error)}`);
-  }
-  return undefined;
+/**
+ * An identified, frozen user message in dsh's shape — built here, not imported.
+ *
+ * `Agent.followup` rejects a message without an identity, and dsh's own
+ * `createUserMessage` adds exactly `role: 'user'` and `id: randomUUID()`
+ * before freezing (`@deepseek-ai/dsh-llm` lib/index.js:157-176). Importing it
+ * is not portable: a `link:` or repo-resident install has no resolution path
+ * to `@deepseek-ai/dsh-llm`, so the dynamic import failed and every command
+ * silently disappeared — the exact failure this replaces. Minting the id here
+ * costs one uuid and works from any install shape. This is the same message
+ * shape `hook-runner-dsh` emits (its `pluginMessage`).
+ *
+ * @param {object} input - `{content, source}`.
+ * @returns {object} the frozen user message.
+ */
+export function createUserMessage(input) {
+  return Object.freeze({ ...input, id: randomUUID(), role: 'user' });
 }
 
 /**

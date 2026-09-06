@@ -80,6 +80,9 @@ one at runtime.
 Tool-name translation (native → Claude): pi `bash→Bash read→Read write→Write
 edit→Edit grep→Grep find/glob→Glob`; dsh `bash→Bash read→Read write→Write
 edit→Edit grep→Grep glob→Glob`. Everything else keeps its native name.
+Argument names: dsh's file tools already use Claude's spelling (`file_path`,
+`old_string`, `new_string`, `content`, `pattern`, `path`), so only pi's `path` /
+`edits[{oldText,newText}]` need translating.
 
 ## Corpus
 

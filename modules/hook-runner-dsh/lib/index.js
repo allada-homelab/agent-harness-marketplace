@@ -61,7 +61,13 @@ function pluginMessage(text, summary) {
   });
 }
 
-/** The tool's text output as a string — what the contract puts in `tool_response`. */
+/**
+ * What the contract puts in `tool_response`: the tool's text output as a
+ * string, else the NATIVE result serialized as JSON. Handing a hook the raw
+ * object instead would make the field's type depend on the tool — a hook that
+ * does `.strip()` on a `grep` response but not on a `glob` one is a hook the
+ * contract cannot describe.
+ */
 export function toolResponseFor(result) {
   if (typeof result === "string") return result;
   if (result === null || result === undefined) return "";
@@ -72,8 +78,12 @@ export function toolResponseFor(result) {
       .join("");
     if (text) return text;
   }
-  if (result?.value !== undefined) return result.value;
-  return result;
+  if (typeof result?.value === "string") return result.value;
+  try {
+    return JSON.stringify(result) ?? "";
+  } catch {
+    return String(result);
+  }
 }
 
 /** The newest human prompt among the messages entering a step, if any. */
@@ -101,11 +111,16 @@ export function apply(ctx, config = {}) {
   const profileDir = config.profileDir ?? findProfileDir(selfDir);
   const loaded = loadManifests({ manifests: config.manifests ?? [], profileDir, warn });
 
-  // One state record per session. `latest` is what the system-prompt providers
-  // read: `AssembleContext` (@deepseek-ai/dsh-system-prompt
-  // lib/types/index.d.ts:37) carries no session, and a dsh process drives one
-  // interactive session, so the assembly that follows a step belongs to the
-  // session that step belongs to.
+  // One state record per session, delivered per session.
+  //
+  // `AssembleContext.scope` (@deepseek-ai/dsh-system-prompt
+  // lib/types/index.d.ts:37) is an opaque `ScopeKey`, but dsh-agent mints the
+  // agent itself as its own key (`scope: agent`, @deepseek-ai/dsh-agent
+  // lib/index.js:387, carrier `scopeTarget(agent, agent)` :324) and an agent's
+  // id IS its session id (`agent.id !== agent.session.id` throws, :603). So the
+  // assembly names its session, and the `agent/pre-step` payload's agent names
+  // the same one — two interleaved sessions cannot read each other's context.
+  // `latest` remains only as the fallback for an assembly with no usable scope.
   const states = new Map();
   let latest = null;
   const stateFor = (session) => {
@@ -165,6 +180,14 @@ export function apply(ctx, config = {}) {
   // the step (@deepseek-ai/dsh-agent lib/types/runtime-types.d.ts:235), so the
   // handlers finish BEFORE the assembly that must show their text. The
   // `systemPrompt.context` provider below is then a pure read.
+  // Bound the per-session state: dsh emits `session/disposed` (dsh-session
+  // lib/types/index.d.ts:54) when a session is torn down.
+  ctx.on("session/disposed", (session) => {
+    const key = session?.id ?? "default";
+    if (states.get(key) === latest) latest = null;
+    states.delete(key);
+  });
+
   ctx.on("agent/pre-step", async (payload, next) => {
     const state = stateFor(payload?.agent?.session);
     try {
@@ -182,15 +205,37 @@ export function apply(ctx, config = {}) {
     return next();
   });
 
+  /** The session an assembly belongs to, read off its scope key; null if unreadable. */
+  const assemblySessionId = (assembleContext) => {
+    const scope = assembleContext?.scope;
+    const id = scope?.session?.id ?? scope?.id;
+    return typeof id === "string" && id ? id : null;
+  };
+
+  // Once per process, not once per assembly: an unscoped assembly recurs every
+  // turn, and a line per turn would bury the loud lines that matter.
+  let warnedUnscoped = false;
+
+  /** Deliver one state field to the assembly that owns it. */
+  const deliver = (field) => (assembleContext) => {
+    const key = assemblySessionId(assembleContext);
+    if (key !== null) return states.get(key)?.[field] ?? "";
+    if (!warnedUnscoped) {
+      warnedUnscoped = true;
+      warn("a prompt assembly carried no readable session scope; hook context falls back to the most recent session, which can cross sessions");
+    }
+    return latest?.[field] ?? "";
+  };
+
   ctx.systemPrompt?.context({
     name: `${PLUGIN}:session-start`,
     order: 90,
-    text: () => latest?.sessionStartText ?? "",
+    text: deliver("sessionStartText"),
   });
   ctx.systemPrompt?.context({
     name: `${PLUGIN}:user-prompt-submit`,
     order: 91,
-    text: () => latest?.promptText ?? "",
+    text: deliver("promptText"),
   });
 
   /* ── PreToolUse ───────────────────────────────────────────────────────── */

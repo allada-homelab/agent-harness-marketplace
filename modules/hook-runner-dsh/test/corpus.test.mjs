@@ -107,34 +107,25 @@ function readEcho(echoPath) {
   }
 }
 
-/** Assert every key/value the corpus says the handler must have received. */
+/** What this case says the dsh handler must have received, if anything. */
+const stdinExpectationsFor = (kase) => kase.stdin_by_harness?.dsh ?? kase.stdin ?? null;
+
+/**
+ * Assert every key/value the corpus says the handler received.
+ *
+ * No probe handler is injected: every contract fixture writes the event it saw
+ * to `$HOOK_CONTRACT_ECHO` itself, so the manifest under test is the manifest
+ * the corpus wrote — which is the only way `stop_hook_active`, a flag only a
+ * real block from stop_block.py can set, is observed on the real path.
+ */
 function assertStdin(kase, seen, projectDir) {
-  if (!kase.stdin) return;
-  assert.ok(seen, `${kase.name}: the probe recorded no stdin`);
-  for (const [key, expected] of Object.entries(kase.stdin)) {
+  const expectations = stdinExpectationsFor(kase);
+  if (!expectations) return;
+  assert.ok(seen, `${kase.name}: the fixture recorded no stdin`);
+  for (const [key, expected] of Object.entries(expectations)) {
     const want = expected === "$PROJECT_DIR" ? projectDir : expected;
     assert.deepEqual(seen[key], want, `${kase.name}: stdin.${key}`);
   }
-}
-
-/**
- * The same manifest with `fixtures/echo.py` PREPENDED to every handler list.
- *
- * A case whose fixture is not echo.py (context.py, stop_block.py) still has
- * stdin expectations, and echo.py is the contract's only observation channel.
- * Prepending rather than replacing keeps the original handlers' behaviour
- * intact — which matters for `stop_hook_active`, a flag only a real block from
- * stop_block.py can set — while echo.py, which always exits 0, records the
- * translated stdin on its way past.
- */
-function probeHooks(hooks) {
-  const probe = structuredClone(hooks);
-  for (const entries of Object.values(probe)) {
-    for (const entry of entries) {
-      entry.hooks = [{ type: "command", command: 'python3 "${CLAUDE_PLUGIN_ROOT}/fixtures/echo.py"' }, ...(entry.hooks ?? [])];
-    }
-  }
-  return probe;
 }
 
 /** Drive one native dsh event through the runner; returns what the seam produced. */
@@ -152,7 +143,14 @@ async function drive(native, harness, agent) {
       harness.seams.get("tools/post-execute")(exec, native.result, () => Promise.resolve({ kind: "accept" })),
     );
     // PostToolUse cannot block in this contract; `accept` is its "allow".
-    return { kind: decision.kind === "accept" ? "allow" : decision.kind, reason: "" };
+    // Its context rides `additionalContexts` (@deepseek-ai/dsh-tools
+    // lib/types/index.d.ts:435), not the prompt assembly.
+    const context = (decision.additionalContexts ?? [])
+      .flatMap((message) => message.content ?? [])
+      .filter((block) => block?.type === "text")
+      .map((block) => block.text)
+      .join("\n");
+    return { kind: decision.kind === "accept" ? "allow" : decision.kind, reason: "", context };
   }
   if (native.event === "systemPrompt.context") {
     const messages = [{ role: "user", source: { kind: "user" }, content: [{ type: "text", text: native.prompt }] }];
@@ -161,7 +159,7 @@ async function drive(native, harness, agent) {
         Promise.resolve({ kind: "enter", messages }),
       ),
     );
-    return { kind: "allow", reason: "", context: harness.contexts.get("hook-runner-dsh:user-prompt-submit").text({}) };
+    return { kind: "allow", reason: "", context: harness.contexts.get("hook-runner-dsh:user-prompt-submit").text({ scope: agent }) };
   }
   if (native.event === "session/created") {
     await harness.capture(async () => {
@@ -172,7 +170,7 @@ async function drive(native, harness, agent) {
         Promise.resolve({ kind: "enter", messages: [] }),
       );
     });
-    return { kind: "allow", reason: "", context: harness.contexts.get("hook-runner-dsh:session-start").text({}) };
+    return { kind: "allow", reason: "", context: harness.contexts.get("hook-runner-dsh:session-start").text({ scope: agent }) };
   }
   if (native.event === "agent/turn-stopping") {
     const fire = () => harness.capture(() => harness.seams.get("agent/turn-stopping")({ agent, turn: 1 }));
@@ -216,12 +214,12 @@ for (const kase of cases) {
     }
   });
 
-  if (!kase.stdin) continue;
+  if (!stdinExpectationsFor(kase)) continue;
   test(`corpus stdin: ${kase.name}`, async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "hook-runner-dsh-stdin-"));
     const echoPath = join(projectDir, "echo.json");
     process.env.HOOK_CONTRACT_ECHO = echoPath;
-    const harness = wire(moduleDirFor(probeHooks(kase.hooks)), projectDir);
+    const harness = wire(moduleDirFor(kase.hooks), projectDir);
     await drive(kase.native.dsh, harness, newAgent(harness.session));
     assertStdin(kase, readEcho(echoPath), projectDir);
   });
