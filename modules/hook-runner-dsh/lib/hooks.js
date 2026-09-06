@@ -67,7 +67,12 @@ export function matchesMatcher(matcher, names) {
 /**
  * dsh call arguments → the Claude `tool_input` shape a hook expects
  * (hook-contract README: `Bash → {command}`, `Read → {file_path}`, …). dsh's
- * fs tools name their path argument `path`; Claude's name it `file_path`.
+ * own fs tools already spell it Claude's way — `read`/`write`/`edit` declare
+ * `file_path` (`@deepseek-ai/dsh-tool-fs` lib/index.js:336, 607, 752) and
+ * `glob`/`grep` declare `pattern`/`path` (`@deepseek-ai/dsh-tool-fs-search`
+ * lib/index.js:782, 1090) — so this is a projection onto the contract's field
+ * set, not a rename. A `path` is still accepted on a file tool, because a
+ * third-party tool registered under one of those names may spell it that way.
  * An unknown tool's arguments pass through verbatim — the contract matches it
  * under its own name, so its input shape is its own too.
  */
@@ -101,18 +106,21 @@ export function toolInputFor(dshName, args) {
   return { ...a };
 }
 
-/** The inverse of {@link toolInputFor}: a Claude `updatedInput` back in dsh's argument spelling. */
+/**
+ * The inverse of {@link toolInputFor}: a Claude `updatedInput` back in dsh's
+ * argument spelling.
+ *
+ * That spelling is Claude's — dsh's `read`/`write`/`edit` declare `file_path`
+ * and `glob`/`grep` declare `path`, exactly as the contract does — so the only
+ * work here is unwrapping a hook that nested its input under `tool_input`.
+ * Renaming `file_path` to `path` would produce a re-issue instruction the real
+ * `edit` tool rejects, which is worse than no instruction at all.
+ */
 export function nativeArgsFor(dshName, updatedInput) {
   const u = updatedInput && typeof updatedInput === "object" ? updatedInput : {};
   const merged = u.tool_input && typeof u.tool_input === "object" ? u.tool_input : u;
   if (dshName === "bash") return { command: merged.command };
-  const out = { ...merged };
-  if (typeof out.file_path === "string" && dshName !== "read" && dshName !== "write" && dshName !== "edit") return out;
-  if (typeof out.file_path === "string") {
-    out.path = out.file_path;
-    delete out.file_path;
-  }
-  return out;
+  return { ...merged };
 }
 
 /**

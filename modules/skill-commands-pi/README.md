@@ -60,6 +60,27 @@ Loaded by the repo-root pi package manifest
 cd modules/skill-commands-pi && npm test
 ```
 
-`node --test` bundles the extension with `npx esbuild` and exercises the
-frontmatter filter, the expansion, and the registration wiring against a fake
-pi API. If esbuild cannot be obtained the suite fails rather than skips.
+`node --test` bundles the extension with the pinned `esbuild` devDependency
+(`pnpm install` at the repo root; no network fetch at test time) and exercises
+the frontmatter filter, the expansion, and the registration wiring against a
+fake pi API. If esbuild is missing the suite fails rather than skips.
+
+### The drift guard
+
+`test/pi-drift.test.mjs` is the guard on the replicated expansion. It compares
+**behavior, not source text**: it loads the installed pi's
+`dist/core/agent-session.js`, calls `AgentSession.prototype._expandSkillCommand`
+on a fixture skill through a stand-in `this` (the method touches only
+`resourceLoader` and `_extensionRunner`, so it invokes cleanly in isolation —
+no `Function.prototype.toString` snapshot needed), and asserts pi's output
+equals `skillPrompt()` for the same inputs, with and without args. A pi upgrade
+that changes the `<skill>` block, or renames the method away, fails the test
+with a message pointing at the file to re-derive from.
+
+pi is resolved with `require.resolve` from this module first and the running
+Node's global `lib/node_modules` second, because pi is normally a global
+install. The source of truth is therefore the *installed* harness — which CI
+does not have. This is the one place in the repo where a skip is correct: with
+no pi and no `PI_INSTALLED_CHECK=1` the test reports
+`skipped: pi not installed`; with `PI_INSTALLED_CHECK=1` a missing pi is a
+failure naming what to install.

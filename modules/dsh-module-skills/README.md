@@ -31,7 +31,14 @@ two dsh registries.
 2. **Registers a `/name` command** for each user-invocable skill whose body uses
    `$ARGUMENTS` or `$N`, because dsh's native slash path does not substitute
    arguments (see below). Skills without those tokens are left to dsh's own
-   path, which serves them better.
+   path, which serves them better. `metadata.dsh-command` overrides that
+   guess — see below.
+3. **Watches every root.** A skill added, edited, or removed after boot
+   invalidates the catalog (`SkillProviderControl.invalidate`) after a ~300 ms
+   debounce, so `dsh plugin add` or an edit in your checkout shows up without a
+   restart. `fs.watch` is used recursively where the platform supports it and
+   per-directory otherwise. Watching is a convenience: a root that cannot be
+   watched costs one `stderr` line and keeps all of its skills.
 
 ### Precedence
 
@@ -78,14 +85,34 @@ The expanded body is sent as the user turn through
 `agent.followup(createUserMessage(...))` — the same seam dsh's own `/goal`
 command uses.
 
-**Known limitation, local-path installs.** `followup` needs an identified
-message, and only dsh can mint one, so this plugin imports `createUserMessage`
-from `@deepseek-ai/dsh-llm` at load time. That resolves for a package installed
-*into* the profile (through the flat fallback `<dshHome>/profiles/node_modules`)
-but not for one installed with a `link:`/local path spec, which lives in your
-checkout and parent-walks somewhere else. In that case the commands are skipped
-with one `stderr` line and the skills still work — verified both ways against a
-throwaway profile.
+The message is minted here rather than imported. `followup` needs an identified
+message, and dsh's own `createUserMessage` adds exactly `role: 'user'` and
+`id: randomUUID()` before freezing (`@deepseek-ai/dsh-llm` `lib/index.js:157-176`),
+so this plugin builds the same object with `node:crypto`. Importing it used to
+be the implementation and was a real bug: `@deepseek-ai/dsh-llm` resolves for a
+package installed *into* the profile but not for a `link:`/repo-resident
+install, which parent-walks out of the profile — so every command silently
+disappeared on exactly the install shape a module author develops against.
+
+### Opting a skill in or out of a command
+
+Token detection is a heuristic, and `$5 million` in prose looks exactly like a
+positional argument. `metadata.dsh-command` settles it:
+
+```yaml
+---
+name: budget-review
+description: Reviews a budget.
+metadata:
+  dsh-command: false   # never register a /command, whatever the body contains
+---
+```
+
+`true` forces registration even for a token-free body — the case where you want
+the argument string carried along rather than substituted. Anything else is one
+`stderr` line and a fall back to token detection. `metadata` is the portable
+frontmatter key every harness carries through untouched, so this costs the skill
+nothing on Claude or pi.
 
 ## Install
 

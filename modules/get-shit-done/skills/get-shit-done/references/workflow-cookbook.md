@@ -1,9 +1,15 @@
-# Workflow cookbook — authoring fan-out beyond the spine
+# Fan-out cookbook — shapes beyond the spine
 
-The shipped spine (`workflows/gsd.workflow.js`) covers the common case: research ∥ plan → tiered
-implement → adversarial verify. Reach for a **custom** workflow script only when a task's *shape*
-doesn't fit that pipeline. Author it with the `Workflow` tool (`script` inline, or write a file and pass
-`scriptPath`). This file is your reference for the shapes and the footguns.
+The default spine covers the common case: research ∥ plan → tiered implement → adversarial verify.
+Reach for a **custom** fan-out shape only when a task's *shape* doesn't fit that pipeline — a
+Discover→Transform sweep over an unknown work-list, a design bake-off, a loop-until-dry audit. This
+file is your reference for those shapes and the footguns, described harness-neutrally; on Claude Code
+they're implemented with the Workflow tool (see the callouts below).
+
+> **Claude Code: Workflow tool.** The shipped spine is `workflows/gsd.workflow.js`. Author a custom
+> shape with the `Workflow` tool (`script` inline, or write a file and pass `scriptPath`). On other
+> harnesses, realize the same shape with whatever subagent facility exists, or run it sequentially in
+> one agent.
 
 ## First: should you fan out at all?
 
@@ -18,7 +24,7 @@ two units would edit the same code, do it **sequentially in one agent** instead.
 - **Scale agent count to complexity.** ~2–4 concurrent coding agents is the practical ceiling; beyond
   that, review + merge overhead outweighs the speedup. Don't spawn 50 for a simple job.
 
-## Workflow authoring footguns (these fail at *runtime*, mid-fan-out)
+## Claude Code: Workflow tool authoring footguns (these fail at *runtime*, mid-fan-out)
 
 - `export const meta = {...}` must be a **pure literal** — no variables, calls, or interpolation. Its
   `phases` titles should match your `phase()` calls.
@@ -36,15 +42,19 @@ two units would edit the same code, do it **sequentially in one agent** instead.
 
 ## Route to the best worker, don't reinvent it
 
-"Utilize all tools" — inside a workflow, `agent(prompt, {agentType: "..."})` uses a purpose-built
-subagent instead of the generic one. Compose the ecosystem:
+Compose the ecosystem instead of reinventing it: prefer a purpose-built subagent over a generic one
+whenever your harness offers one for the job — a read-only codebase-search agent before you plan,
+a docs/web-research agent, a specialized code-reviewer for the Verify phase. Fall back to a plain
+worker with a strong brief when no specialized one is present or installed.
 
-- **`Explore`** — broad read-only codebase search (find call sites, conventions) before you plan.
-- **`task-researcher`** / **WebSearch** + **context7** (via ToolSearch) — external docs & best-practices.
-- **`pr-review-toolkit:code-reviewer`**, **`feature-dev:code-reviewer`**, **`silent-failure-hunter`** —
-  strong, purpose-built reviewers for the Verify phase.
-- Any session MCP tool is reachable from a workflow agent via ToolSearch.
-
+> **Claude Code: Workflow tool.** Inside a workflow, `agent(prompt, {agentType: "..."})` picks a
+> purpose-built subagent instead of the generic one:
+> - **`Explore`** — broad read-only codebase search (find call sites, conventions) before you plan.
+> - **`task-researcher`** / **WebSearch** + **context7** (via ToolSearch) — external docs & best-practices.
+> - **`pr-review-toolkit:code-reviewer`**, **`feature-dev:code-reviewer`**, **`silent-failure-hunter`** —
+>   strong, purpose-built reviewers for the Verify phase.
+> - Any session MCP tool is reachable from a workflow agent via ToolSearch.
+>
 > These named agents (`pr-review-toolkit:*`, `feature-dev:*`, `task-researcher`, …) are **optional
 > external plugins** — GSD doesn't declare them as dependencies. `agent({agentType})` against an
 > uninstalled agent fails, so use them only "when they fit," and fall back to the default worker (a
@@ -54,6 +64,8 @@ subagent instead of the generic one. Compose the ecosystem:
 
 Parallel agents that **edit the same tree clobber each other — last write wins, silently.** Isolate each
 in its own git worktree so conflicts defer to an explicit merge.
+
+**Claude Code: Workflow tool.**
 
 ```js
 export const meta = {
@@ -85,6 +97,8 @@ merely to get isolation.
 
 For design/architecture calls, generate independent attempts from different angles, score with parallel
 judges, synthesize from the winner while grafting the best of the rest. Beats one-attempt-iterated.
+
+**Claude Code: Workflow tool.**
 
 ```js
 const attempts = await parallel(ANGLES.map(a => () =>

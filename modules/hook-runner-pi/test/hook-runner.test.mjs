@@ -10,7 +10,6 @@
  * that silently skips its conformance corpus is worse than no suite.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -26,45 +25,29 @@ const PROJECT_DIR = process.cwd();
 const BUILD = mkdtempSync(join(tmpdir(), "hook-runner-test-"));
 let mod;
 
-before(() => {
+before(async () => {
+	// The pinned devDependency, not `npx esbuild@…`: a test that fetches from the
+	// network at run time is not a test. Missing esbuild fails loudly here.
+	let esbuild;
+	try {
+		esbuild = await import("esbuild");
+	} catch (err) {
+		throw new Error(`esbuild is not installed for this module — run \`pnpm install\` at the repo root: ${err.message}`);
+	}
 	const out = join(BUILD, "hook-runner.mjs");
-	execFileSync(
-		"npx",
-		[
-			"--yes",
-			"esbuild@0.25.0",
-			join(MODULE_DIR, "extensions", "hook-runner.ts"),
-			"--bundle",
-			"--platform=node",
-			"--format=esm",
-			"--external:@earendil-works/*",
-			`--outfile=${out}`,
-			"--log-level=error",
-		],
-		{ stdio: ["ignore", "ignore", "inherit"] },
-	);
-	return import(out).then((m) => {
-		mod = m;
+	await esbuild.build({
+		entryPoints: [join(MODULE_DIR, "extensions", "hook-runner.ts")],
+		bundle: true,
+		platform: "node",
+		format: "esm",
+		external: ["@earendil-works/*"],
+		outfile: out,
+		logLevel: "error",
 	});
+	mod = await import(out);
 });
 
 after(() => rmSync(BUILD, { recursive: true, force: true }));
-
-/**
- * The corpus asserts stdin via fixtures/echo.py, but a case may use a different
- * fixture (context.py, stop_block.py) and still declare `stdin`. Appending a
- * trailing echo.py handler to every group makes the event observable without
- * changing the outcome: echo.py exits 0 and prints nothing.
- */
-function withEchoProbe(hooks) {
-	const probe = { type: "command", command: 'python3 "${CLAUDE_PLUGIN_ROOT}/fixtures/echo.py"' };
-	return Object.fromEntries(
-		Object.entries(hooks).map(([event, groups]) => [
-			event,
-			groups.map((group) => ({ ...group, hooks: [...(group.hooks ?? []), probe] })),
-		]),
-	);
-}
 
 /** A module dir that owns the case's hooks.json, with the fixtures beside it. */
 function makeModuleDir(name, hooks) {
@@ -118,8 +101,10 @@ describe("corpus", () => {
 
 	for (const testCase of piCases) {
 		test(testCase.name, async () => {
-			const hooks = testCase.stdin ? withEchoProbe(testCase.hooks) : testCase.hooks;
-			const moduleDir = makeModuleDir(testCase.name, hooks);
+			// Every fixture records the event it saw to $HOOK_CONTRACT_ECHO, so the
+			// handler list the case declares is the one that runs — no probe.
+			const wantStdin = testCase.stdin ?? testCase.stdin_by_harness?.pi;
+			const moduleDir = makeModuleDir(testCase.name, testCase.hooks);
 			const echoPath = join(moduleDir, "echo.json");
 			process.env.PI_HOOK_MANIFESTS = moduleDir;
 			process.env.HOOK_CONTRACT_ECHO = echoPath;
@@ -142,6 +127,7 @@ describe("corpus", () => {
 							toolCallId: "t1",
 							input: { ...native.input },
 							content: native.content,
+							details: native.details,
 						};
 						result = await pi.handlers.tool_result(event, pi.ctx);
 						break;
@@ -179,18 +165,18 @@ describe("corpus", () => {
 					break;
 				case "rewrite": {
 					assert.notEqual(result?.block, true);
-					// Claude-shaped updatedInput, asserted in pi's native arg names.
-					const expected = { ...native.input };
-					mod.applyUpdatedInput(native.toolName, expected, testCase.updatedInput);
-					assert.deepEqual(event.input, expected);
+					// `updatedInput` on a rewrite case is the input the harness must end
+					// up with, in its own native arg names (pi's `path`/`edits[].oldText`).
+					assert.deepEqual(event.input, { ...native.input, ...testCase.updatedInput });
 					assert.notDeepEqual(event.input, native.input, "rewrite did not change the input");
 					break;
 				}
 				case "context": {
-					const seen =
-						native.event === "session_start"
-							? pi.messages.map((m) => m.message.content).join("\n")
-							: (result?.message?.content ?? "");
+					let seen;
+					if (native.event === "session_start") seen = pi.messages.map((m) => m.message.content).join("\n");
+					else if (native.event === "tool_result")
+						seen = (result?.content ?? []).map((p) => (p?.type === "text" ? p.text : "")).join("\n");
+					else seen = result?.message?.content ?? "";
 					assert.match(seen, new RegExp(escapeRe(testCase.additionalContext)));
 					break;
 				}
@@ -206,9 +192,9 @@ describe("corpus", () => {
 					throw new Error(`unknown outcome ${outcome}`);
 			}
 
-			if (testCase.stdin) {
+			if (wantStdin) {
 				const seen = JSON.parse(readFileSync(echoPath, "utf-8"));
-				for (const [key, want] of Object.entries(testCase.stdin)) {
+				for (const [key, want] of Object.entries(wantStdin)) {
 					const expected = want === "$PROJECT_DIR" ? PROJECT_DIR : want;
 					assert.deepEqual(seen[key], expected, `stdin.${key}`);
 				}
@@ -276,6 +262,27 @@ describe("translation", () => {
 		});
 		mod.applyUpdatedInput("edit", input, { file_path: "/b.ts", old_string: "x", new_string: "y" });
 		assert.deepEqual(input, { path: "/b.ts", edits: [{ oldText: "x", newText: "y" }] });
+	});
+
+	test("a multi-edit call carries the whole list plus flat fields for the first", () => {
+		const input = { path: "/a.ts", edits: [{ oldText: "a", newText: "b" }, { oldText: "c", newText: "d" }] };
+		assert.deepEqual(mod.toClaudeInput("edit", input), {
+			file_path: "/a.ts",
+			old_string: "a",
+			new_string: "b",
+			edits: [{ old_string: "a", new_string: "b" }, { old_string: "c", new_string: "d" }],
+		});
+	});
+
+	test("a rewrite returning edits replaces the whole list", () => {
+		const input = { path: "/a.ts", edits: [{ oldText: "a", newText: "b" }, { oldText: "c", newText: "d" }] };
+		mod.applyUpdatedInput("edit", input, { edits: [{ old_string: "a", new_string: "B" }] });
+		assert.deepEqual(input, { path: "/a.ts", edits: [{ oldText: "a", newText: "B" }] });
+	});
+
+	test("tool_response is the text parts, else the native result as JSON", () => {
+		assert.equal(mod.toolResponse({ content: [{ type: "text", text: "hi\n" }] }), "hi\n");
+		assert.equal(mod.toolResponse({ content: [{ type: "image" }], details: { matches: ["a"] } }), '{"matches":["a"]}');
 	});
 
 	test("write and grep translate both ways", () => {

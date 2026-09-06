@@ -1,0 +1,8 @@
+# Spike bundle patch: one loader row. `mode` is overridden per run with
+# `dsh --patch`, so a single install measures all four dispatch shapes.
+- insert:
+    - id: spike-dsh-subagent
+      name: '@spike/dsh-subagent'
+      config:
+        mode: ''
+        outDir: ''

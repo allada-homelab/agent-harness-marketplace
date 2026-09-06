@@ -27,7 +27,7 @@ async function skill(root, name, frontmatter, body) {
   await writeFile(join(root, name, 'SKILL.md'), `---\n${frontmatter}\n---\n${body}\n`);
 }
 
-/** dsh's message factory, stubbed at the boundary it owns. */
+/** A stub factory, so the identity assertions elsewhere can name an exact id. */
 const createUserMessage = (input) => ({ ...input, id: 'msg-1', role: 'user' });
 
 function wire(overrides = {}) {
@@ -158,5 +158,56 @@ test('a failing followup settles as an error result, never a throw', async () =>
     const result = w.registered[0].handler({ agent, rawInput: 'x', attachments: [] });
     assert.equal(result.kind, 'error');
     assert.match(result.text, /agent is disposed/);
+  } finally { w.restore(); }
+});
+
+test('the default message factory mints the shape followup requires', async () => {
+  const root = join(await tmp(), 'skills');
+  await skill(root, 'review', 'name: review\ndescription: d', 'Review $ARGUMENTS.');
+  const w = wire();
+  try {
+    // No factory: this is the `link:`-install path, where importing
+    // @deepseek-ai/dsh-llm used to fail and drop every command silently.
+    await registerCommands(w.ctx, [root]);
+    assert.equal(w.registered.length, 1, JSON.stringify(w.errors));
+    const { result, sent } = invoke(w.registered[0], 'main');
+    assert.deepEqual(result, { kind: 'success' });
+    assert.equal(sent[0].role, 'user');
+    assert.match(sent[0].id, /^[0-9a-f-]{36}$/, 'followup rejects a message without an identity');
+    assert.deepEqual(sent[0].content, [{ type: 'text', text: 'Review main.' }]);
+    assert.deepEqual(sent[0].source, { kind: 'user' });
+    assert.ok(Object.isFrozen(sent[0]), 'a published message is frozen');
+  } finally { w.restore(); }
+});
+
+test('metadata dsh-command false keeps a prose dollar amount off the command surface', async () => {
+  const root = join(await tmp(), 'skills');
+  await skill(root, 'budget', 'name: budget\ndescription: d\nmetadata:\n  dsh-command: false', 'We raised $5 million.');
+  const w = wire();
+  try {
+    await registerCommands(w.ctx, [root], createUserMessage);
+    assert.deepEqual(w.registered, []);
+  } finally { w.restore(); }
+});
+
+test('metadata dsh-command true registers a token-free body', async () => {
+  const root = join(await tmp(), 'skills');
+  await skill(root, 'plain', 'name: plain\ndescription: d\nmetadata:\n  dsh-command: true', 'No tokens here.');
+  const w = wire();
+  try {
+    await registerCommands(w.ctx, [root], createUserMessage);
+    assert.deepEqual(w.registered.map((c) => c.name), ['plain']);
+  } finally { w.restore(); }
+});
+
+test('a non-boolean dsh-command falls back to token detection, loudly', async () => {
+  const root = join(await tmp(), 'skills');
+  await skill(root, 'review', 'name: review\ndescription: d\nmetadata:\n  dsh-command: maybe', 'Review $ARGUMENTS.');
+  const w = wire();
+  try {
+    await registerCommands(w.ctx, [root], createUserMessage);
+    assert.deepEqual(w.registered.map((c) => c.name), ['review']);
+    assert.equal(w.errors.length, 1, JSON.stringify(w.errors));
+    assert.match(w.errors[0], /metadata\.dsh-command must be true or false/);
   } finally { w.restore(); }
 });

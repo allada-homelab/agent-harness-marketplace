@@ -59,6 +59,16 @@ claimed for the step (`@deepseek-ai/dsh-agent`
 `lib/types/runtime-types.d.ts:235`), so the handlers finish *before* the
 assembly that must show their text, and the provider is a pure read.
 
+**Context is delivered per session.** `AssembleContext` carries only `scope`
+and `signal`, but dsh-agent mints the agent itself as its scope key (`scope:
+agent`, `@deepseek-ai/dsh-agent` `lib/index.js:387`; carrier `scopeTarget(agent,
+agent)` at `:324`) and an agent's id **is** its session id (a mismatch throws,
+`:603`). The runner therefore keys pending context by that session id and each
+assembly reads only its own — two interleaved sessions, or an agent and its
+subagent, cannot see each other's hook text. An assembly whose scope carries no
+readable id falls back to the most recently active session and writes one
+`hook-runner` line to stderr saying so (once per process, not once per turn).
+
 **`SessionStart`'s caveat:** `session/created` is a synchronous emit, so the run
 cannot be awaited there. The first `agent/pre-step` awaits it before the first
 assembly, which is what keeps the text from missing its own session.
@@ -70,9 +80,18 @@ fire carries `stop_hook_active: true`, which is what lets a hook stop its own
 loop.
 
 **Tool names and inputs** are translated both ways per the contract: dsh
-`bash→Bash read→Read write→Write edit→Edit grep→Grep glob→Glob`, and dsh's
-`path` argument becomes Claude's `file_path`. An unknown tool keeps its native
-name and its native argument shape.
+`bash→Bash read→Read write→Write edit→Edit grep→Grep glob→Glob`. dsh's argument
+spelling already matches Claude's — `read`/`write`/`edit` take `file_path`
+(`@deepseek-ai/dsh-tool-fs` `lib/index.js:336, 607, 752`) and `glob`/`grep` take
+`pattern`/`path` (`@deepseek-ai/dsh-tool-fs-search` `lib/index.js:782, 1090`) —
+so the input mapping is a projection onto the contract's field set, not a
+rename. A `path` on a file tool is still accepted, because a third-party tool
+registered under one of those names may spell it that way. An unknown tool keeps
+its native name and its native argument shape.
+
+**`tool_response`** is the tool's text output when the result is text, and the
+native result serialized as JSON otherwise — a hook must not have to guess the
+field's type per tool.
 
 **Failure posture.** A handler that crashes, times out, or names a script that
 does not exist is a *failed* handler: the action **proceeds** and exactly one
@@ -131,5 +150,9 @@ node --test test/*.test.mjs
 `test/corpus.test.mjs` runs **every** case in
 [`hook-contract/corpus.json`](../../hook-contract/corpus.json) whose `harness`
 list includes `dsh` through the real seams, with the fixture scripts actually
-executed and `exec.arguments` frozen exactly as dsh freezes them.
-`test/discovery.test.mjs` covers discovery against a fake profile tree.
+executed and `exec.arguments` frozen exactly as dsh freezes them. Every fixture
+records the event it received to `$HOOK_CONTRACT_ECHO`, so the stdin assertions
+observe the manifest the corpus wrote, unaltered.
+`test/sessions.test.mjs` drives two interleaved sessions and proves neither
+reads the other's context. `test/discovery.test.mjs` covers discovery against a
+fake profile tree.

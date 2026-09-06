@@ -101,7 +101,8 @@ export PI_HOOK_MANIFESTS="$HOME/.agents/modules/okf-wiki:/path/to/other/hooks/ho
 cd modules/hook-runner-pi && npm test
 ```
 
-`node --test` bundles the extension with `npx esbuild`, wires the default
-export to a fake pi API, and runs **every** `hook-contract/corpus.json` case
-whose `harness` includes `pi`, executing the real fixture scripts. If esbuild
-cannot be obtained the suite fails rather than skips.
+`node --test` bundles the extension with the pinned `esbuild` devDependency
+(`pnpm install` at the repo root; no network fetch at test time), wires the
+default export to a fake pi API, and runs **every** `hook-contract/corpus.json`
+case whose `harness` includes `pi`, executing the real fixture scripts. If
+esbuild is missing the suite fails rather than skips.

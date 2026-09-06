@@ -4,7 +4,6 @@
  * esbuild first; if esbuild cannot be obtained the suite FAILS, not skips.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -15,26 +14,26 @@ const MODULE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BUILD = mkdtempSync(join(tmpdir(), "skill-commands-test-"));
 let mod;
 
-before(() => {
+before(async () => {
+	// The pinned devDependency, not `npx esbuild@…`: a test that fetches from the
+	// network at run time is not a test. Missing esbuild fails loudly here.
+	let esbuild;
+	try {
+		esbuild = await import("esbuild");
+	} catch (err) {
+		throw new Error(`esbuild is not installed for this module — run \`pnpm install\` at the repo root: ${err.message}`);
+	}
 	const out = join(BUILD, "skill-commands.mjs");
-	execFileSync(
-		"npx",
-		[
-			"--yes",
-			"esbuild@0.25.0",
-			join(MODULE_DIR, "extensions", "skill-commands.ts"),
-			"--bundle",
-			"--platform=node",
-			"--format=esm",
-			"--external:@earendil-works/*",
-			`--outfile=${out}`,
-			"--log-level=error",
-		],
-		{ stdio: ["ignore", "ignore", "inherit"] },
-	);
-	return import(out).then((m) => {
-		mod = m;
+	await esbuild.build({
+		entryPoints: [join(MODULE_DIR, "extensions", "skill-commands.ts")],
+		bundle: true,
+		platform: "node",
+		format: "esm",
+		external: ["@earendil-works/*"],
+		outfile: out,
+		logLevel: "error",
 	});
+	mod = await import(out);
 });
 
 after(() => rmSync(BUILD, { recursive: true, force: true }));

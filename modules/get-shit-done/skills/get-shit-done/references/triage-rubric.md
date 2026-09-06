@@ -7,9 +7,13 @@ single-agent Opus by ~90% on their eval). Getting the tier wrong in either direc
 under-powered model on a hard task produces silently-wrong work; an over-powered model on a mechanical
 task burns the budget you were trying to save.
 
-> **Default is Opus.** Subagents inherit the orchestrator's model unless you override. So Sonnet is never
-> the default — you must set `tier: "sonnet"` **explicitly** on every subtask that can take it. Omit it
-> and everything runs on Opus, defeating the point.
+> **Default is Opus.** Whatever mechanism your harness uses to spawn a subagent, an unspecified model
+> defaults to matching the orchestrator. So Sonnet is never the default — you must request it
+> **explicitly** on every subtask that can take it. Omit it and everything runs on Opus, defeating the
+> point.
+>
+> **Claude Code: Workflow tool.** Subagents inherit the orchestrator's model unless you override; set
+> `tier: "sonnet"` explicitly in the subtask payload passed to `/get-shit-done-claude:run`.
 
 ## The three signals (combine them — no single signal routes reliably)
 
