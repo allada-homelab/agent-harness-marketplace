@@ -149,7 +149,12 @@ PY
 
 step "nothing in a module points at a path only this machine has"
 # /home/<user>/ is a private path; /home/vscode/ is the dev-container fixture path.
-if grep -rnIE 'davidallada-developer-setup|~/\.agents/lib|/home/[a-z]+/' modules docs README.md --exclude-dir=node_modules --exclude-dir=__pycache__ --exclude=index.yaml | grep -v '/home/vscode/'; then
+# Also catch homelab hostnames, RFC1918 IPs, and the author's homelab machine name
+# (but not the @allada-homelab/ package scope or the repo name allada-homelab/agent-harness-marketplace).
+if grep -rnIE \
+    'davidallada-developer-setup|~/\.agents/lib|/home/[a-z]+/|[a-z0-9-]+\.(lan|home\.arpa|internal)\b|(://|@)[a-z0-9.-]*\.local\b|\.local[:/]|\b10\.[0-9]+\.[0-9]+\.[0-9]+\b|\b192\.168\.[0-9]+\.[0-9]+\b|\b172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+\b|allada-homelab\.[a-z]' \
+    modules docs README.md --exclude-dir=node_modules --exclude-dir=__pycache__ --exclude=index.yaml \
+    | grep -v '/home/vscode/'; then
     echo "  FAIL: private or absolute path in publishable content"; fail=1
 else
     echo "  ok"

@@ -11,8 +11,10 @@ adherence and tool-use patterns. Ships two skills:
 Both are claude-only (`context: fork`, `harness: [claude]`). `claude-transcript-analyze`'s
 `hooks` lens reuses the regexes/`analyze()` from two Claude Code hooks — `verify-claims.py` and
 `reflect-on-done.py` — rather than re-implementing them, and imports them at `${CLAUDE_CONFIG_DIR:-~/.claude}/hooks/`.
-If those hooks aren't installed, `analyze.py index` fails at import; the `hooks` lens is only
-available if your own Claude Code setup ships equivalent hooks under those filenames.
+If those hooks are not installed, the `hooks` lens is skipped with one stderr line and the
+other lenses still run; it works fully only when your Claude Code setup ships equivalent hooks under those filenames.
+`test/test_transcript_analyze.py` exercises this lens against minimal stand-in hooks under
+`test/fixtures/hooks/`, not the real (private) ones.
 
 ## Install
 
