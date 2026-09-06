@@ -1,0 +1,15 @@
+# @allada-homelab/dsh-module-skills bundle patch.
+#
+# One loader row. The plugin registers a single ctx.skills provider and, for
+# user-invocable skills whose body uses $ARGUMENTS or $N, one command each. It
+# mounts no service, spawns no process, and adds no system-prompt text, so it
+# costs nothing per turn.
+#
+# config.dirs: absolute paths to `skills/` directories to serve in addition to
+# the ones auto-discovered from this profile's own dsh.profile.bundles. Empty
+# is the normal case — a module installed with `dsh plugin add` is discovered.
+- insert:
+    - id: module-skills
+      name: '@allada-homelab/dsh-module-skills'
+      config:
+        dirs: []

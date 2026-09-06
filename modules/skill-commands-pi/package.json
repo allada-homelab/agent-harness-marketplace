@@ -1,0 +1,15 @@
+{
+  "name": "@allada-homelab/skill-commands-pi",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Registers /name for every loaded pi skill whose frontmatter says user-invocable: true, aliasing /skill:name.",
+  "license": "MIT",
+  "keywords": ["pi-package", "agent-skills", "commands"],
+  "pi": {
+    "extensions": ["extensions/*.ts"]
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

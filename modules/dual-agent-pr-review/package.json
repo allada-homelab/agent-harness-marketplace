@@ -1,0 +1,18 @@
+{
+  "name": "@allada-homelab/dual-agent-pr-review",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Review a GitHub PR with Claude Code and Codex in parallel, then reconcile their findings into one consensus set.",
+  "license": "MIT",
+  "pi": {
+    "skills": [
+      "skills/*"
+    ]
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

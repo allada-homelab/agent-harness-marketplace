@@ -1,0 +1,18 @@
+{
+  "name": "@allada-homelab/claude-transcripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Export Claude Code transcripts out of dev containers and analyze hook fire rates, CLAUDE.md adherence and tool-use patterns.",
+  "license": "MIT",
+  "pi": {
+    "skills": [
+      "skills/*"
+    ]
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

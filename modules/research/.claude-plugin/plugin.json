@@ -1,0 +1,7 @@
+{
+  "name": "research",
+  "version": "0.1.0",
+  "description": "Run the research-before-acting ladder as an explicit step and return a scope with a recommendation.",
+  "author": { "name": "David Allada", "email": "davidanilallada@gmail.com" },
+  "license": "MIT"
+}
