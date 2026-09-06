@@ -1,0 +1,11 @@
+{
+  "name": "@allada-homelab/research",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Run the research-before-acting ladder as an explicit step and return a scope with a recommendation.",
+  "license": "MIT",
+  "pi": {
+    "skills": ["skills/*"]
+  }
+}

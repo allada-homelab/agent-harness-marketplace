@@ -1,0 +1,15 @@
+{
+  "_comment": "DISABLED example — get-shit-done ships with NO live hooks and is explicit-only (/get-shit-done-claude:run). To enable the auto-trigger nudge: copy this file to hooks/hooks.json (drop the _comment key — hooks.json is strict JSON) and run /reload-plugins. See scripts/gsd_autotrigger.py.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/gsd_autotrigger.py"
+          }
+        ]
+      }
+    ]
+  }
+}

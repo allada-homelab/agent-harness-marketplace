@@ -1,0 +1,13 @@
+# dsh: this module's skills/ reach dsh through the generic bridge
+# (modules/dsh-module-skills), installed once per profile. This row mounts one
+# bridge instance scoped to this package; ids and provider names are
+# module-specific because duplicates collide in the loader tree and in
+# ctx.skills. Nothing here executes.
+- insert:
+    - id: module-skills-claude-transcripts
+      name: '@allada-homelab/dsh-module-skills'
+      config:
+        providerName: module-skills-claude-transcripts
+        bundles:
+          - '@allada-homelab/claude-transcripts'
+        dirs: []

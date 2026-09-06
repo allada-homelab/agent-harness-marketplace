@@ -1,0 +1,49 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdicts", "withdrawn", "notes"],
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "description": "One entry per finding id you were asked to adjudicate. Do not invent ids.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "verdict", "severity", "reasoning", "evidence"],
+        "properties": {
+          "finding_id": {
+            "type": "string",
+            "description": "Exactly one of the ids given to you."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": ["CONFIRM", "REJECT", "REVISE"],
+            "description": "CONFIRM: real as stated. REJECT: not a real defect. REVISE: real but mis-stated (wrong severity, wrong location, or wrong mechanism) - say the correction in reasoning."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["blocking", "non-blocking", "none"],
+            "description": "The severity you believe is correct. Use \"none\" with verdict REJECT."
+          },
+          "reasoning": {
+            "type": "string",
+            "description": "Why. If you are overturning your own earlier position, say so explicitly."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "file:line references plus quoted code that you actually read this round. A verdict with no citation is not usable."
+          }
+        }
+      }
+    },
+    "withdrawn": {
+      "type": "array",
+      "description": "Ids of YOUR OWN earlier findings you now retract. Empty array if none.",
+      "items": { "type": "string" }
+    },
+    "notes": {
+      "type": "string",
+      "description": "Anything the adjudication format could not carry. Do not raise new findings here; state them as a note only."
+    }
+  }
+}
