@@ -1,0 +1,32 @@
+# TEMPLATE — copy this into a content module's own `cordis.patch.yml` and
+# replace <module> with the module's directory name (e.g. `research`).
+#
+# What it does: mounts ONE row of the shared skills bridge on the content
+# module's behalf. dsh composes a profile by applying each bundle's patch list
+# in `dsh.profile.bundles` order (dsh-app-boot: `reconcilePlugins` adds any
+# installed dependency that declares `dsh.bundle`), so this row is what makes
+# `dsh plugin add` of a content module also turn that module's skills on.
+#
+# The `id` and `providerName` MUST be module-specific. Two modules that both
+# insert `id: module-skills` collide in the loader tree, and two providers that
+# both register as `module-skills` collide in `ctx.skills` — a duplicate
+# provider name within one layer throws (@deepseek-ai/dsh-skill
+# lib/types/index.d.ts, `registerProvider`).
+#
+# `bundles` narrows auto-discovery to this module's own package, so N installed
+# modules cost N scans of one directory each instead of N scans of all N.
+# `dirs: []` is correct and deliberate: the bridge finds the module's `skills/`
+# directory through the profile manifest. Set an absolute path only to serve a
+# checkout that pnpm did not install.
+#
+# The content module does NOT declare the bridge as a dependency: the install
+# contract installs `dsh-module-skills` once per profile, and a GitHub dependency
+# spec would make this repo's own workspace install reach for a release tag.
+- insert:
+    - id: module-skills-<module>
+      name: '@allada-homelab/dsh-module-skills'
+      config:
+        providerName: module-skills-<module>
+        bundles:
+          - '@allada-homelab/<module>'
+        dirs: []

@@ -1,0 +1,26 @@
+{
+  "name": "@allada-homelab/dsh-module-skills",
+  "version": "0.1.0",
+  "description": "Make a marketplace module's skills/ directory visible to dsh. Registers one ctx.skills provider over every module root (config.dirs plus the profile's own bundles) and adds $ARGUMENTS/$N expansion for user-invocable skills, which dsh's native slash path does not do.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "files": [
+    "lib",
+    "docs",
+    "cordis.patch.yml",
+    "README.md"
+  ]
+}
