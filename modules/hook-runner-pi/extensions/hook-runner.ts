@@ -179,8 +179,20 @@ export function toClaudeInput(piToolName: string, input: any): Record<string, un
 		case "write":
 			return { file_path: i.path, content: i.content };
 		case "edit": {
-			const first = Array.isArray(i.edits) ? (i.edits[0] ?? {}) : {};
-			return { file_path: i.path, old_string: first.oldText, new_string: first.newText };
+			const edits = Array.isArray(i.edits) ? i.edits : [];
+			const first = edits[0] ?? {};
+			const claude: Record<string, unknown> = {
+				file_path: i.path,
+				old_string: first.oldText,
+				new_string: first.newText,
+			};
+			// Claude's Edit is one old/new pair; pi's edit is a list. Several edits
+			// would be invisible to the hook, so the whole list rides along and the
+			// flat fields describe edits[0] (hook-contract/README.md).
+			if (edits.length > 1) {
+				claude.edits = edits.map((e: any) => ({ old_string: e?.oldText, new_string: e?.newText }));
+			}
+			return claude;
 		}
 		case "grep":
 		case "find":
@@ -195,8 +207,8 @@ export function toClaudeInput(piToolName: string, input: any): Record<string, un
  * Apply a hook's `updatedInput` (Claude shape) back onto pi's native input,
  * mutating in place because that is how pi's `tool_call` rewrite works.
  *
- * Lossy in exactly one place: Claude's Edit is a single old/new pair while pi's
- * edit carries an array, so a rewrite lands on `edits[0]`.
+ * An Edit rewrite that returns `edits` replaces pi's whole list; one that returns
+ * only the flat `old_string`/`new_string` rewrites `edits[0]`.
  */
 export function applyUpdatedInput(piToolName: string, input: any, updated: Record<string, any>): void {
 	if (!input || !updated) return;
@@ -216,6 +228,10 @@ export function applyUpdatedInput(piToolName: string, input: any, updated: Recor
 			return;
 		case "edit": {
 			set("path", updated.file_path);
+			if (Array.isArray(updated.edits)) {
+				input.edits = updated.edits.map((e: any) => ({ oldText: e?.old_string, newText: e?.new_string }));
+				return;
+			}
 			if (updated.old_string === undefined && updated.new_string === undefined) return;
 			if (!Array.isArray(input.edits) || input.edits.length === 0) input.edits = [{}];
 			if (updated.old_string !== undefined) input.edits[0].oldText = updated.old_string;
@@ -234,6 +250,20 @@ export function applyUpdatedInput(piToolName: string, input: any, updated: Recor
 }
 
 /* ── the process contract ─────────────────────────────────────────────────── */
+
+/**
+ * `tool_response` for PostToolUse: the tool's text output when it has one, else
+ * the native result serialized as JSON (hook-contract/README.md). pi delivers
+ * `content` as content parts and may carry a structured `details` beside them.
+ */
+export function toolResponse(event: any): string {
+	const parts = Array.isArray(event?.content)
+		? event.content.filter((p: any) => p?.type === "text" && typeof p.text === "string").map((p: any) => p.text)
+		: [];
+	if (parts.length > 0) return parts.join("");
+	if (typeof event?.content === "string") return event.content;
+	return JSON.stringify(event?.details ?? event?.content ?? null);
+}
 
 export function matches(matcher: string | undefined, claudeToolName: string): boolean {
 	if (!matcher) return true;
@@ -502,12 +532,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("tool_result", async (event: any, ctx: any) => {
 		try {
 			const claudeName = claudeToolName(event.toolName);
-			const response = Array.isArray(event.content)
-				? event.content
-						.filter((p: any) => p?.type === "text" && typeof p.text === "string")
-						.map((p: any) => p.text)
-						.join("")
-				: event.content;
+			const response = toolResponse(event);
 			const context = contextFrom(
 				await runAll(
 					"PostToolUse",

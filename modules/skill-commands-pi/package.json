@@ -9,6 +9,9 @@
   "pi": {
     "extensions": ["extensions/*.ts"]
   },
+  "devDependencies": {
+    "esbuild": "0.25.0"
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs"
   }
