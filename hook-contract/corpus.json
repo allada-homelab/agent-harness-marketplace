@@ -736,6 +736,438 @@
         "cwd": "$PROJECT_DIR"
       },
       "outcome": "allow"
+    },
+    {
+      "name": "pretooluse-write-translated",
+      "harness": [
+        "pi",
+        "dsh"
+      ],
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Write",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/fixtures/echo.py\""
+              }
+            ]
+          }
+        ]
+      },
+      "native": {
+        "pi": {
+          "event": "tool_call",
+          "toolName": "write",
+          "input": {
+            "path": "/tmp/a.txt",
+            "content": "hello"
+          }
+        },
+        "dsh": {
+          "event": "tools/pre-execute",
+          "name": "write",
+          "args": {
+            "path": "/tmp/a.txt",
+            "content": "hello"
+          }
+        }
+      },
+      "stdin": {
+        "tool_name": "Write",
+        "tool_input": {
+          "file_path": "/tmp/a.txt",
+          "content": "hello"
+        }
+      },
+      "outcome": "allow"
+    },
+    {
+      "name": "pretooluse-edit-single-translated",
+      "harness": [
+        "pi",
+        "dsh"
+      ],
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Edit",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/fixtures/echo.py\""
+              }
+            ]
+          }
+        ]
+      },
+      "native": {
+        "pi": {
+          "event": "tool_call",
+          "toolName": "edit",
+          "input": {
+            "path": "/tmp/a.txt",
+            "edits": [
+              {
+                "oldText": "a",
+                "newText": "b"
+              }
+            ]
+          }
+        },
+        "dsh": {
+          "event": "tools/pre-execute",
+          "name": "edit",
+          "args": {
+            "path": "/tmp/a.txt",
+            "old_string": "a",
+            "new_string": "b"
+          }
+        }
+      },
+      "stdin": {
+        "tool_name": "Edit",
+        "tool_input": {
+          "file_path": "/tmp/a.txt",
+          "old_string": "a",
+          "new_string": "b"
+        }
+      },
+      "outcome": "allow"
+    },
+    {
+      "name": "pretooluse-edit-multi-is-lossless",
+      "harness": [
+        "pi",
+        "dsh"
+      ],
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Edit",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/fixtures/echo.py\""
+              }
+            ]
+          }
+        ]
+      },
+      "native": {
+        "pi": {
+          "event": "tool_call",
+          "toolName": "edit",
+          "input": {
+            "path": "/tmp/a.txt",
+            "edits": [
+              {
+                "oldText": "a",
+                "newText": "b"
+              },
+              {
+                "oldText": "c",
+                "newText": "d"
+              }
+            ]
+          }
+        },
+        "dsh": {
+          "event": "tools/pre-execute",
+          "name": "edit",
+          "args": {
+            "path": "/tmp/a.txt",
+            "old_string": "a",
+            "new_string": "b"
+          }
+        }
+      },
+      "outcome": "allow",
+      "stdin_by_harness": {
+        "pi": {
+          "tool_name": "Edit",
+          "tool_input": {
+            "file_path": "/tmp/a.txt",
+            "old_string": "a",
+            "new_string": "b",
+            "edits": [
+              {
+                "old_string": "a",
+                "new_string": "b"
+              },
+              {
+                "old_string": "c",
+                "new_string": "d"
+              }
+            ]
+          }
+        },
+        "dsh": {
+          "tool_name": "Edit",
+          "tool_input": {
+            "file_path": "/tmp/a.txt",
+            "old_string": "a",
+            "new_string": "b"
+          }
+        }
+      }
+    },
+    {
+      "name": "pretooluse-grep-translated",
+      "harness": [
+        "pi",
+        "dsh"
+      ],
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Grep",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/fixtures/echo.py\""
+              }
+            ]
+          }
+        ]
+      },
+      "native": {
+        "pi": {
+          "event": "tool_call",
+          "toolName": "grep",
+          "input": {
+            "pattern": "TODO",
+            "path": "/tmp"
+          }
+        },
+        "dsh": {
+          "event": "tools/pre-execute",
+          "name": "grep",
+          "args": {
+            "pattern": "TODO",
+            "path": "/tmp"
+          }
+        }
+      },
+      "stdin": {
+        "tool_name": "Grep",
+        "tool_input": {
+          "pattern": "TODO",
+          "path": "/tmp"
+        }
+      },
+      "outcome": "allow"
+    },
+    {
+      "name": "pretooluse-glob-translated",
+      "harness": [
+        "pi",
+        "dsh"
+      ],
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Glob",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/fixtures/echo.py\""
+              }
+            ]
+          }
+        ]
+      },
+      "native": {
+        "pi": {
+          "event": "tool_call",
+          "toolName": "find",
+          "input": {
+            "pattern": "*.md",
+            "path": "/tmp"
+          }
+        },
+        "dsh": {
+          "event": "tools/pre-execute",
+          "name": "glob",
+          "args": {
+            "pattern": "*.md",
+            "path": "/tmp"
+          }
+        }
+      },
+      "stdin": {
+        "tool_name": "Glob",
+        "tool_input": {
+          "pattern": "*.md",
+          "path": "/tmp"
+        }
+      },
+      "outcome": "allow"
+    },
+    {
+      "name": "pretooluse-rewrite-edit-multi-updates-all-edits",
+      "harness": [
+        "pi"
+      ],
+      "$comment": "pi edit carries edits[]; a rewrite that returns `edits` replaces the whole list (the flat old/new fields describe edits[0] only).",
+      "hooks": {
+        "PreToolUse": [
+          {
+            "matcher": "Edit",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/fixtures/rewrite_edits.py\""
+              }
+            ]
+          }
+        ]
+      },
+      "native": {
+        "pi": {
+          "event": "tool_call",
+          "toolName": "edit",
+          "input": {
+            "path": "/tmp/a.txt",
+            "edits": [
+              {
+                "oldText": "a",
+                "newText": "b"
+              },
+              {
+                "oldText": "c",
+                "newText": "d"
+              }
+            ]
+          }
+        }
+      },
+      "outcome": "rewrite",
+      "updatedInput": {
+        "path": "/tmp/a.txt",
+        "edits": [
+          {
+            "oldText": "a",
+            "newText": "B"
+          },
+          {
+            "oldText": "c",
+            "newText": "D"
+          }
+        ]
+      }
+    },
+    {
+      "name": "posttooluse-injects-context",
+      "harness": [
+        "pi",
+        "dsh"
+      ],
+      "hooks": {
+        "PostToolUse": [
+          {
+            "matcher": "Bash",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/fixtures/context.py\""
+              }
+            ]
+          }
+        ]
+      },
+      "native": {
+        "pi": {
+          "event": "tool_result",
+          "toolName": "bash",
+          "input": {
+            "command": "true"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": ""
+            }
+          ]
+        },
+        "dsh": {
+          "event": "tools/post-execute",
+          "name": "bash",
+          "args": {
+            "command": "true"
+          },
+          "result": ""
+        }
+      },
+      "outcome": "context",
+      "additionalContext": "CONTEXT-FROM-PostToolUse"
+    },
+    {
+      "name": "posttooluse-non-text-response-passes-native",
+      "harness": [
+        "pi",
+        "dsh"
+      ],
+      "$comment": "tool_response is the text when the result is text, otherwise the native result serialized as JSON.",
+      "hooks": {
+        "PostToolUse": [
+          {
+            "matcher": "Glob",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/fixtures/echo.py\""
+              }
+            ]
+          }
+        ]
+      },
+      "native": {
+        "pi": {
+          "event": "tool_result",
+          "toolName": "find",
+          "input": {
+            "pattern": "*.md"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "a.md\nb.md"
+            }
+          ],
+          "details": {
+            "matches": [
+              "a.md",
+              "b.md"
+            ]
+          }
+        },
+        "dsh": {
+          "event": "tools/post-execute",
+          "name": "glob",
+          "args": {
+            "pattern": "*.md"
+          },
+          "result": {
+            "matches": [
+              "a.md",
+              "b.md"
+            ]
+          }
+        }
+      },
+      "stdin_by_harness": {
+        "pi": {
+          "tool_name": "Glob",
+          "tool_response": "a.md\nb.md"
+        },
+        "dsh": {
+          "tool_name": "Glob",
+          "tool_response": "{\"matches\":[\"a.md\",\"b.md\"]}"
+        }
+      },
+      "outcome": "allow"
     }
   ]
 }

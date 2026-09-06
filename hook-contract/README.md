@@ -51,9 +51,13 @@ Common stdin fields: `session_id`, `cwd`, `hook_event_name`. Per event:
 
 `tool_input` is the Claude shape: `Bash → {command}`, `Read → {file_path}`,
 `Write → {file_path, content}`, `Edit → {file_path, old_string, new_string}`,
-`Grep → {pattern, path}`, `Glob → {pattern, path}`. `tool_response` for
-`PostToolUse` is the tool's text output as a string (or the native result when it
-is not text).
+`Grep → {pattern, path}`, `Glob → {pattern, path}`. When the native edit call
+carries several edits (pi's `edits[]`), `Edit` additionally carries
+`edits: [{old_string, new_string}, …]` and the flat fields describe the first
+one; a rewrite that returns `edits` replaces the whole list, a rewrite that
+returns only the flat fields rewrites the first. `tool_response` for
+`PostToolUse` is the tool's text output as a string, else the native result
+serialized as JSON.
 
 ## Event mapping
 
@@ -89,8 +93,11 @@ asserts the outcome:
   substring), `rewrite` (with `updatedInput`), `context` (with the given
   `additionalContext` substring), `stop-block` (with `reason`), or
   `failed-open` (proceeds AND a line containing `hook-runner` on stderr).
-- `stdin` lists key/value pairs the fixture must have received, proving the
-  translation happened (`fixtures/echo.py` writes what it saw to the path in
-  `HOOK_CONTRACT_ECHO`).
+- `stdin` (or `stdin_by_harness`) lists key/value pairs the fixture must have
+  received, proving the translation happened. Every fixture writes the event it
+  saw to the path in `HOOK_CONTRACT_ECHO`, so a test asserts stdin without
+  altering the handler list.
+- `SessionStart` on dsh: `session/created` is a synchronous emit, so the runner
+  gathers the context there and delivers it on the first prompt assembly.
 
 Fixtures are Python 3 stdlib scripts so the corpus runs anywhere the harness runs.
