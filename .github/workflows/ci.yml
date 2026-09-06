@@ -1,0 +1,26 @@
+# bin/check.sh is the whole contract: index currency, the portable skill lint
+# (proven to bite on a fixture), version agreement across package.json /
+# plugin.json / marketplace entry, the root pi manifest against skill scopes,
+# hook manifests + the hook conformance corpus, the private-path grep, and every
+# module's Python and Node tests (the pi/dsh runners are held to the same corpus).
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v5
+      - name: bin/check.sh
+        run: ./bin/check.sh

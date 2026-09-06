@@ -1,0 +1,24 @@
+{
+  "name": "@allada-homelab/agent-harness-marketplace",
+  "version": "0.1.0",
+  "description": "Modules that install natively on Claude Code, pi and dsh from one content tree. The repo root is the pi package; Claude installs per module via .claude-plugin/marketplace.json; dsh installs per module via a pnpm path: fragment.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "repository": "github:allada-homelab/agent-harness-marketplace",
+  "keywords": ["pi-package", "claude-code", "dsh", "agent-skills"],
+  "packageManager": "pnpm@11.22.0",
+  "pi": {
+    "skills": [
+      "modules/*/skills/*",
+      "!modules/claude-transcripts/**",
+      "!modules/dual-agent-pr-review/**",
+      "!modules/get-shit-done-claude/**"
+    ],
+    "extensions": ["modules/*/extensions/*.ts"]
+  },
+  "scripts": {
+    "test": "pnpm -r --if-present test",
+    "check": "bin/check.sh"
+  }
+}

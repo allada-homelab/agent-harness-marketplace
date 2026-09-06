@@ -1,0 +1,29 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  modules/claude-transcripts: {}
+
+  modules/dsh-module-skills: {}
+
+  modules/dual-agent-pr-review: {}
+
+  modules/get-shit-done: {}
+
+  modules/get-shit-done-claude: {}
+
+  modules/hook-runner-dsh: {}
+
+  modules/hook-runner-pi: {}
+
+  modules/minimalist-code-review: {}
+
+  modules/research: {}
+
+  modules/skill-commands-pi: {}
