@@ -14,6 +14,10 @@ sys.path.insert(
 )
 import analyze as az
 
+needs_hooks = pytest.mark.skipif(
+    not az.HOOKS_AVAILABLE, reason="verify-claims.py / reflect-on-done.py hooks not installed at the Claude config dir"
+)
+
 
 def U(text):
     return {"type": "user", "message": {"content": [{"type": "text", "text": text}]}}
@@ -156,6 +160,7 @@ def test_worktree_guard_blocks_repo_output_allows_plain(tmp_path):
     az.run_index(plain, plain / "analysis")  # must not raise
 
 
+@needs_hooks
 def test_verify_claims_would_fire_matches_hook_behavior():
     # claim + zero tools -> flagged; claim + any tool -> claim_with_tools instead
     t_fab = [U("fix it"), A(T("I ran the tests and they pass."))]
@@ -171,6 +176,7 @@ def test_verify_claims_would_fire_matches_hook_behavior():
     assert any(f["rule"] == "claude_md.claim_with_tools" for f in flags_ok)
 
 
+@needs_hooks
 def test_reflect_would_fire_on_commit_without_status_icon():
     t = [
         U("ship it"),
@@ -182,6 +188,7 @@ def test_reflect_would_fire_on_commit_without_status_icon():
     assert any(f["rule"] == "hooks.reflect_would_fire" for f in flags)
 
 
+@needs_hooks
 def test_interrupted_turn_emits_no_would_fire():
     # Same turn as the test above, but the user cut it off: no Stop happened, so
     # replaying the hook over it would count a block that could not have landed.
