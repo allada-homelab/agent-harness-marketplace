@@ -1,8 +1,18 @@
-# bin/check.sh is the whole contract: index currency, the portable skill lint
-# (proven to bite on a fixture), version agreement across package.json /
-# plugin.json / marketplace entry, the root pi manifest against skill scopes,
-# hook manifests + the hook conformance corpus, the private-path grep, and every
-# module's Python and Node tests (the pi/dsh runners are held to the same corpus).
+# bin/check.sh is the whole deterministic contract: index currency, the portable
+# skill lint (proven to bite on a fixture), version agreement across
+# package.json / plugin.json / marketplace entry, the root pi manifest against
+# skill scopes, hook manifests + the hook conformance corpus, content-module
+# wiring (dsh bridge row, hooks paths, pi globs), `claude plugin validate`, the
+# version-bump check against main, the private-path grep, every module's tests,
+# and the conformance suites (each dsh plugin applied under a strict cordis ctx,
+# each pi extension loaded against a strict ExtensionAPI stub).
+#
+# `smoke` goes one step further and installs the real harnesses from npm: pi
+# must load the repo as a package and fire a hook through hook-runner-pi; dsh
+# must install modules into a scratch profile and every installed plugin must
+# apply. This is the layer that catches "registers nothing" bugs the unit
+# tests cannot see, so it is a separate job: a harness install hiccup must not
+# mask the deterministic gate.
 name: check
 
 on:
@@ -14,13 +24,34 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      CI: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: pnpm
       - uses: astral-sh/setup-uv@v5
+      - name: Install the Claude Code CLI (for `claude plugin validate`)
+        run: npm install -g @anthropic-ai/claude-code
       - name: bin/check.sh
-        run: ./bin/check.sh
+        run: CHECK_BASE=origin/main ./bin/check.sh
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pi and dsh from npm
+        run: npm install -g @earendil-works/pi-coding-agent @deepseek-ai/dsh
+      - name: pi loads the repo as a package and hook-runner-pi fires a hook
+        run: bash tests/smoke/pi.sh
+      - name: dsh installs modules into a scratch profile and every plugin applies
+        run: bash tests/smoke/dsh.sh
