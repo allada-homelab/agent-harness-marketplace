@@ -155,6 +155,12 @@ Branch off `main`, one atomic commit, open a PR. CI runs `check` (that is
 `CHECK_BASE=origin/main ./bin/check.sh`, full, no `--no-node`) and `smoke` (pi and
 dsh installed from npm for real). Both must be green.
 
+On merge, a third job cuts the **repo** tag automatically: a merge that changed
+anything under `modules/` gets the next patch tag, one that didn't gets none. Do
+not tag by hand for a normal release — only to move the minor or major, which the
+job never does on its own. This is separate from the module version you bumped in
+step 2; both exist, and neither derives from the other.
+
 ## Traps
 
 These pass a casual reading and fail the gate:
