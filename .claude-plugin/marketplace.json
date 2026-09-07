@@ -43,6 +43,13 @@
       "source": "./modules/claude-transcripts"
     },
     {
+      "name": "plan-for-dummies",
+      "description": "Scope and plan a coding task so that a less capable model can implement it without your context or judgment.",
+      "category": "development",
+      "version": "0.1.0",
+      "source": "./modules/plan-for-dummies"
+    },
+    {
       "name": "dual-agent-pr-review",
       "description": "Review a GitHub PR with Claude Code and Codex in parallel, then reconcile their findings into one consensus set.",
       "category": "development",
