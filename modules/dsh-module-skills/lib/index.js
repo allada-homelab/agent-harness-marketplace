@@ -29,7 +29,7 @@ import { scanRoot, parseSkill, frontmatterBoolean } from './skills.js';
 import { expandArguments, usesArguments } from './expand.js';
 
 export const name = 'module-skills';
-export const inject = ['skills'];
+export const inject = ['skills', 'commands'];
 
 /**
  * Default provider label carried on every candidate this plugin contributes.
