@@ -52,9 +52,13 @@ Two sources, deduped by realpath, in this order:
    (`<root>/modules/hook-runner-pi/extensions/hook-runner.ts`) and loads
    `<root>/modules/*/hooks/hooks.json`. That works from any install root pi
    picked — `~/.pi/agent/git/...`, a local path install, a worktree — without
-   reading pi's settings. A sibling module that is Claude-only still has its
-   manifest loaded: `hooks.json` is the product surface, not an implementation
-   detail of one harness.
+   reading pi's settings for the location. A sibling module that pi's own
+   package filter switches off is skipped: the runner reads every git package
+   entry in pi's `settings.json` (`$PI_CODING_AGENT_DIR`, default
+   `~/.pi/agent`) and treats each `!modules/<name>/**` pattern on `skills` or
+   `extensions` as "no hooks either" — otherwise a module an operator turned
+   off for pi would keep running its lifecycle and tool hooks on every start.
+   `$PI_HOOK_EXCLUDE_MODULES` (comma-separated names) adds to that list.
 2. **`$PI_HOOK_MANIFESTS`**, colon-separated. Each entry is either a
    `hooks.json` path or a module directory containing `hooks/hooks.json`. This
    is the dotfiles/fleet path, where the modules are not siblings.
