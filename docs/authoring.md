@@ -8,7 +8,7 @@ modules/<name>/
   package.json                 # every module: {"name": "@allada-homelab/<name>", "version", "pi": {…},
                                #   "dsh": {"bundle": {"patch": "./cordis.patch.yml"}}} — content modules too,
                                #   or dsh installs the package as a plain dependency and ignores the patch
-  cordis.patch.yml             # dsh loader rows; a content module inserts one dsh-module-skills row
+  cordis.patch.yml             # dsh loader rows; empty for a content module — the skills bridge is foundation
   skills/<skill>/SKILL.md      # THE shared content — commands are skills
   extensions/<n>.ts            # pi adapter (optional; event-only, no registerTool)
   hooks/hooks.json             # Claude-shaped hooks; runs on pi/dsh through the hook runners
@@ -40,12 +40,13 @@ Enforced by `bin/lint-skills.py` (run through `bin/check.sh`).
   base, so `./scripts/x.py` resolves into the directory shared with every sibling.
 - **A command** is `user-invocable: true` plus `argument-hint` (add
   `disable-model-invocation: true` when the model must never trigger it). It is
-  `/name` on Claude, `/skill:name` on pi (`/name` with skill-commands-pi) and
-  `/name` on dsh through dsh-module-skills.
+  `/name` on Claude, `/skill:name` on pi (`/name` through the pi harness's
+  skill-commands foundation extension) and `/name` on dsh through the
+  harness's skills bridge.
 - **Substitutions**: `$ARGUMENTS` and `$N` only. Claude and pi expand them
-  natively; dsh expands them only through dsh-module-skills, so write the body so
-  it still reads correctly with the token unexpanded and the user's text
-  following as prose ("Research target: $ARGUMENTS").
+  natively; dsh expands them only through the harness's skills bridge, so write
+  the body so it still reads correctly with the token unexpanded and the user's
+  text following as prose ("Research target: $ARGUMENTS").
 - **Forbidden** in a portable skill: `context: fork`, `agent:`, `hooks:`,
   `effort:`, `model:`, `allowed-tools:` (dsh drops it silently, and a tool
   restriction that vanishes is worse than none), `${CLAUDE_*}` placeholders,
@@ -59,8 +60,8 @@ Enforced by `bin/lint-skills.py` (run through `bin/check.sh`).
 ## Hooks
 
 Ship one `hooks/hooks.json` in Claude's shape with `"type": "command"` handlers
-and `${CLAUDE_PLUGIN_ROOT}` paths. Claude reads it natively; hook-runner-pi and
-hook-runner-dsh map it onto their harness's seams. Read
+and `${CLAUDE_PLUGIN_ROOT}` paths. Claude reads it natively; the pi and dsh
+harnesses' hook runners map it onto their harness's seams. Read
 [`hook-contract/README.md`](../hook-contract/README.md) for the exact stdin and
 stdout contract and the two known fidelity gaps: `Stop` cannot block on pi (a
 block becomes a follow-up user message) and `PreToolUse` cannot rewrite on dsh

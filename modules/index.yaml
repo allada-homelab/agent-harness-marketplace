@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: claude-transcripts
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -31,18 +31,8 @@ modules:
     command: false
     summary: Export Claude Code transcript JSONL out of the host and dev-container docker volumes to an
       on-device cache for later analysis.
-- name: dsh-module-skills
-  version: 0.1.1
-  kinds:
-  - dsh-plugin
-  harness:
-  - dsh
-  description: Make a marketplace module's skills/ directory visible to dsh. Registers one ctx.skills
-    provider over every module root (config.dirs plus the profile's own bundles) and adds $ARGUMENTS/$N
-    expansion for user-invocable skills, which dsh's native slash path does not do.
-  skills: []
 - name: dual-agent-pr-review
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -60,7 +50,7 @@ modules:
     summary: Review a GitHub PR with two independent CLI reviewers (Claude Code and Codex) in parallel,
       then reconcile their findings into one evidence-backed consensus set.
 - name: get-shit-done
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -84,7 +74,7 @@ modules:
       for hard reasoning) under an Opus/Fable orchestrator, run concurrent Sonnet research (web + context7),
       fan out through a checked dynamic workflow, and adversarially verify before done.
 - name: get-shit-done-claude
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -102,25 +92,8 @@ modules:
     summary: Get a complex or fan-out task done — decompose it, delegate each subtask to the cheapest
       capable model under an Opus/Fable orchestrator, research concurrently, fan out through a checked
       dynamic workflow, and adversarially verify (Opus) before reporting done.
-- name: hook-runner-dsh
-  version: 0.1.1
-  kinds:
-  - dsh-plugin
-  harness:
-  - dsh
-  description: Run a marketplace module's Claude-shaped hooks/hooks.json natively on the DeepSeek Harness.
-  skills: []
-- name: hook-runner-pi
-  version: 0.1.1
-  kinds:
-  - pi-extension
-  harness:
-  - pi
-  description: Runs Claude Code hooks/hooks.json manifests on pi by mapping each event onto pi's native
-    extension seam.
-  skills: []
 - name: minimalist-code-review
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -143,7 +116,7 @@ modules:
       and reuse over speculative flexibility, watches runtime/query cost, marks nits explicitly, and keeps
       a warm, concise tone.
 - name: research
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -164,12 +137,3 @@ modules:
     command: true
     summary: Run the research-before-acting ladder as an explicit step — scale depth to blast radius,
       fan out parallel read-only agents, and return a scope with a recommendation.
-- name: skill-commands-pi
-  version: 0.1.0
-  kinds:
-  - pi-extension
-  harness:
-  - pi
-  description: 'Registers /name for every loaded pi skill whose frontmatter says user-invocable: true,
-    aliasing /skill:name.'
-  skills: []

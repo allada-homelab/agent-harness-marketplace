@@ -1,29 +1,37 @@
 # Install on dsh
 
-dsh installs per module through pnpm's `path:` fragment. Install the skills
-bridge once per profile, then each module you want:
+dsh installs per module through pnpm's `path:` fragment:
 
 ```
-dsh plugin --profile <profile> add "github:allada-homelab/agent-harness-marketplace#v0.1.0&path:/modules/dsh-module-skills"
 dsh plugin --profile <profile> add "github:allada-homelab/agent-harness-marketplace#v0.1.0&path:/modules/research"
 ```
 
-Why the bridge: dsh's skill provider only reads fixed roots, so an installed
-package's `skills/` directory is invisible on its own. Each content module's
-`cordis.patch.yml` inserts one bridge row scoped to that package, and the
-module's `package.json` carries `dsh.bundle.patch` so dsh treats it as a profile
-layer rather than a plain dependency. User-invocable skills whose body uses
-`$ARGUMENTS`/`$N` also become real `/name <args>` commands (dsh injects a skill
-body verbatim otherwise).
+dsh's skill provider only reads fixed roots, so an installed package's
+`skills/` directory is invisible on its own, and hooks need something to run
+them. Both are handled by harness-side foundation — `@davidallada/dsh-module-skills`
+(the skills bridge) and `@davidallada/dsh-hook-runner` — that lives in
+the maintainer's dotfiles harness layer (private) and is always installed on every
+dsh profile there; this repo's install docs assume it is present. Each content
+module's `dsh.bundle.patch` key (an intentionally empty `cordis.patch.yml`) is
+what makes dsh treat it as a profile layer the bridge auto-discovers, rather
+than a plain dependency. User-invocable skills whose body uses `$ARGUMENTS`/`$N`
+also become real `/name <args>` commands through the bridge (dsh injects a
+skill body verbatim otherwise).
 
-For hooks, add `hook-runner-dsh` the same way. `PreToolUse` rewrites become a
-deny that names the intended input, because dsh freezes tool arguments before
-its pre-execute waterfall; see `hook-contract/README.md`.
+`PreToolUse` rewrites become a deny that names the intended input, because dsh
+freezes tool arguments before its pre-execute waterfall; see
+`hook-contract/README.md`.
 
-Warnings from both plugins go to `process.stderr` (dsh's `ctx.logger` does not
-reach journald).
+Warnings from both foundation plugins go to `process.stderr` (dsh's
+`ctx.logger` does not reach journald).
 
 ## Verified 2026-09-06 (dsh 0.1.1-rc.2, throwaway `DSH_HOME`, local-path installs)
+
+Captured before the 2026-09-07 move: `dsh-module-skills` and `hook-runner-dsh`
+were sibling modules of this repo at the time, installed with the same `dsh
+plugin add` command shown below. On the current layout they are installed
+once, by dotfiles, as `@davidallada/dsh-module-skills` and
+`@davidallada/dsh-hook-runner`, not added per profile from this repo.
 
 ```
 $ dsh plugin --profile e2e add "file:…/modules/dsh-module-skills"

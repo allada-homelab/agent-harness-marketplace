@@ -1,6 +1,6 @@
 {
   "name": "@allada-homelab/get-shit-done",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Method for getting a complex or fan-out task done by decomposing it and delegating each subtask to the cheapest capable model.",

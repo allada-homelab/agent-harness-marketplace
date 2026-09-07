@@ -1,6 +1,6 @@
 {
   "name": "@allada-homelab/minimalist-code-review",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "A pragmatic, anti-over-engineering pull-request reviewer with a warm, Socratic voice.",

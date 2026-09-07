@@ -1,0 +1,10 @@
+{
+  "$comment": "Portable hook events a module manifest may use; the runners' conformance corpus (kept beside the runners in the maintainer's harness layer) is graded against the same names.",
+  "events": [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "Stop"
+  ]
+}

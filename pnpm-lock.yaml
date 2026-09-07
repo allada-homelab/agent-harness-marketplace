@@ -14,31 +14,15 @@ importers:
 
   modules/claude-transcripts: {}
 
-  modules/dsh-module-skills: {}
-
   modules/dual-agent-pr-review: {}
 
   modules/get-shit-done: {}
 
   modules/get-shit-done-claude: {}
 
-  modules/hook-runner-dsh: {}
-
-  modules/hook-runner-pi:
-    devDependencies:
-      esbuild:
-        specifier: 0.25.0
-        version: 0.25.0
-
   modules/minimalist-code-review: {}
 
   modules/research: {}
-
-  modules/skill-commands-pi:
-    devDependencies:
-      esbuild:
-        specifier: 0.25.0
-        version: 0.25.0
 
 packages:
 

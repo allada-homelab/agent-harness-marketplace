@@ -1,7 +1,10 @@
 {
   "name": "dual-agent-pr-review",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Review a GitHub PR with Claude Code and Codex in parallel, then reconcile their findings into one consensus set.",
-  "author": { "name": "David Allada", "email": "davidanilallada@gmail.com" },
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
   "license": "MIT"
 }

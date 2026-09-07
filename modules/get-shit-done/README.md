@@ -14,4 +14,3 @@ the fan-out with the Workflow tool.
   (`pi install git:github.com/allada-homelab/agent-harness-marketplace`); narrow with
   `settings.packages`
 - dsh: `dsh plugin --profile <p> add "github:allada-homelab/agent-harness-marketplace#v0.1.0&path:/modules/get-shit-done"`
-  (after installing `dsh-module-skills` the same way once)

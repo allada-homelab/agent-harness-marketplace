@@ -1,7 +1,10 @@
 {
   "name": "get-shit-done",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Method for getting a complex or fan-out task done by decomposing it and delegating each subtask to the cheapest capable model.",
-  "author": { "name": "David Allada", "email": "davidanilallada@gmail.com" },
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
   "license": "MIT"
 }

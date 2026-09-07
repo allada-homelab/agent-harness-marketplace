@@ -8,9 +8,10 @@
 Or declaratively in `.claude/settings.json` with `extraKnownMarketplaces` and
 `enabledPlugins`. Narrow what a plugin contributes with `skillOverrides`.
 
-Only modules with a `.claude-plugin/plugin.json` are Claude plugins; the
-foundation modules (`dsh-module-skills`, `hook-runner-*`, `skill-commands-pi`)
-have no Claude face because Claude already reads `hooks/hooks.json` natively.
+Only modules with a `.claude-plugin/plugin.json` are Claude plugins; the pi
+and dsh harness-side foundation (the skills bridge, the hook runners) lives
+outside this repo and has no Claude face because Claude already reads
+`hooks/hooks.json` natively.
 
 ## Verified 2026-09-06 (Claude Code CLI, marketplace added from a local checkout)
 
