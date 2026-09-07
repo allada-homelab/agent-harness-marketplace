@@ -9,7 +9,7 @@ natively on **Claude Code**, **pi** (`@earendil-works/pi-coding-agent`) and **ds
 |---|---|---|---|
 | Claude Code | `/plugin marketplace add allada-homelab/agent-harness-marketplace` then `/plugin install <module>@agent-harness-marketplace` | bump the module's version | `skillOverrides` in settings |
 | pi | `pi install git:github.com/allada-homelab/agent-harness-marketplace@vX.Y.Z` (the repo root is the pi package) | `pi install …@vNext` | `settings.packages[{source, skills: ["!modules/<n>/**"]}]` |
-| dsh | once: `dsh plugin --profile <p> add "github:allada-homelab/agent-harness-marketplace#vX.Y.Z&path:/modules/dsh-module-skills"`, then the same with `path:/modules/<module>` per module | re-add at the new ref | install only what you want |
+| dsh | `dsh plugin --profile <p> add "github:allada-homelab/agent-harness-marketplace#vX.Y.Z&path:/modules/<module>"` per module | re-add at the new ref | install only what you want |
 
 Per-harness walkthroughs with the exact commands and their output on a fresh
 install: [docs/install-claude.md](docs/install-claude.md),
@@ -29,17 +29,14 @@ Content modules (skills only, no code):
 - **research** — `/research <topic>`: the research-before-acting ladder as a step.
 - **claude-transcripts**, **dual-agent-pr-review** — Claude Code only.
 
-Foundation modules (code; install once, then every content or ambient module
-works on that harness):
-
-- **dsh-module-skills** — makes an installed dsh package's `skills/` directory
-  visible to dsh, and gives `user-invocable` skills a real `/name <args>` command
-  with `$ARGUMENTS`/`$N` expansion. Required for any content module on dsh.
-- **hook-runner-pi**, **hook-runner-dsh** — run a module's Claude-shaped
-  `hooks/hooks.json` on pi and dsh. The contract and the conformance corpus both
-  runners pass are in [`hook-contract/`](hook-contract/README.md).
-- **skill-commands-pi** — `/name` for user-invocable skills on pi (pi's native
-  spelling is `/skill:name`).
+The harness-side foundation that content modules need to run on a given
+harness (the dsh skills bridge, the pi and dsh hook runners, and pi's `/name`
+commands) is no longer part of this repo: it lives in
+the maintainer's dotfiles harness layer (a private repo; not published here)
+under `agents/harnesses/`, always installed there. This repo ships
+user-facing modules only. The hook contract's prose stays in
+[`hook-contract/README.md`](hook-contract/README.md); its executable corpus
+now lives beside the runners in that repo.
 
 ## Authoring
 
