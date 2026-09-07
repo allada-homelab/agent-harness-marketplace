@@ -32,7 +32,7 @@ modules:
     summary: Export Claude Code transcript JSONL out of the host and dev-container docker volumes to an
       on-device cache for later analysis.
 - name: dsh-module-skills
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - dsh-plugin
   harness:
