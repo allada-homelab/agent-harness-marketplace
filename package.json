@@ -6,7 +6,12 @@
   "type": "module",
   "license": "MIT",
   "repository": "github:allada-homelab/agent-harness-marketplace",
-  "keywords": ["pi-package", "claude-code", "dsh", "agent-skills"],
+  "keywords": [
+    "pi-package",
+    "claude-code",
+    "dsh",
+    "agent-skills"
+  ],
   "packageManager": "pnpm@11.22.0",
   "pi": {
     "skills": [
@@ -15,10 +20,16 @@
       "!modules/dual-agent-pr-review/**",
       "!modules/get-shit-done-claude/**"
     ],
-    "extensions": ["modules/*/extensions/*.ts"]
+    "extensions": [
+      "modules/*/extensions/*.ts"
+    ]
   },
   "scripts": {
     "test": "pnpm -r --if-present test",
-    "check": "bin/check.sh"
+    "check": "bin/check.sh",
+    "test:conformance": "node --test tests/conformance/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.0"
   }
 }

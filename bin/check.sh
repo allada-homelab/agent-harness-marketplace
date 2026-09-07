@@ -147,6 +147,73 @@ print(f"  ok ({len(names)} corpus cases)" if not bad else f"  {bad} problem(s)")
 sys.exit(1 if bad else 0)
 PY
 
+step "content modules: dsh bridge row, hooks paths, pi skills globs"
+py - <<'PY2' || fail=1
+# A content module is only configured when its dsh row mounts the bridge under a
+# module-unique id/provider scoped to its own package, every hooks.json command
+# names a file that ships with the module, and its pi manifest resolves to real
+# skill directories. All three failed silently before this check existed.
+import glob, json, pathlib, re, sys, yaml
+bad = 0
+ids, providers = {}, {}
+for mod in sorted(p for p in pathlib.Path("modules").iterdir() if p.is_dir()):
+    pkg = json.load(open(mod / "package.json"))
+    if (mod / "skills").is_dir() and not (mod / "lib").is_dir():
+        rows = yaml.safe_load((mod / "cordis.patch.yml").read_text()) or []
+        inserts = [r for op in rows for r in (op.get("insert") or [])]
+        if len(inserts) != 1:
+            print(f"  FAIL {mod}: cordis.patch.yml must insert exactly one bridge row, has {len(inserts)}"); bad += 1; continue
+        row = inserts[0]; cfg = row.get("config") or {}
+        want_id = f"module-skills-{mod.name}"
+        for what, got, want in (("id", row.get("id"), want_id), ("name", row.get("name"), "@allada-homelab/dsh-module-skills"),
+                                ("config.providerName", cfg.get("providerName"), want_id), ("config.bundles", cfg.get("bundles"), [pkg["name"]])):
+            if got != want:
+                print(f"  FAIL {mod}: cordis row {what} = {got!r}, want {want!r}"); bad += 1
+        for key, table in ((row.get("id"), ids), (cfg.get("providerName"), providers)):
+            if key in table: print(f"  FAIL {mod}: cordis {key!r} also used by {table[key]} (duplicates collide in dsh)"); bad += 1
+            table[key] = mod.name
+    for pattern in (pkg.get("pi") or {}).get("skills", []):
+        if pattern.startswith("!"): continue
+        hits = [h for h in glob.glob(str(mod / pattern)) if pathlib.Path(h, "SKILL.md").exists()]
+        if not hits: print(f"  FAIL {mod}: pi.skills pattern {pattern!r} matches no skill directory"); bad += 1
+    hj = mod / "hooks" / "hooks.json"
+    if hj.exists():
+        for groups in json.load(open(hj))["hooks"].values():
+            for g in groups:
+                for h in g.get("hooks", []):
+                    for ref in re.findall(r"\$\{CLAUDE_PLUGIN_ROOT\}/([^\s\"']+)", h.get("command", "")):
+                        if not (mod / ref).exists(): print(f"  FAIL {hj}: command references {ref} which is not in the module"); bad += 1
+print("  ok" if not bad else f"  {bad} problem(s)")
+sys.exit(1 if bad else 0)
+PY2
+
+step "claude plugin validate (marketplace + every Claude plugin module)"
+if command -v claude >/dev/null; then
+    claude plugin validate . >/dev/null 2>&1 && echo "  ok marketplace" || { echo "  FAIL: marketplace.json"; claude plugin validate . 2>&1 | tail -5; fail=1; }
+    for m in modules/*/; do
+        [ -f "$m/.claude-plugin/plugin.json" ] || continue
+        claude plugin validate "$m" >/dev/null 2>&1 && echo "  ok $m" || { echo "  FAIL: $m"; claude plugin validate "$m" 2>&1 | tail -5; fail=1; }
+    done
+else
+    if [ -n "${CI:-}" ]; then echo "  FAIL: claude CLI missing in CI"; fail=1; else echo "  skipped (claude CLI not on PATH)"; fi
+fi
+
+step "a changed module bumped its version (against \$CHECK_BASE)"
+# pi and dsh consume modules at a tag, so a change that keeps the version is
+# invisible to them. CI sets CHECK_BASE=origin/main; locally it is skipped.
+if [ -n "${CHECK_BASE:-}" ] && git rev-parse -q --verify "$CHECK_BASE" >/dev/null; then
+    bad=0
+    for m in $(git diff --name-only "$CHECK_BASE"...HEAD -- modules | awk -F/ '{print $2}' | sort -u); do
+        [ -f "modules/$m/package.json" ] || continue
+        old=$(git show "$CHECK_BASE:modules/$m/package.json" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)
+        new=$(python3 -c "import json;print(json.load(open('modules/$m/package.json'))['version'])")
+        if [ -n "$old" ] && [ "$old" = "$new" ]; then echo "  FAIL modules/$m changed but version stays $new"; bad=1; fi
+    done
+    [ "$bad" = 0 ] && echo "  ok" || fail=1
+else
+    echo "  skipped (CHECK_BASE unset)"
+fi
+
 step "nothing in a module points at a path only this machine has"
 # /home/<user>/ is a private path; /home/vscode/ is the dev-container fixture path.
 # Also catch homelab hostnames, RFC1918 IPs, and the author's homelab machine name
@@ -172,6 +239,9 @@ if [ "$node_tests" = 1 ]; then
     if command -v pnpm >/dev/null; then
         pnpm install --frozen-lockfile --silent >/dev/null || pnpm install --silent >/dev/null || { echo "  FAIL: pnpm install"; fail=1; }
         pnpm -r --if-present test || fail=1
+        step "conformance: every dsh plugin applies under a strict ctx, every pi extension loads"
+        node --test tests/conformance/*.test.mjs 2>&1 | grep -E 'ℹ (pass|fail)|✖' || true
+        node --test tests/conformance/*.test.mjs >/dev/null 2>&1 || fail=1
     else
         echo "  FAIL: pnpm not found (pass --no-node to skip locally; CI never skips)"; fail=1
     fi
