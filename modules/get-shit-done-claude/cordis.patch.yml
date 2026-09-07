@@ -1,13 +1,5 @@
-# dsh: this module's skills/ reach dsh through the generic bridge
-# (modules/dsh-module-skills), installed once per profile. This row mounts one
-# bridge instance scoped to this package; ids and provider names are
-# module-specific because duplicates collide in the loader tree and in
-# ctx.skills. Nothing here executes.
-- insert:
-    - id: module-skills-get-shit-done-claude
-      name: '@allada-homelab/dsh-module-skills'
-      config:
-        providerName: module-skills-get-shit-done-claude
-        bundles:
-          - '@allada-homelab/get-shit-done-claude'
-        dirs: []
+# Empty on purpose. This module is a dsh BUNDLE (package.json `dsh.bundle`)
+# so the harness lists it in the profile's dsh.profile.bundles — and the
+# always-installed skills bridge in the maintainer's harness layer discovers
+# every bundle that ships skills/. Nothing to insert.
+[]

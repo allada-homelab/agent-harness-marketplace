@@ -11,4 +11,3 @@ A pragmatic, anti-over-engineering pull-request reviewer with a warm, Socratic v
   (`pi install git:github.com/allada-homelab/agent-harness-marketplace`); narrow with
   `settings.packages`
 - dsh: `dsh plugin --profile <p> add "github:allada-homelab/agent-harness-marketplace#v0.1.0&path:/modules/minimalist-code-review"`
-  (after installing `dsh-module-skills` the same way once)

@@ -1,11 +1,19 @@
+> **The executable corpus and its fixtures moved** (2026-09-07) to
+> the maintainer's harness layer (private), beside the two runners,
+> beside the two hook runners, which are harness foundation now (see this
+> repo's `README.md`). This file remains the author-facing contract: what a
+> module's `hooks/hooks.json` may contain and how each event maps onto pi and
+> dsh. `events.json` beside this file is the list `bin/check.sh` validates a
+> module's event keys against.
+
 # The hook contract
 
 A module ships **one** `hooks/hooks.json` in Claude Code's shape, and it runs on
 all three harnesses. Claude reads the file natively. On pi and dsh a generic
-runner (`modules/hook-runner-pi`, `modules/hook-runner-dsh`) reads the same file
-and maps each event onto the harness's native seam. This directory is the
-contract both runners are held to: `corpus.json` is the conformance corpus, and
-`fixtures/` are the hook scripts the corpus invokes.
+runner (installed as harness foundation, not as a marketplace module) reads
+the same file and maps each event onto the harness's native seam. The
+conformance corpus both runners are held to, and the fixtures it invokes, live
+beside the runners (link above); this file is the contract itself.
 
 ## Manifest
 

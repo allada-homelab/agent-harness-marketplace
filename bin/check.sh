@@ -114,64 +114,45 @@ print("  ok" if not bad else f"  {bad} problem(s)")
 sys.exit(1 if bad else 0)
 PY
 
-step "hook manifests parse and the contract corpus is consistent"
+step "hook manifests parse and use contract events"
 py - <<'PY' || fail=1
 import json, pathlib, sys
 bad = 0
+events = set(json.load(open("hook-contract/events.json"))["events"])
 for hj in sorted(pathlib.Path("modules").glob("*/hooks/hooks.json")):
     try:
         h = json.load(open(hj))["hooks"]
     except Exception as e:
         print(f"  FAIL {hj}: {e}"); bad += 1; continue
     for event, groups in h.items():
+        if event not in events:
+            print(f"  FAIL {hj}: event {event} is not in hook-contract/events.json"); bad += 1
         for g in groups:
             for handler in g.get("hooks", []):
                 if handler.get("type") != "command":
                     print(f"  WARN {hj}: {event} handler type {handler.get('type')!r} is Claude-only; pi/dsh runners skip it")
-c = json.load(open("hook-contract/corpus.json"))
-names = set()
-for case in c["cases"]:
-    if case["name"] in names: print(f"  FAIL corpus: duplicate case {case['name']}"); bad += 1
-    names.add(case["name"])
-    for groups in case["hooks"].values():
-        for g in groups:
-            for handler in g.get("hooks", []):
-                cmd = handler.get("command", "")
-                if "fixtures/" in cmd:
-                    fx = cmd.split("fixtures/")[1].split('"')[0]
-                    if not pathlib.Path("hook-contract/fixtures", fx).exists() and "does-not-exist" not in fx:
-                        print(f"  FAIL corpus {case['name']}: fixture {fx} missing"); bad += 1
-    for hz in case["harness"]:
-        if hz not in case["native"]: print(f"  FAIL corpus {case['name']}: no native event for {hz}"); bad += 1
-print(f"  ok ({len(names)} corpus cases)" if not bad else f"  {bad} problem(s)")
+print("  ok" if not bad else f"  {bad} problem(s)")
 sys.exit(1 if bad else 0)
 PY
 
-step "content modules: dsh bridge row, hooks paths, pi skills globs"
+step "content modules: empty dsh patch, hooks paths, pi skills globs"
 py - <<'PY2' || fail=1
-# A content module is only configured when its dsh row mounts the bridge under a
-# module-unique id/provider scoped to its own package, every hooks.json command
-# names a file that ships with the module, and its pi manifest resolves to real
-# skill directories. All three failed silently before this check existed.
+# A content module is a dsh bundle discovered by the always-installed skills
+# bridge (harness foundation, not a marketplace module), so its cordis.patch.yml
+# must stay empty; every hooks.json command must name a file that ships with
+# the module; and its pi manifest must resolve to real skill directories. All
+# three failed silently before this check existed.
 import glob, json, pathlib, re, sys, yaml
 bad = 0
-ids, providers = {}, {}
 for mod in sorted(p for p in pathlib.Path("modules").iterdir() if p.is_dir()):
     pkg = json.load(open(mod / "package.json"))
     if (mod / "skills").is_dir() and not (mod / "lib").is_dir():
-        rows = yaml.safe_load((mod / "cordis.patch.yml").read_text()) or []
-        inserts = [r for op in rows for r in (op.get("insert") or [])]
-        if len(inserts) != 1:
-            print(f"  FAIL {mod}: cordis.patch.yml must insert exactly one bridge row, has {len(inserts)}"); bad += 1; continue
-        row = inserts[0]; cfg = row.get("config") or {}
-        want_id = f"module-skills-{mod.name}"
-        for what, got, want in (("id", row.get("id"), want_id), ("name", row.get("name"), "@allada-homelab/dsh-module-skills"),
-                                ("config.providerName", cfg.get("providerName"), want_id), ("config.bundles", cfg.get("bundles"), [pkg["name"]])):
-            if got != want:
-                print(f"  FAIL {mod}: cordis row {what} = {got!r}, want {want!r}"); bad += 1
-        for key, table in ((row.get("id"), ids), (cfg.get("providerName"), providers)):
-            if key in table: print(f"  FAIL {mod}: cordis {key!r} also used by {table[key]} (duplicates collide in dsh)"); bad += 1
-            table[key] = mod.name
+        if pkg.get("dsh", {}).get("bundle", {}).get("patch") != "./cordis.patch.yml":
+            print(f"  FAIL {mod}: package.json must carry dsh.bundle.patch"); bad += 1
+        else:
+            patch = yaml.safe_load((mod / "cordis.patch.yml").read_text())
+            if patch not in (None, []):
+                print(f"  FAIL {mod}: cordis.patch.yml must be empty — the bridge is harness foundation now (see README)"); bad += 1
     for pattern in (pkg.get("pi") or {}).get("skills", []):
         if pattern.startswith("!"): continue
         hits = [h for h in glob.glob(str(mod / pattern)) if pathlib.Path(h, "SKILL.md").exists()]
