@@ -111,7 +111,7 @@ modules:
   description: Run a marketplace module's Claude-shaped hooks/hooks.json natively on the DeepSeek Harness.
   skills: []
 - name: hook-runner-pi
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - pi-extension
   harness:

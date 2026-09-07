@@ -1,13 +1,19 @@
 {
   "name": "@allada-homelab/hook-runner-pi",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "type": "module",
   "description": "Runs Claude Code hooks/hooks.json manifests on pi by mapping each event onto pi's native extension seam.",
   "license": "MIT",
-  "keywords": ["pi-package", "claude-code", "hooks"],
+  "keywords": [
+    "pi-package",
+    "claude-code",
+    "hooks"
+  ],
   "pi": {
-    "extensions": ["extensions/*.ts"]
+    "extensions": [
+      "extensions/*.ts"
+    ]
   },
   "devDependencies": {
     "esbuild": "0.25.0"
