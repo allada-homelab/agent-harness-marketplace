@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: claude-transcripts
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -32,7 +32,7 @@ modules:
     summary: Export Claude Code transcript JSONL out of the host and dev-container docker volumes to an
       on-device cache for later analysis.
 - name: dual-agent-pr-review
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -50,7 +50,7 @@ modules:
     summary: Review a GitHub PR with two independent CLI reviewers (Claude Code and Codex) in parallel,
       then reconcile their findings into one evidence-backed consensus set.
 - name: get-shit-done
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -74,7 +74,7 @@ modules:
       for hard reasoning) under an Opus/Fable orchestrator, run concurrent Sonnet research (web + context7),
       fan out through a checked dynamic workflow, and adversarially verify before done.
 - name: get-shit-done-claude
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -93,7 +93,7 @@ modules:
       capable model under an Opus/Fable orchestrator, research concurrently, fan out through a checked
       dynamic workflow, and adversarially verify (Opus) before reporting done.
 - name: minimalist-code-review
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -116,7 +116,7 @@ modules:
       and reuse over speculative flexibility, watches runtime/query cost, marks nits explicitly, and keeps
       a warm, concise tone.
 - name: research
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin

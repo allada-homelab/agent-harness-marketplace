@@ -1,7 +1,10 @@
 {
   "name": "get-shit-done-claude",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The Claude Code face of get-shit-done: /get-shit-done-claude:run drives the checked Workflow fan-out.",
-  "author": { "name": "David Allada", "email": "davidanilallada@gmail.com" },
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
   "license": "MIT"
 }
