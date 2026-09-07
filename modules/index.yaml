@@ -103,7 +103,7 @@ modules:
       capable model under an Opus/Fable orchestrator, research concurrently, fan out through a checked
       dynamic workflow, and adversarially verify (Opus) before reporting done.
 - name: hook-runner-dsh
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - dsh-plugin
   harness:

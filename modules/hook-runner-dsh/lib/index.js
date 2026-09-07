@@ -306,3 +306,6 @@ export function apply(ctx, config = {}) {
 }
 
 export const name = PLUGIN;
+// cordis throws on any `ctx.<service>` a plugin did not declare — `?.` cannot
+// guard the ACCESS, only the result — so without this the plugin never loads.
+export const inject = ['systemPrompt'];
