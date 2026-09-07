@@ -41,11 +41,15 @@ now lives beside the runners in that repo.
 ## Authoring
 
 Commands are skills: a `SKILL.md` with `user-invocable: true` and an
-`argument-hint` is `/name` on Claude, `/skill:name` (or `/name` with
-skill-commands-pi) on pi, and `/name` on dsh through the bridge. The portable
+`argument-hint` is `/name` on Claude, `/skill:name` on pi (`/name` through the pi
+harness's skill-commands foundation extension), and `/name` on dsh through the
+harness's skills bridge. The portable
 contract — which frontmatter keys survive all three parsers, why assets are
 referenced skill-relative, when to scope a skill with `harness: [claude]` — is
 in [docs/authoring.md](docs/authoring.md) and enforced by `bin/lint-skills.py`.
+The procedure around it — the manifests that must agree, the generated files, the
+traps — is the repo-scoped skill in
+[`.agents/skills/adding-a-module/`](.agents/skills/adding-a-module/SKILL.md).
 Everything the repo can verify about itself runs from one command:
 
 ```

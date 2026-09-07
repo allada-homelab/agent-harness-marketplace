@@ -22,7 +22,7 @@ is relative to the repo root.
 |---|---|
 | A skill to an existing module | Create `skills/<skill>/SKILL.md`, bump that module's version everywhere it appears (`package.json`, and `plugin.json` + the marketplace entry if it has them), regenerate the index, verify. |
 | A new module | Full procedure below. |
-| Hooks | `hooks/hooks.json` in Claude's shape, `"type": "command"` handlers, event keys drawn from `hook-contract/events.json`, and every `${CLAUDE_PLUGIN_ROOT}/<path>` resolving to a file that ships in the module. Read `hook-contract/README.md` for the stdin/stdout contract and the two fidelity gaps. |
+| Hooks | `hooks/hooks.json` in Claude's shape, `"type": "command"` handlers, event keys drawn from `hook-contract/events.json`, and every `CLAUDE_PLUGIN_ROOT`-prefixed command path resolving to a file that ships in the module. Read `hook-contract/README.md` for the stdin/stdout contract and the two fidelity gaps. |
 | A pi extension (`extensions/`) or dsh plugin code (`lib/`) | **Stop and ask.** The conformance tests currently forbid both outright — `tests/conformance/pi.test.mjs` and `dsh.test.mjs` assert no module contains either. The harness-side foundation left this repo; reintroducing executable code is a repo-shape decision, not a module change. |
 
 ## New module, step by step
@@ -177,8 +177,12 @@ These pass a casual reading and fail the gate:
   dsh install at a tag, so an unbumped change is invisible to them.
 - **`harness:` unlocks the Claude-only keys only when the scope is *exactly*
   `[claude]`.** `harness: [claude, pi]` still gets every portability check, so
-  `allowed-tools`, `model`, `${CLAUDE_*}`, absolute paths and `` !`cmd` `` all
-  still fail there.
+  `allowed-tools`, `model`, `CLAUDE_*` placeholders, absolute paths and
+  bang-backtick shell injection all still fail there.
+- **Never write a bang immediately followed by a backtick in any SKILL.md body,
+  even inside a code span.** Claude Code's skill loader executes it as a shell
+  command at load time and the skill fails to load — a stricter rule than the
+  repo lint, which only catches it at the start of a line.
 - **A `description` over 1024 characters fails the lint** — pi sends it on every
   request of the agentic loop.
 - **Leftover `node_modules/` in a deleted module's directory** makes `check.sh`
