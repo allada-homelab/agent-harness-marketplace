@@ -62,6 +62,12 @@ Git tags `vX.Y.Z` are what pi and dsh install. Each module carries its own
 version in `package.json`, `.claude-plugin/plugin.json` and its
 `.claude-plugin/marketplace.json` entry; `bin/check.sh` fails when they disagree.
 
+The repo tag is cut automatically: a merge to `main` that changed anything under
+`modules/` gets the next patch tag once `check` and `smoke` are green. A merge
+that changed only docs, CI or repo tooling ships nothing installable and gets no
+tag. Patch is the only automatic step — push a tag by hand to move the minor or
+major, and the next automatic tag continues from it.
+
 ## History
 
 Until 2026-09-01 this repository held a `~/.agents` tree of skills and shared

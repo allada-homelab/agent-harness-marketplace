@@ -56,3 +56,65 @@ jobs:
         run: bash tests/smoke/pi.sh
       - name: dsh installs a content module into a scratch profile and every plugin applies
         run: bash tests/smoke/dsh.sh
+
+  # A tag is the install ref: `pi install …@vX.Y.Z` and dsh's `#vX.Y.Z` resolve to
+  # one. So a tag is cut exactly when the content those commands deliver changed —
+  # any file under modules/. A docs, CI or repo-skill merge ships nothing to a user
+  # and gets no tag; replaying this rule over every merge to date reproduces both
+  # deliberate skips (#7, #10).
+  #
+  # The number comes from the newest v* tag, not from a version field. Root
+  # package.json has never agreed with the tags (v0.2.1 sits on root 0.2.0) and
+  # nothing reads it as a release version — bin/check.sh only enforces the
+  # per-module versions. Patch is the only automatic step: to move the minor or
+  # major, push that tag by hand and the next automatic tag continues from it.
+  tag:
+    needs: [check, smoke]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the repo default is read, and only this job needs more
+    concurrency:
+      group: tag-main # queue merges that land together; never cancel a tag push
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the default depth of 1 hides every existing tag
+
+      - name: Tag when this push changed modules/
+        run: |
+          set -euo pipefail
+
+          # github.event.before is the previous tip of main, but it is unusable on a
+          # first push (all zeros) and after history rewrites; the merge commit's
+          # first parent is the same thing for a merge or squash landing on main.
+          before='${{ github.event.before }}'
+          if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "${before}^{commit}" 2>/dev/null; then
+            before="$(git rev-parse HEAD^1)"
+          fi
+
+          if git diff --quiet "$before" HEAD -- modules; then
+            echo "No change under modules/ between $before and HEAD — nothing to release."
+            exit 0
+          fi
+
+          # sed, not head: head closes the pipe early and SIGPIPEs git once there
+          # are enough tags to fill the buffer, which pipefail turns into a failure.
+          latest="$(git tag -l 'v[0-9]*' --sort=-v:refname | sed -n 1p)"
+          [ -n "$latest" ] || latest="v0.0.0"
+          ver="${latest#v}"
+          major="${ver%%.*}"; rest="${ver#*.}"; minor="${rest%%.*}"; patch="${rest#*.}"
+          next="v${major}.${minor}.$((patch + 1))"
+
+          if git rev-parse -q --verify "refs/tags/${next}" >/dev/null; then
+            echo "::warning::${next} already exists; refusing to move it."
+            exit 0
+          fi
+
+          echo "modules/ changed — ${latest} -> ${next}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$next" -m "$next — $(git log -1 --pretty=%s)"
+          git push origin "$next"
