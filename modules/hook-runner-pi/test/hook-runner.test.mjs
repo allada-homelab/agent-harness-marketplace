@@ -220,6 +220,7 @@ describe("manifest discovery", () => {
 
 		// alpha appears twice (module dir + explicit file) and must collapse to one.
 		const env = {
+			PI_CODING_AGENT_DIR: "/nope",
 			PI_HOOK_MANIFESTS: [fleet, join(repo, "modules", "alpha", "hooks", "hooks.json"), "", "/nope"].join(":"),
 		};
 		const found = mod.manifestPaths(self, env);
@@ -227,6 +228,34 @@ describe("manifest discovery", () => {
 			join(repo, "modules", "alpha", "hooks", "hooks.json"),
 			join(repo, "modules", "beta", "hooks", "hooks.json"),
 			join(fleet, "hooks", "hooks.json"),
+		]);
+	});
+
+	test("a module pi's package filter switches off contributes no hooks", () => {
+		const repo = mkdtempSync(join(BUILD, "tree-"));
+		const self = join(repo, "modules", "hook-runner-pi", "extensions", "hook-runner.ts");
+		mkdirSync(dirname(self), { recursive: true });
+		for (const name of ["alpha", "claude-only"]) {
+			mkdirSync(join(repo, "modules", name, "hooks"), { recursive: true });
+			writeFileSync(join(repo, "modules", name, "hooks", "hooks.json"), "{}");
+		}
+		const agentDir = mkdtempSync(join(BUILD, "agent-"));
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({
+				packages: [
+					"npm:something",
+					{ source: "git:git@github.com:o/r.git@main", skills: ["!modules/claude-only/**", "!skills/x"], extensions: ["!modules/claude-only/**"] },
+				],
+			}),
+		);
+		const env = { PI_CODING_AGENT_DIR: agentDir, PI_HOOK_MANIFESTS: "" };
+		assert.deepEqual([...mod.excludedModules(env)], ["claude-only"]);
+		assert.deepEqual(mod.manifestPaths(self, env), [join(repo, "modules", "alpha", "hooks", "hooks.json")]);
+		// The env override works without settings, and an unreadable settings file excludes nothing.
+		assert.deepEqual([...mod.excludedModules({ PI_CODING_AGENT_DIR: "/nope", PI_HOOK_EXCLUDE_MODULES: "alpha, beta" })], ["alpha", "beta"]);
+		assert.deepEqual(mod.manifestPaths(self, { PI_CODING_AGENT_DIR: "/nope", PI_HOOK_EXCLUDE_MODULES: "alpha" }), [
+			join(repo, "modules", "claude-only", "hooks", "hooks.json"),
 		]);
 	});
 

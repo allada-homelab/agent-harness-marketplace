@@ -24,6 +24,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -82,7 +83,44 @@ export function warn(message: string, ctx?: any): void {
  * controlled by anyone who can open a PR against a repo you clone; Claude gates
  * them behind its own trust prompt and pi has no equivalent surface here.
  */
-export function manifestPaths(selfFile: string, env: NodeJS.ProcessEnv = process.env): string[] {
+/**
+ * Sibling modules pi was told NOT to load. pi's per-package filter
+ * (`settings.packages[{source, skills, extensions}]`) narrows skills and
+ * extensions only; hook manifests are ours to discover, so they must honor the
+ * same declaration or a module the operator switched off for pi would keep
+ * running its hooks on every start. The patterns are read from every git
+ * package entry in pi's settings (`$PI_CODING_AGENT_DIR`, default
+ * `~/.pi/agent`), plus `$PI_HOOK_EXCLUDE_MODULES` (comma-separated names).
+ * Only the `!modules/<name>/**` shape is understood; anything else is ignored.
+ */
+export function excludedModules(env: NodeJS.ProcessEnv = process.env, home = homedir()): Set<string> {
+	const out = new Set<string>();
+	for (const name of (env.PI_HOOK_EXCLUDE_MODULES ?? "").split(",")) {
+		if (name.trim()) out.add(name.trim());
+	}
+	const settings = join(env.PI_CODING_AGENT_DIR || join(home, ".pi", "agent"), "settings.json");
+	let packages: unknown[] = [];
+	try {
+		packages = JSON.parse(readFileSync(settings, "utf8")).packages ?? [];
+	} catch {
+		return out;
+	}
+	for (const entry of packages) {
+		if (!entry || typeof entry !== "object") continue;
+		const e = entry as { source?: unknown; skills?: unknown; extensions?: unknown };
+		if (typeof e.source !== "string" || !e.source.startsWith("git:")) continue;
+		for (const list of [e.skills, e.extensions]) {
+			if (!Array.isArray(list)) continue;
+			for (const pattern of list) {
+				const m = typeof pattern === "string" && pattern.match(/^!modules\/([^/]+)\/\*\*$/);
+				if (m) out.add(m[1]);
+			}
+		}
+	}
+	return out;
+}
+
+export function manifestPaths(selfFile: string, env: NodeJS.ProcessEnv = process.env, excluded: Set<string> = excludedModules(env)): string[] {
 	const found: string[] = [];
 	const seen = new Set<string>();
 	const add = (p: string) => {
@@ -106,6 +144,7 @@ export function manifestPaths(selfFile: string, env: NodeJS.ProcessEnv = process
 		entries = [];
 	}
 	for (const name of entries.sort()) {
+		if (excluded.has(name)) continue; // pi=off for this module: its hooks stay off too
 		const candidate = join(modulesDir, name, "hooks", "hooks.json");
 		if (existsSync(candidate)) add(candidate);
 	}
