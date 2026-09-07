@@ -1,0 +1,7 @@
+{
+  "name": "plan-for-dummies",
+  "version": "0.1.0",
+  "description": "Scope and plan a coding task so that a less capable model can implement it without your context or judgment.",
+  "author": { "name": "David Allada", "email": "davidanilallada@gmail.com" },
+  "license": "MIT"
+}

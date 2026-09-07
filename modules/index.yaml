@@ -115,6 +115,28 @@ modules:
       style — a Socratic reviewer who pushes hard on whether code needs to exist, prefers determinism
       and reuse over speculative flexibility, watches runtime/query cost, marks nits explicitly, and keeps
       a warm, concise tone.
+- name: plan-for-dummies
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  - pi
+  - dsh
+  description: Scope and plan a coding task so that a less capable model can implement it without your
+    context or judgment.
+  skills:
+  - name: plan-for-dummies
+    path: modules/plan-for-dummies/skills/plan-for-dummies/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: false
+    summary: Scope and plan a coding task so that a less capable model can implement it without your context
+      or judgment.
 - name: research
   version: 0.1.1
   kinds:
