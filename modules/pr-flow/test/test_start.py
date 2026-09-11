@@ -61,3 +61,45 @@ def test_start_honors_worktreeinclude(repo):
     r = run("start", "inc", cwd=root)
     assert r.returncode == 0, r.stderr
     assert (root / ".claude" / "worktrees" / "feat-inc" / ".env").read_text() == "X=1\n"
+    # .env is untracked (never committed), so it also makes root dirty and triggers the
+    # carry-over stash — it must be COPIED to the worktree, not moved out of root by it.
+    assert (root / ".env").read_text() == "X=1\n"
+    assert git("stash", "list", cwd=root) == ""
+
+
+def test_start_worktreeinclude_rejects_parent_traversal(repo):
+    root, _ = repo
+    (root.parent / "outside.txt").write_text("secret\n")
+    (root / ".worktreeinclude").write_text("../outside.txt\n")
+    git("add", ".worktreeinclude", cwd=root)
+    git("commit", "-q", "-m", "wti-traversal", cwd=root)
+    git("push", "-q", cwd=root)
+    r = run("start", "esc", cwd=root)
+    assert r.returncode == 2
+    assert "outside.txt" in r.stderr
+    assert not (root / ".claude" / "worktrees" / "feat-esc").exists()
+
+
+def test_start_worktreeinclude_rejects_absolute_pattern(repo):
+    root, _ = repo
+    (root / ".worktreeinclude").write_text("/etc/hostname\n")
+    git("add", ".worktreeinclude", cwd=root)
+    git("commit", "-q", "-m", "wti-abs", cwd=root)
+    git("push", "-q", cwd=root)
+    r = run("start", "abs", cwd=root)
+    assert r.returncode == 2
+    assert "/etc/hostname" in r.stderr
+    assert not (root / ".claude" / "worktrees" / "feat-abs").exists()
+
+
+def test_start_preserves_exclude_file_missing_trailing_newline(repo):
+    root, _ = repo
+    (root / ".git" / "info").mkdir(parents=True, exist_ok=True)
+    (root / ".git" / "info" / "exclude").write_text("node_modules")
+    assert run("start", "one", cwd=root).returncode == 0
+    r = run("start", "two", cwd=root)
+    assert r.returncode == 0, r.stderr
+    lines = (root / ".git" / "info" / "exclude").read_text().splitlines()
+    assert lines.count("node_modules") == 1
+    assert lines.count("/.claude/worktrees/") == 1
+    assert lines.count("/.agents/worktrees") == 1

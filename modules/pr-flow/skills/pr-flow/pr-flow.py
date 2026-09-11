@@ -108,11 +108,14 @@ def ensure_excludes(root):
     """
     exclude = root / ".git" / "info" / "exclude"
     wanted = ["/.claude/worktrees/", "/.agents/worktrees"]
-    lines = exclude.read_text().splitlines() if exclude.exists() else []
+    text = exclude.read_text() if exclude.exists() else ""
+    lines = text.splitlines()
     missing = [w for w in wanted if w not in lines]
     if missing:
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with exclude.open("a") as f:
+            if text and not text.endswith("\n"):
+                f.write("\n")
             for w in missing:
                 f.write(w + "\n")
 
@@ -136,24 +139,45 @@ def ensure_worktree_dirs(root):
     return real
 
 
-def copy_worktreeinclude(root, wt):
+def worktreeinclude_matches(root):
+    """Resolve .worktreeinclude patterns to repo-relative paths.
+
+    Refuses (Fail) any pattern that is absolute, `~`-rooted, or whose glob match resolves
+    outside the repo (e.g. `../secret`) — such a pattern would read or write outside both
+    the main checkout and the worktree it's meant to seed.
+    """
     inc = root / ".worktreeinclude"
     if not inc.is_file():
-        return
+        return []
+    root_r = root.resolve()
+    matches = []
     for pattern in inc.read_text().splitlines():
         pattern = pattern.strip()
         if not pattern or pattern.startswith("#"):
             continue
+        if os.path.isabs(pattern) or pattern.startswith("~"):
+            raise Fail(f".worktreeinclude: {pattern!r} must be a repo-relative pattern")
         for src in glob.glob(str(root / pattern), recursive=True):
-            rel = Path(src).relative_to(root)
+            resolved = Path(src).resolve()
+            try:
+                rel = resolved.relative_to(root_r)
+            except ValueError:
+                raise Fail(f".worktreeinclude: {pattern!r} resolves outside the repo ({resolved})")
             if rel.parts and rel.parts[0] in (".git", ".claude"):
                 continue
-            dst = wt / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            if Path(src).is_dir():
-                shutil.copytree(src, dst, dirs_exist_ok=True)
-            else:
-                shutil.copy2(src, dst)
+            if rel not in matches:
+                matches.append(rel)
+    return matches
+
+
+def copy_worktreeinclude(root, wt, rel_paths):
+    for rel in rel_paths:
+        src, dst = root / rel, wt / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir():
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, dst)
 
 
 def stash_sha(root, tag):
@@ -187,12 +211,17 @@ def cmd_start(a):
         return done("start", "ok", existing)
     git("fetch", "-q", "origin", base, cwd=root)
     wt = real / branch.replace("/", "-")
+    include = worktreeinclude_matches(root)
     tag = None
     if ctx.is_main and git("status", "--porcelain", cwd=root):
         tag = f"pr-flow start {branch} {secrets.token_hex(4)}"
-        git("stash", "push", "-q", "-u", "-m", tag, cwd=root)
+        # Exclude .worktreeinclude targets from the stash — they're meant to be copied to
+        # the new worktree, not moved out of root (stash would remove the only copy of an
+        # untracked one, e.g. .env, until `stash apply` lands it in the worktree instead).
+        excludes = [f":(exclude){p.as_posix()}" for p in include]
+        git("stash", "push", "-q", "-u", "-m", tag, "--", ".", *excludes, cwd=root)
     git("worktree", "add", "-q", "-b", branch, wt, f"origin/{base}", cwd=root)
-    copy_worktreeinclude(root, wt)
+    copy_worktreeinclude(root, wt, include)
     if tag:
         sha = stash_sha(root, tag)
         try:
