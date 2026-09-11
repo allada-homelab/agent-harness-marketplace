@@ -65,6 +65,9 @@ def test_start_honors_worktreeinclude(repo):
     # carry-over stash — it must be COPIED to the worktree, not moved out of root by it.
     assert (root / ".env").read_text() == "X=1\n"
     assert git("stash", "list", cwd=root) == ""
+    # The exclude pathspec left nothing to actually stash here (.env was the only dirty
+    # content); that must not be mistaken for a failed stash apply.
+    assert "conflicted" not in r.stderr
 
 
 def test_start_worktreeinclude_rejects_parent_traversal(repo):

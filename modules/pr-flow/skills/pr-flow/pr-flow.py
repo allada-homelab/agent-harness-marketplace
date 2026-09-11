@@ -214,16 +214,25 @@ def cmd_start(a):
     include = worktreeinclude_matches(root)
     tag = None
     if ctx.is_main and git("status", "--porcelain", cwd=root):
-        tag = f"pr-flow start {branch} {secrets.token_hex(4)}"
+        stash_tag = f"pr-flow start {branch} {secrets.token_hex(4)}"
         # Exclude .worktreeinclude targets from the stash — they're meant to be copied to
         # the new worktree, not moved out of root (stash would remove the only copy of an
         # untracked one, e.g. .env, until `stash apply` lands it in the worktree instead).
         excludes = [f":(exclude){p.as_posix()}" for p in include]
-        git("stash", "push", "-q", "-u", "-m", tag, "--", ".", *excludes, cwd=root)
+        git("stash", "push", "-q", "-u", "-m", stash_tag, "--", ".", *excludes, cwd=root)
+        # The exclude pathspec can leave nothing to stash (e.g. the only dirty content was
+        # a .worktreeinclude match) — `git stash push` then no-ops ("No local changes to
+        # save") without creating an entry. Look it up now, immediately after the push, so
+        # that ambiguity is resolved right here rather than surfacing as a bogus "stash
+        # apply conflicted" warning later.
+        if stash_sha(root, stash_tag) is not None:
+            tag = stash_tag
     git("worktree", "add", "-q", "-b", branch, wt, f"origin/{base}", cwd=root)
     copy_worktreeinclude(root, wt, include)
     if tag:
         sha = stash_sha(root, tag)
+        if sha is None:
+            raise Fail(f"stash '{tag}' was created but can no longer be found; check `git stash list` in {root}")
         try:
             git("stash", "apply", "-q", sha, cwd=wt)
             drop_stash(root, tag)
