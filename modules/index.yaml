@@ -142,6 +142,7 @@ modules:
   kinds:
   - skills
   - dsh-plugin
+  - hooks
   harness:
   - claude
   - pi
