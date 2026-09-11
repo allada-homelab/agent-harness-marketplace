@@ -1,6 +1,6 @@
 {
   "name": "pr-flow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Work off main on every harness: branch + worktree, PR, watch CI until green, merge only when told, tear down after merge.",
   "author": { "name": "David Allada", "email": "davidanilallada@gmail.com" },
   "license": "MIT"

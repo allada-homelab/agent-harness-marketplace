@@ -53,6 +53,21 @@ def test_open_creates_new_pr_when_existing_is_closed(repo):
     assert any(c[:2] == ["pr", "create"] for c in gh_calls(wt))
 
 
+def test_open_uses_recorded_base(repo):
+    root, _ = repo
+    git("branch", "dev", cwd=root)
+    git("push", "-q", "origin", "dev", cwd=root)
+    assert run("start", "x", "--base", "dev", cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / "feat-x"
+    (wt / "a.txt").write_text("a\n")
+    git("add", "a.txt", cwd=wt)
+    git("commit", "-q", "-m", "a", cwd=wt)
+    r = run("open", cwd=wt, replay={"pr_url": ""})
+    assert r.returncode == 0, r.stderr
+    create = next(c for c in gh_calls(wt) if c[:2] == ["pr", "create"])
+    assert "--base" in create and create[create.index("--base") + 1] == "dev"
+
+
 def test_open_refuses_merged_pr(repo):
     root, _ = repo
     assert run("start", "widget", cwd=root).returncode == 0

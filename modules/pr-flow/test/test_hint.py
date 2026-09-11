@@ -22,7 +22,7 @@ def fire(tmp_path, file_path, session="s1", tool="Edit"):
 def test_hints_once_for_tracked_file_on_main(repo, tmp_path):
     root, _ = repo
     hint = fire(tmp_path, root / "README.md")
-    assert hint and "pr-flow start" in hint and "main" in hint
+    assert hint and "pr-flow start" in hint and "--carry" in hint and "main" in hint
     assert fire(tmp_path, root / "README.md") is None            # same session: silent
     assert fire(tmp_path, root / "README.md", session="s2")      # new session: hints again
 

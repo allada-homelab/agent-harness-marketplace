@@ -51,7 +51,16 @@ elif argv[:2] == ["api", "graphql"]:
 elif argv[:2] == ["run", "view"]:
     print("\n".join(f"LOG-FOR-{argv[2]} line {i}" for i in range(300)))
 elif argv[:2] == ["pr", "merge"]:
+    if replay.get("merge_fails"):
+        print("boom", file=sys.stderr)
+        sys.exit(1)
     views = replay.get("pr_view") or []
+    if "--match-head-commit" in argv:
+        wanted = argv[argv.index("--match-head-commit") + 1]
+        current = views[0].get("headRefOid") if views else None
+        if wanted != current:
+            print("head has been modified since --match-head-commit was set", file=sys.stderr)
+            sys.exit(1)
     if views:
         views[-1]["state"] = "MERGED"
         replay["pr_view"] = [views[-1]]

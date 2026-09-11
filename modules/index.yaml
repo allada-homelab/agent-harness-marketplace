@@ -138,7 +138,7 @@ modules:
     summary: Scope and plan a coding task so that a less capable model can implement it without your context
       or judgment.
 - name: pr-flow
-  version: 0.1.0
+  version: 0.2.0
   kinds:
   - skills
   - dsh-plugin

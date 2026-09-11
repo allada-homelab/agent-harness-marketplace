@@ -34,13 +34,85 @@ def test_start_carries_uncommitted_edits_by_tagged_stash(repo):
     root, _ = repo
     (root / "README.md").write_text("edited\n")
     (root / "new.txt").write_text("new\n")
-    r = run("start", "carry", cwd=root)
+    r = run("start", "carry", "--carry", cwd=root)
     assert r.returncode == 0, r.stderr
     wt = root / ".claude" / "worktrees" / "feat-carry"
     assert (wt / "README.md").read_text() == "edited\n"
     assert (wt / "new.txt").read_text() == "new\n"
     assert git("status", "--porcelain", cwd=root) == ""
     assert git("stash", "list", cwd=root) == ""
+    assert "carried: 2 path(s)" in r.stderr
+
+
+def test_start_refuses_dirty_main_without_carry(repo):
+    root, _ = repo
+    (root / "README.md").write_text("edited\n")
+    (root / "new.txt").write_text("new\n")
+    r = run("start", "widget", cwd=root)
+    assert r.returncode == 2
+    assert "--carry" in r.stderr
+    assert not (root / ".claude" / "worktrees" / "feat-widget").exists()
+    assert (root / "README.md").read_text() == "edited\n"
+    assert (root / "new.txt").read_text() == "new\n"
+    assert git("stash", "list", cwd=root) == ""
+
+
+def test_start_carry_specific_path(repo):
+    root, _ = repo
+    (root / "README.md").write_text("edited\n")
+    (root / "new.txt").write_text("new\n")
+    r = run("start", "carry2", "--carry", "README.md", cwd=root)
+    assert r.returncode == 0, r.stderr
+    wt = root / ".claude" / "worktrees" / "feat-carry2"
+    assert (wt / "README.md").read_text() == "edited\n"
+    assert not (wt / "new.txt").exists()
+    assert (root / "README.md").read_text() == "hello\n"
+    assert (root / "new.txt").read_text() == "new\n"
+    assert git("stash", "list", cwd=root) == ""
+
+
+def test_start_carry_nonexistent_path_fails(repo):
+    root, _ = repo
+    (root / "README.md").write_text("edited\n")
+    r = run("start", "carry3", "--carry", "nope.txt", cwd=root)
+    assert r.returncode == 2
+    assert not (root / ".claude" / "worktrees" / "feat-carry3").exists()
+    assert git("stash", "list", cwd=root) == ""
+
+
+def test_start_carry_refuses_worktreeinclude_target(repo):
+    root, _ = repo
+    (root / ".env").write_text("X=1\n")
+    (root / ".worktreeinclude").write_text(".env\n")
+    git("add", ".worktreeinclude", cwd=root)
+    git("commit", "-q", "-m", "wti", cwd=root)
+    git("push", "-q", cwd=root)
+    (root / "README.md").write_text("edited\n")
+    r = run("start", "y", "--carry", ".env", cwd=root)
+    assert r.returncode == 2
+    assert "worktreeinclude" in r.stderr
+    assert not (root / ".claude" / "worktrees" / "feat-y").exists()
+    assert git("stash", "list", cwd=root) == ""
+    assert (root / ".env").read_text() == "X=1\n"
+    assert (root / "README.md").read_text() == "edited\n"
+
+
+def test_start_carry_ignored_when_main_is_clean(repo):
+    root, _ = repo
+    r = run("start", "clean", "--carry", cwd=root)
+    assert r.returncode == 0, r.stderr
+    assert "--carry ignored: nothing to carry" in r.stderr
+    assert (root / ".claude" / "worktrees" / "feat-clean").is_dir()
+
+
+def test_start_carry_ignored_from_worktree(repo):
+    root, _ = repo
+    assert run("start", "first", cwd=root).returncode == 0
+    wt1 = root / ".claude" / "worktrees" / "feat-first"
+    r = run("start", "second", "--carry", cwd=wt1)
+    assert r.returncode == 0, r.stderr
+    assert "--carry ignored: run start from the main checkout" in r.stderr
+    assert (root / ".claude" / "worktrees" / "feat-second").is_dir()
 
 
 def test_start_refuses_real_agents_worktrees_dir(repo):

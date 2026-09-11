@@ -82,6 +82,14 @@ def default_base(root):
         return "main"
 
 
+def branch_base(root, branch):
+    """The base branch recorded for `branch` by `start`, falling back to the repo default."""
+    try:
+        return git("config", f"branch.{branch}.pr-flow-base", cwd=root)
+    except Fail:
+        return default_base(root)
+
+
 def worktrees(root):
     """[(path, branch)] from `git worktree list --porcelain`, main checkout included."""
     out, path, branch = [], None, None
@@ -217,22 +225,46 @@ def cmd_start(a):
     git("fetch", "-q", "origin", base, cwd=root)
     wt = real / branch.replace("/", "-")
     include = worktreeinclude_matches(root)
+    # Exclude .worktreeinclude targets from both the dirty check and the stash — they're
+    # meant to be copied to the new worktree, not moved out of root (stash would remove the
+    # only copy of an untracked one, e.g. .env, until `stash apply` lands it in the worktree
+    # instead; and a .worktreeinclude-only diff must not trip the "main is dirty" refusal).
+    excludes = [f":(exclude){p.as_posix()}" for p in include]
     tag = None
-    if ctx.is_main and git("status", "--porcelain", cwd=root):
-        stash_tag = f"pr-flow start {branch} {secrets.token_hex(4)}"
-        # Exclude .worktreeinclude targets from the stash — they're meant to be copied to
-        # the new worktree, not moved out of root (stash would remove the only copy of an
-        # untracked one, e.g. .env, until `stash apply` lands it in the worktree instead).
-        excludes = [f":(exclude){p.as_posix()}" for p in include]
-        git("stash", "push", "-q", "-u", "-m", stash_tag, "--", ".", *excludes, cwd=root)
-        # The exclude pathspec can leave nothing to stash (e.g. the only dirty content was
-        # a .worktreeinclude match) — `git stash push` then no-ops ("No local changes to
-        # save") without creating an entry. Look it up now, immediately after the push, so
-        # that ambiguity is resolved right here rather than surfacing as a bogus "stash
-        # apply conflicted" warning later.
-        if stash_sha(root, stash_tag) is not None:
-            tag = stash_tag
+    if ctx.is_main:
+        dirty = git("status", "--porcelain", "--", ".", *excludes, cwd=root)
+        if dirty:
+            if a.carry is None:
+                raise Fail(f"{dirty}\nmain checkout has uncommitted changes; rerun with --carry to move "
+                           "ALL of them into the new worktree, or --carry <path>... for specific ones")
+            stash_tag = f"pr-flow start {branch} {secrets.token_hex(4)}"
+            if a.carry:
+                for p in a.carry:
+                    if Path(p) in include:
+                        raise Fail(f"{p} is a .worktreeinclude target and is copied, not moved; "
+                                   "drop it from --carry")
+                for p in a.carry:
+                    if not git("status", "--porcelain", "--", p, cwd=root):
+                        raise Fail(f"--carry {p}: no uncommitted changes for that path (typo?)")
+                git("stash", "push", "-q", "-u", "-m", stash_tag, "--", *a.carry, cwd=root)
+                carried_n = len(a.carry)
+            else:
+                git("stash", "push", "-q", "-u", "-m", stash_tag, "--", ".", *excludes, cwd=root)
+                carried_n = len(dirty.splitlines())
+            # The exclude pathspec can leave nothing to stash (e.g. the only dirty content was
+            # a .worktreeinclude match) — `git stash push` then no-ops ("No local changes to
+            # save") without creating an entry. Look it up now, immediately after the push, so
+            # that ambiguity is resolved right here rather than surfacing as a bogus "stash
+            # apply conflicted" warning later.
+            if stash_sha(root, stash_tag) is not None:
+                tag = stash_tag
+                warn(f"carried: {carried_n} path(s)")
+        elif a.carry is not None:
+            warn("--carry ignored: nothing to carry")
+    elif a.carry is not None:
+        warn("--carry ignored: run start from the main checkout")
     git("worktree", "add", "-q", "-b", branch, wt, f"origin/{base}", cwd=root)
+    git("config", f"branch.{branch}.pr-flow-base", base, cwd=root)
     copy_worktreeinclude(root, wt, include)
     if tag:
         sha = stash_sha(root, tag)
@@ -260,7 +292,7 @@ def pr_url(cwd):
         return None, None
 
 
-FIELDS = "state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,url,headRefOid,number"
+FIELDS = "state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,url,headRefOid,number,isDraft"
 BAD = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"}
 OK = {"SUCCESS", "SKIPPED", "NEUTRAL"}
 SLEEP_SCALE = float(os.environ.get("PR_FLOW_SLEEP", "1"))
@@ -297,10 +329,23 @@ def classify(pr, unresolved):
         return "conflict"
     if any(check_outcome(c) not in OK for c in checks) or pr.get("mergeable") == "UNKNOWN":
         return None
+    if pr.get("isDraft"):
+        return "review"
     if pr.get("reviewDecision") == "CHANGES_REQUESTED":
         return "review"
     if unresolved() > 0:
         return "review"
+    # mergeStateStatus BEHIND is left green here: a merge commit (our only merge mode) folds
+    # the base in on merge, so a head that's merely behind needs no action before merging.
+    if pr.get("mergeStateStatus") == "BLOCKED":
+        return "review"
+    if not checks:
+        # No status checks have been reported for this head at all — could be a repo with no
+        # CI, or (far more often) the gap between `open`'s push and GitHub Actions registering
+        # its check runs. cmd_watch turns this into "keep polling for a grace window, then
+        # green" rather than trusting it on the first poll; classify() stays pure and just
+        # names the ambiguity.
+        return "green-no-checks"
     return "green"
 
 
@@ -350,7 +395,10 @@ def print_failed_logs(pr, cwd):
 
 
 def do_merge(ctx, cwd, pr):
-    gh("pr", "merge", str(pr["number"]), "--merge", cwd=cwd)
+    try:
+        gh("pr", "merge", str(pr["number"]), "--merge", "--match-head-commit", pr["headRefOid"], cwd=cwd)
+    except Fail as e:
+        raise Fail(f"merge refused ({e}); if the head moved, run watch again")
     after = poll(cwd)
     if after.get("state") != "MERGED":
         raise Fail(f"merge requested but PR state is {after.get('state')}; not tearing down")
@@ -367,7 +415,7 @@ def teardown(ctx, branch, dry_run=False):
         dirty = git("status", "--porcelain", cwd=wt)
         if dirty:
             raise Fail(f"worktree {wt} is dirty; commit or discard first:\n{dirty}")
-    base = default_base(root)
+    base = branch_base(root, branch)
     git("fetch", "-q", "origin", base, cwd=root)
     merged = subprocess.run([GIT, "merge-base", "--is-ancestor", branch, f"origin/{base}"], cwd=root).returncode == 0
     if not merged:
@@ -394,6 +442,8 @@ def cmd_watch(a):
     interval, last_head, pr, verdict = a.interval, None, {}, None
     threads = {"n": 0}
     consecutive_fails = 0
+    no_checks_since = None
+    grace_expired = False
     while True:
         try:
             pr = poll(cwd)
@@ -407,6 +457,7 @@ def cmd_watch(a):
             consecutive_fails = 0
             if pr.get("headRefOid") != last_head:
                 interval, last_head = a.interval, pr.get("headRefOid")
+                no_checks_since = None
 
             def unresolved():
                 try:
@@ -420,6 +471,23 @@ def cmd_watch(a):
                 verdict = classify(pr, unresolved)
             except _Retry:
                 verdict = None
+
+            if verdict == "green-no-checks":
+                # Empty statusCheckRollup: could be a repo with no CI, or the gap between the
+                # push and GitHub Actions registering its check runs. Poll through a grace
+                # window (reset whenever the head moves) before trusting it as green.
+                now = time.time()
+                if no_checks_since is None:
+                    no_checks_since = now
+                elapsed = now - no_checks_since
+                if elapsed >= a.no_checks_grace:
+                    print(f"no checks reported for this head after {elapsed:.0f}s; treating as green")
+                    verdict = "green"
+                    grace_expired = True
+                else:
+                    verdict = None
+            else:
+                no_checks_since = None
 
         if verdict:
             break
@@ -437,9 +505,14 @@ def cmd_watch(a):
         if verdict == "checks-failed":
             print_failed_logs(pr, cwd)
         elif verdict == "review":
-            print(f"{threads['n']} unresolved review thread(s); reviewDecision={pr.get('reviewDecision') or '-'}")
+            if pr.get("isDraft"):
+                print("PR is a draft; mark it ready for review")
+            elif pr.get("mergeStateStatus") == "BLOCKED":
+                print("blocked by branch protection (approval or required check missing)")
+            else:
+                print(f"{threads['n']} unresolved review thread(s); reviewDecision={pr.get('reviewDecision') or '-'}")
         elif verdict == "conflict":
-            print(f"conflicts with base; in the worktree: git fetch origin && git merge origin/{default_base(ctx.main_root)}")
+            print(f"conflicts with base; in the worktree: git fetch origin && git merge origin/{branch_base(ctx.main_root, ctx.branch)}")
         if st["attempts"] > MAX_ATTEMPTS:
             print(f"{st['attempts'] - 1} fix attempts used on this PR; last verdict {verdict}")
             verdict = "attempts-exhausted"
@@ -447,7 +520,10 @@ def cmd_watch(a):
         st["attempts"] = 0
         save_state(ctx, ctx.branch, st)
     if verdict == "green" and a.merge:
-        verdict = do_merge(ctx, cwd, pr)
+        if grace_expired:
+            print("no checks reported for this head; refusing --merge — merge by hand once you have evidence")
+        else:
+            verdict = do_merge(ctx, cwd, pr)
     if verdict == "merged" and not ctx.is_main:
         # Ruling 1: a PR merged by someone else may not yet be an ancestor of the base in
         # this worktree — teardown failing here must never turn a merged verdict into exit 2.
@@ -468,7 +544,7 @@ def cmd_open(a):
     if state == "MERGED":
         raise Fail(f"PR for {ctx.branch} is already merged; run `pr-flow start` for new work")
     if not url or state == "CLOSED":
-        args = ["pr", "create", "--head", ctx.branch]
+        args = ["pr", "create", "--head", ctx.branch, "--base", branch_base(ctx.main_root, ctx.branch)]
         args += ["--title", a.title] if a.title else ["--fill"]
         if a.body_file:
             args += ["--body-file", a.body_file]
@@ -529,6 +605,9 @@ def main(argv=None):
     s = sub.add_parser("start", help="create branch + worktree off the base branch")
     s.add_argument("slug")
     s.add_argument("--base")
+    s.add_argument("--carry", nargs="*", default=None,
+                    help="move uncommitted main-checkout changes into the worktree: bare for "
+                         "all of them, or one or more paths for specific ones")
     s.set_defaults(fn=cmd_start)
     o = sub.add_parser("open", help="push the branch and open (or reuse) its PR")
     o.add_argument("--title")
@@ -540,6 +619,8 @@ def main(argv=None):
     w.add_argument("--timeout", type=float, default=3600)
     w.add_argument("--interval", type=float, default=60)
     w.add_argument("--interval-max", type=float, default=300)
+    w.add_argument("--no-checks-grace", type=float, default=300,
+                    help="seconds to keep polling an empty statusCheckRollup before treating it as green")
     w.set_defaults(fn=cmd_watch)
     t = sub.add_parser("teardown", help="remove the worktree and delete the merged branch")
     t.add_argument("branch", nargs="?")
