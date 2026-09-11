@@ -1,4 +1,5 @@
 import json
+import shutil
 from conftest import git, run
 from test_watch import pr, check, last
 
@@ -43,6 +44,15 @@ def test_teardown_refuses_dirty_worktree(repo):
     r = run("teardown", "feat/w", cwd=root)
     assert r.returncode == 2
     assert "dirty.txt" in r.stderr and wt.exists()
+
+
+def test_teardown_survives_hand_deleted_worktree(repo):
+    root, wt = merged_branch(repo)
+    shutil.rmtree(wt)
+    r = run("teardown", "feat/w", cwd=root)
+    assert r.returncode == 0, r.stderr
+    assert "feat/w" not in git("branch", "--list", cwd=root)
+    assert "feat/w" not in git("worktree", "list", cwd=root)
 
 
 def test_teardown_refuses_unmerged_branch(repo):
@@ -100,4 +110,18 @@ def test_gc_dry_run_reports_without_removing(repo):
     r = run("gc", "--dry-run", cwd=root, replay={"merged_branches": ["feat/w"]})
     assert r.returncode == 0, r.stderr
     assert "would remove" in r.stdout
+    assert "would sweep: feat/w" in r.stdout
     assert wt_w.exists()
+    assert last(r) == "pr-flow: gc dry-run 1 would-sweep"
+
+
+def test_gc_protects_a_worktree_on_a_protected_branch(repo):
+    root, _ = repo
+    wt = root.parent / "release-wt"
+    git("worktree", "add", "--detach", str(wt), cwd=root)
+    git("switch", "-c", "release", cwd=wt)
+    r = run("gc", cwd=root, replay={"merged_branches": ["release"]})
+    assert r.returncode == 0, r.stderr
+    assert wt.exists()
+    assert "kept:  release" in r.stdout
+    assert "protected" in r.stderr

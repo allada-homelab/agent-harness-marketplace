@@ -359,9 +359,11 @@ def do_merge(ctx, cwd, pr):
 
 
 def teardown(ctx, branch, dry_run=False):
+    if branch in PROTECTED:
+        raise Fail(f"{branch} is protected")
     root = ctx.main_root
     wt = worktree_for_branch(root, branch)
-    if wt is not None:
+    if wt is not None and wt.is_dir():
         dirty = git("status", "--porcelain", cwd=wt)
         if dirty:
             raise Fail(f"worktree {wt} is dirty; commit or discard first:\n{dirty}")
@@ -485,8 +487,6 @@ def cmd_teardown(a):
         # Re-exec from the main checkout: a process whose cwd is being removed is a bad way to end.
         os.chdir(ctx.main_root)
         os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), "teardown", branch])
-    if branch in PROTECTED:
-        raise Fail(f"{branch} is protected")
     teardown(ctx, branch)
     return done("teardown", "ok", branch)
 
@@ -499,8 +499,13 @@ def cmd_gc(a):
     for path, branch in worktrees(root):
         if path.resolve() == root.resolve() or not branch:
             continue
-        n = gh("pr", "list", "--head", branch, "--state", "merged", "--json", "number", "--jq", "length", cwd=root, check=False)
-        if n.strip() not in ("0", ""):
+        p = subprocess.run([GH, "pr", "list", "--head", branch, "--state", "merged", "--json", "number", "--jq", "length"],
+                            cwd=root, text=True, capture_output=True)
+        if p.returncode:
+            warn(f"gh pr list failed for {branch} (rc {p.returncode}): {p.stderr.strip() or p.stdout.strip()}")
+            kept.append(branch)
+            continue
+        if p.stdout.strip() not in ("0", ""):
             try:
                 teardown(ctx, branch, dry_run=a.dry_run)
                 swept.append(branch)
@@ -509,6 +514,10 @@ def cmd_gc(a):
                 kept.append(branch)
         else:
             kept.append(branch)
+    if a.dry_run:
+        print("would sweep: " + (", ".join(swept) or "-"))
+        print("kept:  " + (", ".join(kept) or "-"))
+        return done("gc", "dry-run", f"{len(swept)} would-sweep")
     print("swept: " + (", ".join(swept) or "-"))
     print("kept:  " + (", ".join(kept) or "-"))
     return done("gc", "ok", f"{len(swept)} swept")
