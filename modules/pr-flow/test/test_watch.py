@@ -12,6 +12,10 @@ def check(conclusion, status="COMPLETED", url="https://github.com/o/r/actions/ru
     return {"__typename": "CheckRun", "name": "ci", "status": status, "conclusion": conclusion, "detailsUrl": url}
 
 
+def pending(head):
+    return pr(checks=[check("", "IN_PROGRESS")], head=head)
+
+
 def opened(repo):
     root, _ = repo
     assert run("start", "w", cwd=root).returncode == 0
@@ -94,3 +98,28 @@ def test_status_context_shape_counts_too(repo):
     ctx_bad = {"__typename": "StatusContext", "context": "ext", "state": "FAILURE", "targetUrl": "https://x"}
     assert run("watch", cwd=wt, replay={"pr_view": [pr(checks=[ctx_ok])]}).returncode == 0
     assert run("watch", cwd=wt, replay={"pr_view": [pr(checks=[ctx_bad])]}).returncode == 10
+
+
+def test_transient_poll_failures_retry_then_succeed(repo):
+    _, wt = opened(repo)
+    r = run("watch", cwd=wt,
+            replay={"pr_view": [{"__fail__": True}, {"__fail__": True}, pr(checks=[check("SUCCESS")])]})
+    assert r.returncode == 0, r.stderr
+    assert "poll failed (2 consecutive)" in r.stderr
+
+
+def test_ten_consecutive_poll_failures_gives_up(repo):
+    _, wt = opened(repo)
+    r = run("watch", cwd=wt, replay={"pr_view": [{"__fail__": True}]})
+    assert r.returncode == 2
+    assert "10 polls in a row" in r.stderr
+
+
+def test_backoff_grows_caps_and_resets_on_head_change(repo):
+    _, wt = opened(repo)
+    replay = {"pr_view": [pending("h1"), pending("h1"), pending("h1"), pending("h2"),
+                           pr(checks=[check("SUCCESS")], head="h2")]}
+    r = run("watch", "--interval", "4", "--interval-max", "9", cwd=wt, replay=replay)
+    assert r.returncode == 0, r.stderr
+    waits = [line.split("next poll in ")[1].rstrip("s") for line in r.stderr.splitlines() if "next poll in" in line]
+    assert waits == ["4", "6", "9", "4"]

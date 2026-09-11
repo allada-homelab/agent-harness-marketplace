@@ -36,6 +36,9 @@ if argv[:2] == ["pr", "view"]:
         sys.exit(1)
     cur = views[0] if len(views) == 1 else views.pop(0)
     save()
+    if isinstance(cur, dict) and cur.get("__fail__"):
+        print("boom", file=sys.stderr)
+        sys.exit(1)
     print(json.dumps(cur))
 elif argv[:2] == ["pr", "create"]:
     print("https://github.com/o/r/pull/7")

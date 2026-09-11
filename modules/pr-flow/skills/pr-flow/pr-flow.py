@@ -30,6 +30,11 @@ class Fail(Exception):
     """A refusal or a failed prerequisite. Message goes to stderr, exit 2."""
 
 
+class _Retry(Exception):
+    """Internal: a transient gh failure inside classify()'s unresolved() callback. cmd_watch
+    catches this and treats it as 'keep polling' rather than a terminal verdict."""
+
+
 def sh(*args, cwd=None, check=True, timeout=600):
     p = subprocess.run([str(a) for a in args], cwd=cwd, text=True, capture_output=True, timeout=timeout)
     if check and p.returncode:
@@ -317,7 +322,10 @@ def load_state(ctx, branch, number):
 
 
 def save_state(ctx, branch, st):
-    state_path(ctx, branch).write_text(json.dumps(st))
+    path = state_path(ctx, branch)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(st))
+    os.replace(tmp, path)
 
 
 def print_failed_logs(pr, cwd):
@@ -334,8 +342,9 @@ def print_failed_logs(pr, cwd):
                 continue
             seen.add(run_id)
             try:
-                log = gh("run", "view", run_id, "--log-failed", cwd=cwd, check=False)
-                print("\n".join(log.splitlines()[-200:]))
+                log = gh("run", "view", run_id, "--log-failed", cwd=cwd)
+                lines = log.splitlines()[-200:]
+                print("\n".join(lines) if lines else "(no log output)")
             except (Fail, subprocess.TimeoutExpired) as e:
                 warn(f"could not fetch log for run {run_id}: {e}")
 
@@ -352,27 +361,46 @@ def cmd_watch(a):
     cwd = Path.cwd()
     ctx = repo_ctx(cwd)
     deadline = time.time() + a.timeout
-    interval, last_head, pr, verdict = a.interval, None, None, None
+    interval, last_head, pr, verdict = a.interval, None, {}, None
     threads = {"n": 0}
+    consecutive_fails = 0
     while True:
-        pr = poll(cwd)
-        if pr.get("headRefOid") != last_head:
-            interval, last_head = a.interval, pr.get("headRefOid")
+        try:
+            pr = poll(cwd)
+        except (Fail, subprocess.TimeoutExpired) as e:
+            consecutive_fails += 1
+            warn(f"poll failed ({consecutive_fails} consecutive): {e}")
+            if consecutive_fails >= 10:
+                raise Fail("gh failed 10 polls in a row; giving up")
+            verdict = None
+        else:
+            consecutive_fails = 0
+            if pr.get("headRefOid") != last_head:
+                interval, last_head = a.interval, pr.get("headRefOid")
 
-        def unresolved():
-            threads["n"] = unresolved_threads(cwd, pr["number"])
-            return threads["n"]
+            def unresolved():
+                try:
+                    threads["n"] = unresolved_threads(cwd, pr["number"])
+                except (Fail, subprocess.TimeoutExpired) as e:
+                    warn(f"could not check review threads: {e}")
+                    raise _Retry from e
+                return threads["n"]
 
-        verdict = classify(pr, unresolved)
+            try:
+                verdict = classify(pr, unresolved)
+            except _Retry:
+                verdict = None
+
         if verdict:
             break
         if time.time() >= deadline:
             verdict = "timeout"
             break
+        warn(f"next poll in {interval:.0f}s")
         time.sleep(min(interval, max(0.0, deadline - time.time())) * SLEEP_SCALE)
         interval = min(interval * 1.5, a.interval_max)
 
-    st = load_state(ctx, ctx.branch, pr["number"])
+    st = load_state(ctx, ctx.branch, pr.get("number"))
     if verdict in FIX_CLASS:
         st["attempts"] += 1
         save_state(ctx, ctx.branch, st)
