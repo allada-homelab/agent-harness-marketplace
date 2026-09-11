@@ -12,27 +12,30 @@ The main checkout of every repo stays on its default branch. Work that changes
 files happens on a branch in a worktree, goes up as a PR, and the PR is watched
 until green. The tool is `pr-flow` — on a fleet host it is on `PATH`; otherwise
 run `./pr-flow.py` beside this file with `python3`. Every verb prints a final
-line `pr-flow: <verb> <verdict> [<url-or-path>]`; act on the verdict.
+line `pr-flow: <verb> <verdict> [<url-or-path>]` on success; a refusal exits 2
+with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
 
 ## Procedure
 
 1. **Read first, on main.** Investigation, planning and questions need no branch.
    The trigger for step 2 is the first edit, not the task start.
 2. **Start** — `pr-flow start <slug>` from the main checkout (`<slug>` becomes
-   `feat/<slug>`; give a full `fix/…` name to choose the prefix). It creates
-   `.claude/worktrees/<slug>` and the `.agents/worktrees` symlink in any repo on
-   first use, and carries uncommitted edits already on main into the worktree.
-   From here every file operation and command uses that path — absolute paths
-   for file tools, `cd <path> &&` or `git -C <path>` for commands.
+   `feat/<slug>`; give a full `fix/…` name to choose the prefix). It prints the
+   worktree path — use that printed path, never a guessed one — under
+   `.claude/worktrees/` (named after the branch, `/` replaced by `-`), and
+   creates the `.agents/worktrees` symlink in any repo on first use. It also
+   carries uncommitted edits already on main into the worktree. From here every
+   file operation and command uses that path — absolute paths for file tools,
+   `cd <path> &&` or `git -C <path>` for commands.
 3. **Work and commit** in the worktree. Stage only files you changed.
 4. **Open** — `pr-flow open`. Pushes, creates the PR (or reuses the branch's),
    prints the full URL. Repeat the URL in every message that mentions the PR.
    It refuses when the branch's PR is already merged (exit 2 — run `pr-flow
    start` for new work instead) and opens a fresh PR when the old one was
    closed.
-5. **Watch** — `pr-flow watch`, after every push. It blocks up to one hour,
-   tolerates transient `gh` failures with backoff (`next poll in Ns` on
-   stderr) and gives up after 10 in a row (exit 2), and returns one verdict:
+5. **Watch** — `pr-flow watch`, after every push. It blocks up to one hour; it
+   prints `next poll in Ns` to stderr before each wait, and tolerates transient
+   `gh` failures (gives up after 10 in a row, exit 2). It returns one verdict:
    - `green` (exit 0): report the URL; the turn is done unless merge was authorized.
    - `merged` (exit 0): someone merged it; the tool already tore the worktree down.
    - `checks-failed` (10): the failed job's log is in the output. Fix it in the
