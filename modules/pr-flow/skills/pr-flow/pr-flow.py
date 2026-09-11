@@ -255,6 +255,151 @@ def pr_url(cwd):
         return None, None
 
 
+FIELDS = "state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,url,headRefOid,number"
+BAD = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"}
+OK = {"SUCCESS", "SKIPPED", "NEUTRAL"}
+SLEEP_SCALE = float(os.environ.get("PR_FLOW_SLEEP", "1"))
+THREADS_Q = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n)"
+             "{reviewThreads(first:100){nodes{isResolved}}}}}")
+
+
+def poll(cwd):
+    return json.loads(gh("pr", "view", "--json", FIELDS, cwd=cwd))
+
+
+def check_outcome(c):
+    return (c.get("conclusion") or c.get("state") or "").upper()
+
+
+def unresolved_threads(cwd, number):
+    owner, repo = gh("repo", "view", "--json", "owner,name", "--jq", '.owner.login+" "+.name', cwd=cwd).split()
+    out = json.loads(gh("api", "graphql", "-f", f"query={THREADS_Q}", "-F", f"o={owner}", "-F", f"r={repo}",
+                        "-F", f"n={number}", cwd=cwd))
+    nodes = out["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+    return sum(1 for t in nodes if not t.get("isResolved"))
+
+
+def classify(pr, unresolved):
+    """Terminal verdict for a PR snapshot, or None to keep polling."""
+    if pr.get("state") == "MERGED":
+        return "merged"
+    if pr.get("state") == "CLOSED":
+        return "closed"
+    checks = pr.get("statusCheckRollup") or []
+    if any(check_outcome(c) in BAD for c in checks):
+        return "checks-failed"
+    if pr.get("mergeable") == "CONFLICTING":
+        return "conflict"
+    if any(check_outcome(c) not in OK for c in checks) or pr.get("mergeable") == "UNKNOWN":
+        return None
+    if pr.get("reviewDecision") == "CHANGES_REQUESTED":
+        return "review"
+    if unresolved() > 0:
+        return "review"
+    return "green"
+
+
+def state_path(ctx, branch):
+    d = ctx.common_dir / "pr-flow"
+    d.mkdir(exist_ok=True)
+    return d / (branch.replace("/", "%2F") + ".json")
+
+
+def load_state(ctx, branch, number):
+    p = state_path(ctx, branch)
+    try:
+        st = json.loads(p.read_text())
+    except (OSError, ValueError):
+        st = {}
+    if st.get("pr") != number:
+        st = {"pr": number, "attempts": 0}
+    return st
+
+
+def save_state(ctx, branch, st):
+    state_path(ctx, branch).write_text(json.dumps(st))
+
+
+def print_failed_logs(pr, cwd):
+    seen = set()
+    for c in pr.get("statusCheckRollup") or []:
+        if check_outcome(c) not in BAD:
+            continue
+        url = c.get("detailsUrl") or c.get("targetUrl") or ""
+        print(f"--- failed: {c.get('name') or c.get('context')} {url}")
+        parts = url.split("/actions/runs/")
+        if len(parts) == 2:
+            run_id = parts[1].split("/")[0]
+            if run_id in seen:
+                continue
+            seen.add(run_id)
+            try:
+                log = gh("run", "view", run_id, "--log-failed", cwd=cwd, check=False)
+                print("\n".join(log.splitlines()[-200:]))
+            except (Fail, subprocess.TimeoutExpired) as e:
+                warn(f"could not fetch log for run {run_id}: {e}")
+
+
+def do_merge(ctx, cwd, pr):
+    raise Fail("--merge not implemented yet")
+
+
+def teardown(ctx, branch):
+    return None
+
+
+def cmd_watch(a):
+    cwd = Path.cwd()
+    ctx = repo_ctx(cwd)
+    deadline = time.time() + a.timeout
+    interval, last_head, pr, verdict = a.interval, None, None, None
+    threads = {"n": 0}
+    while True:
+        pr = poll(cwd)
+        if pr.get("headRefOid") != last_head:
+            interval, last_head = a.interval, pr.get("headRefOid")
+
+        def unresolved():
+            threads["n"] = unresolved_threads(cwd, pr["number"])
+            return threads["n"]
+
+        verdict = classify(pr, unresolved)
+        if verdict:
+            break
+        if time.time() >= deadline:
+            verdict = "timeout"
+            break
+        time.sleep(min(interval, max(0.0, deadline - time.time())) * SLEEP_SCALE)
+        interval = min(interval * 1.5, a.interval_max)
+
+    st = load_state(ctx, ctx.branch, pr["number"])
+    if verdict in FIX_CLASS:
+        st["attempts"] += 1
+        save_state(ctx, ctx.branch, st)
+        if verdict == "checks-failed":
+            print_failed_logs(pr, cwd)
+        elif verdict == "review":
+            print(f"{threads['n']} unresolved review thread(s); reviewDecision={pr.get('reviewDecision') or '-'}")
+        elif verdict == "conflict":
+            print(f"conflicts with base; in the worktree: git fetch origin && git merge origin/{default_base(ctx.main_root)}")
+        if st["attempts"] > MAX_ATTEMPTS:
+            print(f"{st['attempts'] - 1} fix attempts used on this PR; last verdict {verdict}")
+            verdict = "attempts-exhausted"
+    elif verdict in ("green", "merged"):
+        st["attempts"] = 0
+        save_state(ctx, ctx.branch, st)
+    if verdict == "green" and a.merge:
+        verdict = do_merge(ctx, cwd, pr)
+    if verdict == "merged" and not ctx.is_main:
+        # Ruling 1: a PR merged by someone else may not yet be an ancestor of the base in
+        # this worktree — teardown failing here must never turn a merged verdict into exit 2.
+        try:
+            teardown(ctx, ctx.branch)
+        except Fail as e:
+            warn(f"teardown after merge failed: {e}")
+    return done("watch", verdict, pr.get("url", ""))
+
+
 def cmd_open(a):
     cwd = Path.cwd()
     ctx = repo_ctx(cwd)
@@ -288,6 +433,12 @@ def main(argv=None):
     o.add_argument("--body-file")
     o.add_argument("--draft", action="store_true")
     o.set_defaults(fn=cmd_open)
+    w = sub.add_parser("watch", help="poll the PR until a terminal verdict")
+    w.add_argument("--merge", action="store_true", help="merge (merge commit) when green; only when the user said so")
+    w.add_argument("--timeout", type=float, default=3600)
+    w.add_argument("--interval", type=float, default=60)
+    w.add_argument("--interval-max", type=float, default=300)
+    w.set_defaults(fn=cmd_watch)
     a = p.parse_args(argv)
     try:
         return a.fn(a)
