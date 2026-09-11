@@ -19,6 +19,10 @@ def repo(tmp_path):
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", origin], check=True)
     main_root = tmp_path / "repo"
     subprocess.run(["git", "clone", "-q", str(origin), str(main_root)], check=True)
+    # info/exclude is shared by every linked worktree — ignore the fake-gh test double's
+    # debug artifacts everywhere so they never count as "dirty" for teardown's git status check.
+    with (main_root / ".git" / "info" / "exclude").open("a") as f:
+        f.write(".gh-log\n.gh-replay.json\n")
     git("config", "user.email", "t@example.com", cwd=main_root)
     git("config", "user.name", "t", cwd=main_root)
     (main_root / "README.md").write_text("hello\n")

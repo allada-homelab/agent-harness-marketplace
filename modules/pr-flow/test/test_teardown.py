@@ -1,5 +1,4 @@
 import json
-import os
 from conftest import git, run
 from test_watch import pr, check, last
 
@@ -32,7 +31,7 @@ def test_teardown_removes_worktree_branch_and_state(repo):
 
 
 def test_teardown_from_inside_the_worktree_reexecs(repo):
-    root, wt = merged_branch(repo)
+    _, wt = merged_branch(repo)
     r = run("teardown", cwd=wt)
     assert r.returncode == 0, r.stderr
     assert not wt.exists()
@@ -59,7 +58,7 @@ def test_teardown_refuses_unmerged_branch(repo):
 
 
 def test_watch_merge_merges_then_tears_down(repo):
-    root, origin = repo
+    root, _ = repo
     assert run("start", "m", cwd=root).returncode == 0
     wt = root / ".claude" / "worktrees" / "feat-m"
     (wt / "m.txt").write_text("m\n")
@@ -73,7 +72,6 @@ def test_watch_merge_merges_then_tears_down(repo):
     r = run("watch", "--merge", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")])]})
     assert r.returncode == 0, r.stderr
     assert last(r).startswith("pr-flow: watch merged")
-    calls = [json.loads(l) for l in (root / ".gh-log").read_text().splitlines()] if (root / ".gh-log").exists() else []
     assert not wt.exists()
 
 
@@ -95,3 +93,11 @@ def test_gc_sweeps_only_merged(repo):
     assert r.returncode == 0, r.stderr
     assert not wt_w.exists() and wt_keep.exists()
     assert "feat/keep" in r.stdout
+
+
+def test_gc_dry_run_reports_without_removing(repo):
+    root, wt_w = merged_branch(repo, "w")
+    r = run("gc", "--dry-run", cwd=root, replay={"merged_branches": ["feat/w"]})
+    assert r.returncode == 0, r.stderr
+    assert "would remove" in r.stdout
+    assert wt_w.exists()

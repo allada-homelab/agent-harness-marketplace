@@ -358,17 +358,11 @@ def do_merge(ctx, cwd, pr):
     return "merged"
 
 
-_TEST_DOUBLE_ARTIFACTS = (".gh-log", ".gh-replay.json")  # dropped only by test/fake_gh.py under PR_FLOW_GH
-
-
 def teardown(ctx, branch, dry_run=False):
     root = ctx.main_root
     wt = worktree_for_branch(root, branch)
     if wt is not None:
-        # Ignore this skill's own gh test-double debug artifacts — never real repo
-        # content, and the real `gh` CLI never creates them.
-        dirty = "\n".join(line for line in git("status", "--porcelain", cwd=wt).splitlines()
-                           if line[3:] not in _TEST_DOUBLE_ARTIFACTS)
+        dirty = git("status", "--porcelain", cwd=wt)
         if dirty:
             raise Fail(f"worktree {wt} is dirty; commit or discard first:\n{dirty}")
     base = default_base(root)
