@@ -24,6 +24,8 @@ def hint(ev):
     fp = ti.get("file_path") or ti.get("notebook_path")
     if not fp:
         return None
+    base = ev.get("cwd") or os.getcwd()
+    fp = fp if os.path.isabs(fp) else os.path.join(base, fp)
     fp = os.path.abspath(fp)
     d = os.path.dirname(fp)
     top = git(d, "rev-parse", "--show-toplevel")
@@ -41,9 +43,11 @@ def hint(ev):
     sid = str(ev.get("session_id") or os.getppid())
     marker = os.path.join(tempfile.gettempdir(),
                           f"pr-flow-hint.{sid}.{hashlib.sha1(root.encode()).hexdigest()[:12]}")
-    if os.path.exists(marker):
+    try:
+        fd = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        os.close(fd)
+    except FileExistsError:
         return None
-    open(marker, "w").close()
     return (f"pr-flow: you just changed a tracked file while {root} is on `{branch}` in its main "
             f"checkout. Unless the user said to work on {branch} directly, run "
             f"`pr-flow start <slug>` now — it moves these uncommitted edits into a worktree — "
