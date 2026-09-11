@@ -243,10 +243,16 @@ def cmd_start(a):
 
 
 def pr_url(cwd):
+    """Look up the current branch's PR.
+
+    Returns (url, state) — state is one of gh's PR states ("OPEN", "CLOSED", "MERGED").
+    Returns (None, None) if gh fails (no PR exists for this branch, not pushed, etc).
+    """
     try:
-        return gh("pr", "view", "--json", "url", "--jq", ".url", cwd=cwd) or None
+        data = json.loads(gh("pr", "view", "--json", "url,state", cwd=cwd))
+        return data.get("url"), data.get("state")
     except Fail:
-        return None
+        return None, None
 
 
 def cmd_open(a):
@@ -255,8 +261,10 @@ def cmd_open(a):
     if ctx.branch in PROTECTED:
         raise Fail(f"refusing to open a PR from protected branch {ctx.branch}; run `pr-flow start <slug>` first")
     git("push", "-q", "-u", "origin", ctx.branch, cwd=cwd)
-    url = pr_url(cwd)
-    if not url:
+    url, state = pr_url(cwd)
+    if state == "MERGED":
+        raise Fail(f"PR for {ctx.branch} is already merged; run `pr-flow start` for new work")
+    if not url or state == "CLOSED":
         args = ["pr", "create", "--head", ctx.branch]
         args += ["--title", a.title] if a.title else ["--fill"]
         if a.body_file:

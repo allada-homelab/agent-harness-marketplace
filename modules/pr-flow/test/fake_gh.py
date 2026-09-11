@@ -26,6 +26,12 @@ if argv[:2] == ["pr", "view"]:
             sys.exit(1)
         print(url)
         sys.exit(0)
+    if "--json" in argv and "url,state" in argv:
+        url = replay.get("pr_url") or ""
+        if not url:
+            sys.exit(1)
+        print(json.dumps({"url": url, "state": replay.get("pr_state", "OPEN")}))
+        sys.exit(0)
     if not views:
         sys.exit(1)
     cur = views[0] if len(views) == 1 else views.pop(0)
