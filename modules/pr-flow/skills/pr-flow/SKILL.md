@@ -39,7 +39,10 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    a fresh PR when the old one was closed.
 5. **Watch** — `pr-flow watch`, after every push. It blocks up to one hour; it
    prints `next poll in Ns` to stderr before each wait, and tolerates transient
-   `gh` failures (gives up after 10 in a row, exit 2). It returns one verdict:
+   `gh` failures (gives up after 10 in a row, exit 2). An empty check list is
+   polled for up to `--no-checks-grace` seconds (default 300) before being
+   treated as green, so a check that lands late still counts. It returns one
+   verdict:
    - `green` (exit 0): report the URL; the turn is done unless merge was authorized.
    - `merged` (exit 0): someone merged it; the tool already tore the worktree down.
    - `checks-failed` (10): the failed job's log is in the output. Fix it in the

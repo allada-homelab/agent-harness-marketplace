@@ -97,6 +97,30 @@ def test_blocked_merge_state_is_review(repo):
     assert "branch protection" in r.stdout
 
 
+def test_no_checks_polls_within_grace_then_green_when_check_arrives(repo):
+    _, wt = opened(repo)
+    r = run("watch", "--interval", "1", "--no-checks-grace", "60", cwd=wt,
+            replay={"pr_view": [pr(checks=[]), pr(checks=[]), pr(checks=[check("SUCCESS")])]})
+    assert r.returncode == 0, r.stderr
+    assert last(r) == "pr-flow: watch green https://github.com/o/r/pull/7"
+    calls = [json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()]
+    assert sum(1 for c in calls if c[:2] == ["pr", "view"]) >= 3
+
+
+def test_no_checks_with_zero_grace_is_immediately_green(repo):
+    _, wt = opened(repo)
+    r = run("watch", "--no-checks-grace", "0", cwd=wt, replay={"pr_view": [pr(checks=[])]})
+    assert r.returncode == 0, r.stderr
+    assert "no checks reported" in r.stdout
+    assert last(r) == "pr-flow: watch green https://github.com/o/r/pull/7"
+
+
+def test_no_checks_then_failure_surfaces_during_grace(repo):
+    _, wt = opened(repo)
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[]), pr(checks=[check("FAILURE")])]})
+    assert r.returncode == 10
+
+
 def test_closed_and_merged(repo):
     _, wt = opened(repo)
     assert run("watch", cwd=wt, replay={"pr_view": [pr(state="CLOSED")]}).returncode == 13

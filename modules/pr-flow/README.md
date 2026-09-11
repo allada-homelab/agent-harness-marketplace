@@ -19,6 +19,11 @@ a worktree started off a non-default base stays consistent through the whole
 flow. `watch` also reports `review` for a draft PR or one `mergeStateStatus:
 BLOCKED` by branch protection, and its `--merge` binds to the head commit it
 last polled green (`gh pr merge --match-head-commit`) — if the head moved
-since, it refuses rather than merging a newer, unreviewed commit.
+since, it refuses rather than merging a newer, unreviewed commit. An empty
+`statusCheckRollup` (no CI configured, or the gap right after `open`'s push
+before GitHub Actions registers its check runs) is polled for up to
+`--no-checks-grace` seconds (default 300, reset whenever the head moves)
+before `watch` treats it as green — a check that shows up during the grace
+window is classified normally, failure included.
 
 Tests: `uv run --with pytest --python 3.12 pytest -q modules/pr-flow/test`.

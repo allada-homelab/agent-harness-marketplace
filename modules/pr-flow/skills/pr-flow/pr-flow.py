@@ -331,6 +331,13 @@ def classify(pr, unresolved):
     # the base in on merge, so a head that's merely behind needs no action before merging.
     if pr.get("mergeStateStatus") == "BLOCKED":
         return "review"
+    if not checks:
+        # No status checks have been reported for this head at all — could be a repo with no
+        # CI, or (far more often) the gap between `open`'s push and GitHub Actions registering
+        # its check runs. cmd_watch turns this into "keep polling for a grace window, then
+        # green" rather than trusting it on the first poll; classify() stays pure and just
+        # names the ambiguity.
+        return "green-no-checks"
     return "green"
 
 
@@ -427,6 +434,7 @@ def cmd_watch(a):
     interval, last_head, pr, verdict = a.interval, None, {}, None
     threads = {"n": 0}
     consecutive_fails = 0
+    no_checks_since = None
     while True:
         try:
             pr = poll(cwd)
@@ -440,6 +448,7 @@ def cmd_watch(a):
             consecutive_fails = 0
             if pr.get("headRefOid") != last_head:
                 interval, last_head = a.interval, pr.get("headRefOid")
+                no_checks_since = None
 
             def unresolved():
                 try:
@@ -453,6 +462,22 @@ def cmd_watch(a):
                 verdict = classify(pr, unresolved)
             except _Retry:
                 verdict = None
+
+            if verdict == "green-no-checks":
+                # Empty statusCheckRollup: could be a repo with no CI, or the gap between the
+                # push and GitHub Actions registering its check runs. Poll through a grace
+                # window (reset whenever the head moves) before trusting it as green.
+                now = time.time()
+                if no_checks_since is None:
+                    no_checks_since = now
+                elapsed = now - no_checks_since
+                if elapsed >= a.no_checks_grace:
+                    print(f"no checks reported for this head after {elapsed:.0f}s; treating as green")
+                    verdict = "green"
+                else:
+                    verdict = None
+            else:
+                no_checks_since = None
 
         if verdict:
             break
@@ -581,6 +606,8 @@ def main(argv=None):
     w.add_argument("--timeout", type=float, default=3600)
     w.add_argument("--interval", type=float, default=60)
     w.add_argument("--interval-max", type=float, default=300)
+    w.add_argument("--no-checks-grace", type=float, default=300,
+                    help="seconds to keep polling an empty statusCheckRollup before treating it as green")
     w.set_defaults(fn=cmd_watch)
     t = sub.add_parser("teardown", help="remove the worktree and delete the merged branch")
     t.add_argument("branch", nargs="?")
