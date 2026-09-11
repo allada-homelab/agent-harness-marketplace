@@ -242,6 +242,32 @@ def cmd_start(a):
     return done("start", "ok", wt)
 
 
+def pr_url(cwd):
+    try:
+        return gh("pr", "view", "--json", "url", "--jq", ".url", cwd=cwd) or None
+    except Fail:
+        return None
+
+
+def cmd_open(a):
+    cwd = Path.cwd()
+    ctx = repo_ctx(cwd)
+    if ctx.branch in PROTECTED:
+        raise Fail(f"refusing to open a PR from protected branch {ctx.branch}; run `pr-flow start <slug>` first")
+    git("push", "-q", "-u", "origin", ctx.branch, cwd=cwd)
+    url = pr_url(cwd)
+    if not url:
+        args = ["pr", "create", "--head", ctx.branch]
+        args += ["--title", a.title] if a.title else ["--fill"]
+        if a.body_file:
+            args += ["--body-file", a.body_file]
+        if a.draft:
+            args.append("--draft")
+        url = gh(*args, cwd=cwd).splitlines()[-1]
+    print(url)
+    return done("open", "ok", url)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="pr-flow", description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="verb", required=True)
@@ -249,6 +275,11 @@ def main(argv=None):
     s.add_argument("slug")
     s.add_argument("--base")
     s.set_defaults(fn=cmd_start)
+    o = sub.add_parser("open", help="push the branch and open (or reuse) its PR")
+    o.add_argument("--title")
+    o.add_argument("--body-file")
+    o.add_argument("--draft", action="store_true")
+    o.set_defaults(fn=cmd_open)
     a = p.parse_args(argv)
     try:
         return a.fn(a)
