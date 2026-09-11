@@ -1,6 +1,6 @@
 {
   "name": "@allada-homelab/pr-flow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Work off main on every harness: branch + worktree, PR, watch CI until green, merge only when told, tear down after merge.",

@@ -50,8 +50,8 @@ def hint(ev):
         return None
     return (f"pr-flow: you just changed a tracked file while {root} is on `{branch}` in its main "
             f"checkout. Unless the user said to work on {branch} directly, run "
-            f"`pr-flow start <slug>` now — it moves these uncommitted edits into a worktree — "
-            f"and continue there.")
+            f"`pr-flow start <slug> --carry` now — it moves these uncommitted edits into a "
+            f"worktree — and continue there.")
 
 
 def main():

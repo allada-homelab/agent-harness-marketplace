@@ -20,19 +20,23 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
 1. **Read first, on main.** Investigation, planning and questions need no branch.
    The trigger for step 2 is the first edit, not the task start.
 2. **Start** — `pr-flow start <slug>` from the main checkout (`<slug>` becomes
-   `feat/<slug>`; give a full `fix/…` name to choose the prefix). It prints the
+   `feat/<slug>`; give a full `fix/…` name to choose the prefix; `--base
+   <branch>` builds off something other than the default branch, and is
+   remembered for `open`/`watch`/`teardown` on this branch). It prints the
    worktree path — use that printed path, never a guessed one — under
    `.claude/worktrees/` (named after the branch, `/` replaced by `-`), and
-   creates the `.agents/worktrees` symlink in any repo on first use. It also
-   carries uncommitted edits already on main into the worktree. From here every
-   file operation and command uses that path — absolute paths for file tools,
-   `cd <path> &&` or `git -C <path>` for commands.
+   creates the `.agents/worktrees` symlink in any repo on first use. From here
+   every file operation and command uses that path — absolute paths for file
+   tools, `cd <path> &&` or `git -C <path>` for commands.
+   A dirty main checkout (uncommitted edits, possibly someone else's) makes
+   `start` refuse by default — rerun with `--carry` to move all of it into the
+   new worktree, or `--carry <path>...` for specific paths only.
 3. **Work and commit** in the worktree. Stage only files you changed.
-4. **Open** — `pr-flow open`. Pushes, creates the PR (or reuses the branch's),
-   prints the full URL. Repeat the URL in every message that mentions the PR.
-   It refuses when the branch's PR is already merged (exit 2 — run `pr-flow
-   start` for new work instead) and opens a fresh PR when the old one was
-   closed.
+4. **Open** — `pr-flow open`. Pushes, creates the PR against the branch's
+   recorded base (or reuses the branch's), prints the full URL. Repeat the URL
+   in every message that mentions the PR. It refuses when the branch's PR is
+   already merged (exit 2 — run `pr-flow start` for new work instead) and opens
+   a fresh PR when the old one was closed.
 5. **Watch** — `pr-flow watch`, after every push. It blocks up to one hour; it
    prints `next poll in Ns` to stderr before each wait, and tolerates transient
    `gh` failures (gives up after 10 in a row, exit 2). It returns one verdict:
@@ -42,12 +46,16 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
      worktree, commit, push, watch again.
    - `conflict` (11): in the worktree `git fetch origin && git merge origin/<base>`,
      resolve, commit, push, watch again. Never force-push to resolve a conflict.
-   - `review` (12): unresolved review threads or changes requested. Address each
-     thread (bot reviewers included), push, reply on the thread, watch again.
+   - `review` (12): unresolved review threads, changes requested, a draft PR, or
+     one blocked by branch protection. Address each thread (bot reviewers
+     included) or the blocking condition, push, reply on the thread, watch again.
    - `closed` (13): stop and report.
    - `timeout` (14): nothing finished within the hour; watch again.
    - `attempts-exhausted` (15): five fix rounds used. Stop and report what is
      still red — the user decides.
+   `--merge` binds to the exact commit it last saw green
+   (`--match-head-commit`); if the head moved since, it refuses (exit 2) rather
+   than merging a commit nobody watched — run watch again.
 6. **Merge only when told.** `pr-flow watch --merge` is allowed only when the
    user said, ahead of time and for this task, that the PR may be merged when
    green. Silence means no. A green PR without that permission ends the turn

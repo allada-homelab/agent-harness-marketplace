@@ -2,10 +2,14 @@ import json
 from conftest import git, run
 
 
-def pr(state="OPEN", checks=(), mergeable="MERGEABLE", review="", head="h1", number=7):
-    return {"state": state, "mergeable": mergeable, "mergeStateStatus": "CLEAN", "reviewDecision": review,
-            "statusCheckRollup": list(checks), "url": "https://github.com/o/r/pull/7", "headRefOid": head,
-            "number": number}
+def pr(state="OPEN", checks=(), mergeable="MERGEABLE", review="", head="h1", number=7,
+       isDraft=None, mergeStateStatus="CLEAN"):
+    d = {"state": state, "mergeable": mergeable, "mergeStateStatus": mergeStateStatus, "reviewDecision": review,
+         "statusCheckRollup": list(checks), "url": "https://github.com/o/r/pull/7", "headRefOid": head,
+         "number": number}
+    if isDraft is not None:
+        d["isDraft"] = isDraft
+    return d
 
 
 def check(conclusion, status="COMPLETED", url="https://github.com/o/r/actions/runs/123/job/456"):
@@ -59,6 +63,17 @@ def test_conflict(repo):
     assert r.returncode == 11
 
 
+def test_conflict_message_uses_recorded_base(repo):
+    root, _ = repo
+    git("branch", "dev", cwd=root)
+    git("push", "-q", "origin", "dev", cwd=root)
+    assert run("start", "cb", "--base", "dev", cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / "feat-cb"
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], mergeable="CONFLICTING")]})
+    assert r.returncode == 11
+    assert "merge origin/dev" in r.stdout
+
+
 def test_review_threads_and_changes_requested(repo):
     _, wt = opened(repo)
     r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")])], "threads_unresolved": 2})
@@ -66,6 +81,20 @@ def test_review_threads_and_changes_requested(repo):
     assert "2 unresolved" in r.stdout
     r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], review="CHANGES_REQUESTED")]})
     assert r.returncode == 12
+
+
+def test_draft_pr_is_review(repo):
+    _, wt = opened(repo)
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], isDraft=True)]})
+    assert r.returncode == 12
+    assert "draft" in r.stdout
+
+
+def test_blocked_merge_state_is_review(repo):
+    _, wt = opened(repo)
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], mergeStateStatus="BLOCKED")]})
+    assert r.returncode == 12
+    assert "branch protection" in r.stdout
 
 
 def test_closed_and_merged(repo):

@@ -55,6 +55,34 @@ def test_teardown_survives_hand_deleted_worktree(repo):
     assert "feat/w" not in git("worktree", "list", cwd=root)
 
 
+def merged_branch_with_base(repo, base, name="d"):
+    """Like merged_branch(), but the worktree's recorded base is `base` (not main) and the
+    merge lands on origin/<base> instead of origin/main."""
+    root, _ = repo
+    git("branch", base, cwd=root)
+    git("push", "-q", "origin", base, cwd=root)
+    assert run("start", name, "--base", base, cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / f"feat-{name}"
+    (wt / f"{name}.txt").write_text("x\n")
+    git("add", f"{name}.txt", cwd=wt)
+    git("commit", "-q", "-m", name, cwd=wt)
+    git("push", "-q", "-u", "origin", f"feat/{name}", cwd=wt)
+    git("fetch", "-q", "origin", cwd=root)
+    git("switch", "-q", base, cwd=root)
+    git("merge", "-q", "--no-ff", "-m", "merge", f"origin/feat/{name}", cwd=root)
+    git("push", "-q", "origin", base, cwd=root)
+    git("switch", "-q", "main", cwd=root)
+    return root, wt
+
+
+def test_teardown_uses_recorded_base(repo):
+    root, wt = merged_branch_with_base(repo, "dev", "d")
+    r = run("teardown", "feat/d", cwd=root)
+    assert r.returncode == 0, r.stderr
+    assert not wt.exists()
+    assert "feat/d" not in git("branch", "--list", cwd=root)
+
+
 def test_teardown_refuses_unmerged_branch(repo):
     root, _ = repo
     assert run("start", "u", cwd=root).returncode == 0
@@ -83,6 +111,25 @@ def test_watch_merge_merges_then_tears_down(repo):
     assert r.returncode == 0, r.stderr
     assert last(r).startswith("pr-flow: watch merged")
     assert not wt.exists()
+
+
+def test_watch_merge_refuses_when_head_moved(repo):
+    root, _ = repo
+    assert run("start", "h", cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / "feat-h"
+    (wt / "h.txt").write_text("h\n")
+    git("add", "h.txt", cwd=wt)
+    git("commit", "-q", "-m", "h", cwd=wt)
+    git("push", "-q", "-u", "origin", "feat/h", cwd=wt)
+    r = run("watch", "--merge", cwd=wt,
+            replay={"pr_view": [pr(checks=[check("SUCCESS")], head="h1"), pr(checks=[check("SUCCESS")], head="h2")]})
+    assert r.returncode == 2
+    assert "head moved" in r.stderr
+    assert wt.exists()
+    calls = [json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()]
+    merge_call = next(c for c in calls if c[:2] == ["pr", "merge"])
+    assert "--match-head-commit" in merge_call
+    assert merge_call[merge_call.index("--match-head-commit") + 1] == "h1"
 
 
 def test_watch_without_merge_never_calls_merge(repo):
