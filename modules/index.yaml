@@ -137,6 +137,30 @@ modules:
     command: false
     summary: Scope and plan a coding task so that a less capable model can implement it without your context
       or judgment.
+- name: pr-flow
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  - hooks
+  harness:
+  - claude
+  - pi
+  - dsh
+  description: 'Work off main on every harness: branch + worktree, PR, watch CI until green, merge only
+    when told, tear down after merge.'
+  skills:
+  - name: pr-flow
+    path: modules/pr-flow/skills/pr-flow/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - git
+    - workflow
+    command: true
+    summary: Use whenever a task will change files in a git repository.
 - name: research
   version: 0.1.1
   kinds:
