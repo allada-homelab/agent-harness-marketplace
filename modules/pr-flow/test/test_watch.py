@@ -121,6 +121,15 @@ def test_no_checks_then_failure_surfaces_during_grace(repo):
     assert r.returncode == 10
 
 
+def test_merge_refuses_on_grace_expired_green(repo):
+    _, wt = opened(repo)
+    r = run("watch", "--merge", "--no-checks-grace", "0", cwd=wt, replay={"pr_view": [pr(checks=[])]})
+    assert r.returncode == 0, r.stderr
+    assert "refusing --merge" in r.stdout
+    calls = [json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()]
+    assert not any(c[:2] == ["pr", "merge"] for c in calls)
+
+
 def test_closed_and_merged(repo):
     _, wt = opened(repo)
     assert run("watch", cwd=wt, replay={"pr_view": [pr(state="CLOSED")]}).returncode == 13

@@ -132,6 +132,21 @@ def test_watch_merge_refuses_when_head_moved(repo):
     assert merge_call[merge_call.index("--match-head-commit") + 1] == "h1"
 
 
+def test_watch_merge_reports_real_gh_failure(repo):
+    root, _ = repo
+    assert run("start", "mf", cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / "feat-mf"
+    (wt / "mf.txt").write_text("mf\n")
+    git("add", "mf.txt", cwd=wt)
+    git("commit", "-q", "-m", "mf", cwd=wt)
+    git("push", "-q", "-u", "origin", "feat/mf", cwd=wt)
+    r = run("watch", "--merge", cwd=wt,
+            replay={"pr_view": [pr(checks=[check("SUCCESS")])], "merge_fails": True})
+    assert r.returncode == 2
+    assert "boom" in r.stderr
+    assert wt.exists()
+
+
 def test_watch_without_merge_never_calls_merge(repo):
     root, _ = repo
     assert run("start", "n", cwd=root).returncode == 0

@@ -240,6 +240,10 @@ def cmd_start(a):
             stash_tag = f"pr-flow start {branch} {secrets.token_hex(4)}"
             if a.carry:
                 for p in a.carry:
+                    if Path(p) in include:
+                        raise Fail(f"{p} is a .worktreeinclude target and is copied, not moved; "
+                                   "drop it from --carry")
+                for p in a.carry:
                     if not git("status", "--porcelain", "--", p, cwd=root):
                         raise Fail(f"--carry {p}: no uncommitted changes for that path (typo?)")
                 git("stash", "push", "-q", "-u", "-m", stash_tag, "--", *a.carry, cwd=root)
@@ -255,6 +259,10 @@ def cmd_start(a):
             if stash_sha(root, stash_tag) is not None:
                 tag = stash_tag
                 warn(f"carried: {carried_n} path(s)")
+        elif a.carry is not None:
+            warn("--carry ignored: nothing to carry")
+    elif a.carry is not None:
+        warn("--carry ignored: run start from the main checkout")
     git("worktree", "add", "-q", "-b", branch, wt, f"origin/{base}", cwd=root)
     git("config", f"branch.{branch}.pr-flow-base", base, cwd=root)
     copy_worktreeinclude(root, wt, include)
@@ -389,8 +397,8 @@ def print_failed_logs(pr, cwd):
 def do_merge(ctx, cwd, pr):
     try:
         gh("pr", "merge", str(pr["number"]), "--merge", "--match-head-commit", pr["headRefOid"], cwd=cwd)
-    except Fail:
-        raise Fail("head moved since the last green poll; run watch again")
+    except Fail as e:
+        raise Fail(f"merge refused ({e}); if the head moved, run watch again")
     after = poll(cwd)
     if after.get("state") != "MERGED":
         raise Fail(f"merge requested but PR state is {after.get('state')}; not tearing down")
@@ -435,6 +443,7 @@ def cmd_watch(a):
     threads = {"n": 0}
     consecutive_fails = 0
     no_checks_since = None
+    grace_expired = False
     while True:
         try:
             pr = poll(cwd)
@@ -474,6 +483,7 @@ def cmd_watch(a):
                 if elapsed >= a.no_checks_grace:
                     print(f"no checks reported for this head after {elapsed:.0f}s; treating as green")
                     verdict = "green"
+                    grace_expired = True
                 else:
                     verdict = None
             else:
@@ -510,7 +520,10 @@ def cmd_watch(a):
         st["attempts"] = 0
         save_state(ctx, ctx.branch, st)
     if verdict == "green" and a.merge:
-        verdict = do_merge(ctx, cwd, pr)
+        if grace_expired:
+            print("no checks reported for this head; refusing --merge — merge by hand once you have evidence")
+        else:
+            verdict = do_merge(ctx, cwd, pr)
     if verdict == "merged" and not ctx.is_main:
         # Ruling 1: a PR merged by someone else may not yet be an ancestor of the base in
         # this worktree — teardown failing here must never turn a merged verdict into exit 2.
