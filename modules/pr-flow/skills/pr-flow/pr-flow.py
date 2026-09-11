@@ -350,11 +350,45 @@ def print_failed_logs(pr, cwd):
 
 
 def do_merge(ctx, cwd, pr):
-    raise Fail("--merge not implemented yet")
+    gh("pr", "merge", str(pr["number"]), "--merge", cwd=cwd)
+    after = poll(cwd)
+    if after.get("state") != "MERGED":
+        raise Fail(f"merge requested but PR state is {after.get('state')}; not tearing down")
+    print(f"merged {pr.get('url', '')}")
+    return "merged"
 
 
-def teardown(ctx, branch):
-    return None
+_TEST_DOUBLE_ARTIFACTS = (".gh-log", ".gh-replay.json")  # dropped only by test/fake_gh.py under PR_FLOW_GH
+
+
+def teardown(ctx, branch, dry_run=False):
+    root = ctx.main_root
+    wt = worktree_for_branch(root, branch)
+    if wt is not None:
+        # Ignore this skill's own gh test-double debug artifacts — never real repo
+        # content, and the real `gh` CLI never creates them.
+        dirty = "\n".join(line for line in git("status", "--porcelain", cwd=wt).splitlines()
+                           if line[3:] not in _TEST_DOUBLE_ARTIFACTS)
+        if dirty:
+            raise Fail(f"worktree {wt} is dirty; commit or discard first:\n{dirty}")
+    base = default_base(root)
+    git("fetch", "-q", "origin", base, cwd=root)
+    merged = subprocess.run([GIT, "merge-base", "--is-ancestor", branch, f"origin/{base}"], cwd=root).returncode == 0
+    if not merged:
+        raise Fail(f"branch {branch} is not merged into origin/{base}; refusing to delete it")
+    if dry_run:
+        print(f"would remove {wt} and delete {branch}")
+        return
+    if wt is not None:
+        git("worktree", "remove", "--force", wt, cwd=root)
+    git("branch", "-D", branch, cwd=root)
+    if subprocess.run([GIT, "push", "-q", "origin", "--delete", branch], cwd=root, capture_output=True).returncode:
+        warn(f"remote branch {branch} already gone or not deletable; continuing")
+    git("worktree", "prune", cwd=root)
+    try:
+        state_path(ctx, branch).unlink()
+    except OSError:
+        pass
 
 
 def cmd_watch(a):
@@ -449,6 +483,43 @@ def cmd_open(a):
     return done("open", "ok", url)
 
 
+def cmd_teardown(a):
+    cwd = Path.cwd()
+    ctx = repo_ctx(cwd)
+    branch = a.branch or ctx.branch
+    if not ctx.is_main:
+        # Re-exec from the main checkout: a process whose cwd is being removed is a bad way to end.
+        os.chdir(ctx.main_root)
+        os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), "teardown", branch])
+    if branch in PROTECTED:
+        raise Fail(f"{branch} is protected")
+    teardown(ctx, branch)
+    return done("teardown", "ok", branch)
+
+
+def cmd_gc(a):
+    cwd = Path.cwd()
+    ctx = repo_ctx(cwd)
+    root = ctx.main_root
+    swept, kept = [], []
+    for path, branch in worktrees(root):
+        if path.resolve() == root.resolve() or not branch:
+            continue
+        n = gh("pr", "list", "--head", branch, "--state", "merged", "--json", "number", "--jq", "length", cwd=root, check=False)
+        if n.strip() not in ("0", ""):
+            try:
+                teardown(ctx, branch, dry_run=a.dry_run)
+                swept.append(branch)
+            except Fail as e:
+                warn(str(e))
+                kept.append(branch)
+        else:
+            kept.append(branch)
+    print("swept: " + (", ".join(swept) or "-"))
+    print("kept:  " + (", ".join(kept) or "-"))
+    return done("gc", "ok", f"{len(swept)} swept")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="pr-flow", description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="verb", required=True)
@@ -467,6 +538,12 @@ def main(argv=None):
     w.add_argument("--interval", type=float, default=60)
     w.add_argument("--interval-max", type=float, default=300)
     w.set_defaults(fn=cmd_watch)
+    t = sub.add_parser("teardown", help="remove the worktree and delete the merged branch")
+    t.add_argument("branch", nargs="?")
+    t.set_defaults(fn=cmd_teardown)
+    g = sub.add_parser("gc", help="tear down every worktree whose PR is merged")
+    g.add_argument("--dry-run", action="store_true")
+    g.set_defaults(fn=cmd_gc)
     a = p.parse_args(argv)
     try:
         return a.fn(a)
