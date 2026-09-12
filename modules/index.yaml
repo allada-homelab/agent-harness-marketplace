@@ -116,7 +116,7 @@ modules:
       and reuse over speculative flexibility, watches runtime/query cost, marks nits explicitly, and keeps
       a warm, concise tone.
 - name: plan-for-dummies
-  version: 0.2.0
+  version: 0.3.0
   kinds:
   - skills
   - dsh-plugin

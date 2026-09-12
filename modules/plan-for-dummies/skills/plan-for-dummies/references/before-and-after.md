@@ -108,6 +108,11 @@ requests in a minute. Search behaviour is unchanged.
   string and reads the limit at request time.
 - `src/api/search.py` — `search_handler`, the only current use of `@rate_limited`.
 - `tests/api/test_search.py` — `test_search_rate_limited`, the test shape to copy.
+- Docs: FastAPI 0.115.6 — decorator stacking on `APIRouter` routes. Read before step 2.
+
+## Decisions
+- `upload_rate_limit_per_min` default = 10, because the scripted abuse was ~40k/day and
+  real users upload single digits per session.
 
 ## Stop if
 - `search_handler` is not decorated with `@rate_limited("search_rate_limit_per_min")`.
@@ -134,8 +139,9 @@ requests in a minute. Search behaviour is unchanged.
 Files changed / commands run with pasted output / deviations / unsure about.
 ```
 
-Same investigation, 28 lines instead of 70. Every decision is made (default 10,
-decorator order, the string argument, which test to copy, what the test asserts).
+Same investigation, 34 lines instead of 70. Every decision is made (default 10,
+decorator order, the string argument, which test to copy, what the test asserts), and
+the one a reviewer might flip sits under Decisions instead of in a question to the user.
 Nothing is pasted that the implementer can read in the repo. The two things a
 weaker model plausibly gets wrong each have one Watch-out line. The checkpoints are
 real outputs from running the commands before writing them down. The reviewer's
