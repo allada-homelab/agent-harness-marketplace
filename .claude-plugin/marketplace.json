@@ -44,9 +44,9 @@
     },
     {
       "name": "plan-for-dummies",
-      "description": "Scope and plan a coding task so that a less capable model can implement it without your context or judgment.",
+      "description": "Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent) will execute without the planner present.",
       "category": "development",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "source": "./modules/plan-for-dummies"
     },
     {

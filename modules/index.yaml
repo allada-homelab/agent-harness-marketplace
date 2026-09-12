@@ -116,7 +116,7 @@ modules:
       and reuse over speculative flexibility, watches runtime/query cost, marks nits explicitly, and keeps
       a warm, concise tone.
 - name: plan-for-dummies
-  version: 0.1.0
+  version: 0.2.0
   kinds:
   - skills
   - dsh-plugin
@@ -124,8 +124,8 @@ modules:
   - claude
   - pi
   - dsh
-  description: Scope and plan a coding task so that a less capable model can implement it without your
-    context or judgment.
+  description: Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent)
+    will execute without the planner present.
   skills:
   - name: plan-for-dummies
     path: modules/plan-for-dummies/skills/plan-for-dummies/SKILL.md
@@ -135,8 +135,8 @@ modules:
     - pi
     tags: []
     command: false
-    summary: Scope and plan a coding task so that a less capable model can implement it without your context
-      or judgment.
+    summary: Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent)
+      will execute without the planner present.
 - name: pr-flow
   version: 0.2.0
   kinds:
