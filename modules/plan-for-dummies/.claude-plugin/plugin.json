@@ -1,6 +1,6 @@
 {
   "name": "plan-for-dummies",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent) will execute without the planner present.",
   "author": {
     "name": "David Allada",

@@ -46,7 +46,7 @@
       "name": "plan-for-dummies",
       "description": "Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent) will execute without the planner present.",
       "category": "development",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "source": "./modules/plan-for-dummies"
     },
     {
