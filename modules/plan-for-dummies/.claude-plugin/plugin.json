@@ -1,7 +1,10 @@
 {
   "name": "plan-for-dummies",
-  "version": "0.1.0",
-  "description": "Scope and plan a coding task so that a less capable model can implement it without your context or judgment.",
-  "author": { "name": "David Allada", "email": "davidanilallada@gmail.com" },
+  "version": "0.2.0",
+  "description": "Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent) will execute without the planner present.",
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
   "license": "MIT"
 }
