@@ -1,0 +1,9 @@
+{"type":"session","version":3,"id":"0000-uuid","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/tmp/proj"}
+{"type":"model_change","provider":"provider-x","modelId":"model-gamma"}
+{"type":"message","id":"aaaa1111","parentId":null,"timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"count the widgets"}]}}
+{"type":"message","id":"bbbb2222","parentId":"aaaa1111","timestamp":"2026-01-01T00:00:02.000Z","message":{"role":"assistant","stopReason":"toolCall","usage":{"input":1,"output":2},"content":[{"type":"text","text":"listing the widgets"},{"type":"toolCall","id":"tc1","name":"bash","arguments":{"command":"ls"}}]}}
+{"type":"message","id":"cccc3333","parentId":"bbbb2222","timestamp":"2026-01-01T00:00:03.000Z","message":{"role":"toolResult","toolCallId":"tc1","toolName":"bash","content":[{"type":"text","text":"widget-one"}],"isError":false}}
+{"type":"thinking_level_change","level":"high"}
+{"type":"message","id":"dddd4444","parentId":"cccc3333","timestamp":"2026-01-01T00:00:04.000Z","message":{"role":"assistant","model":"model-delta","stopReason":"endTurn","usage":{"input":3,"output":4},"content":[{"type":"text","text":"abandoned branch"}]}}
+{"type":"message","id":"eeee5555","parentId":"cccc3333","timestamp":"2026-01-01T00:00:05.000Z","message":{"role":"assistant","model":"model-delta","stopReason":"endTurn","usage":{"input":5,"output":6},"content":[{"type":"text","text":"there is one widget"}]}}
+{"type":"session_info","name":"Widget count"}
