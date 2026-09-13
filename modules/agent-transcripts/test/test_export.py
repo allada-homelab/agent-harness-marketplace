@@ -205,6 +205,19 @@ def test_export_copies_tree_then_skips_unchanged(tmp_path, capsys):
     assert "copied=0 unchanged=2" in capsys.readouterr().out
 
 
+def test_pi_export_skips_spill(tmp_path, capsys):
+    origin = tmp_path / "sessions"
+    (origin / "spill").mkdir(parents=True)
+    (origin / "spill" / "big.bin").write_text("payload")
+    (origin / "a.jsonl").write_text("{}\n")
+    dest = tmp_path / "cache"
+
+    tr.export_sources(dest, [_host_source("pi", origin, "default")], dry_run=False)
+    assert (dest / "raw/pi/host/default/a.jsonl").exists()
+    assert not (dest / "raw/pi/host/default/spill").exists()
+    assert "copied=1" in capsys.readouterr().out
+
+
 def test_dry_run_writes_nothing(tmp_path):
     origin = tmp_path / "projects"
     origin.mkdir()

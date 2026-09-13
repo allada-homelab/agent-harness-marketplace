@@ -24,9 +24,11 @@ import fnmatch
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tarfile
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -282,7 +284,10 @@ def _export_host(src: dict, dest_root: Path, dry_run: bool) -> dict:
     for f in sorted(origin.rglob("*")):
         if not f.is_file():
             continue
-        dest = base / f.relative_to(origin)
+        rel = f.relative_to(origin)
+        if src["harness"] == "pi" and rel.parts[0] == "spill":
+            continue  # pi's third-party spill payloads are out of scope in v0.1
+        dest = base / rel
         st = f.stat()
         if should_copy(st.st_size, int(st.st_mtime), dest):
             if not dry_run:
@@ -418,6 +423,609 @@ def export_sources(
     return manifest
 
 
+# --------------------------------------------------------------- ingest: model
+
+PARSER_VERSION = 1
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS files (
+    id             INTEGER PRIMARY KEY,
+    harness        TEXT NOT NULL,
+    relpath        TEXT NOT NULL UNIQUE,
+    size           INTEGER NOT NULL,
+    mtime          INTEGER NOT NULL,
+    parser_version INTEGER NOT NULL,
+    status         TEXT NOT NULL,
+    error          TEXT,
+    parsed_at      TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    id               INTEGER PRIMARY KEY,
+    harness          TEXT NOT NULL,
+    native_id        TEXT NOT NULL,
+    file_id          INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    cwd              TEXT,
+    project_key      TEXT,
+    kind             TEXT NOT NULL,
+    parent_native_id TEXT,
+    started_at       TEXT,
+    ended_at         TEXT,
+    model            TEXT,
+    title            TEXT
+);
+CREATE TABLE IF NOT EXISTS messages (
+    id               INTEGER PRIMARY KEY,
+    session_id       INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    ord              INTEGER NOT NULL,
+    native_id        TEXT,
+    parent_native_id TEXT,
+    on_main_path     INTEGER NOT NULL,
+    role             TEXT NOT NULL,
+    ts               TEXT,
+    text             TEXT NOT NULL,
+    model            TEXT,
+    stop_reason      TEXT,
+    input_tokens     INTEGER,
+    output_tokens    INTEGER,
+    raw              TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tool_calls (
+    id                INTEGER PRIMARY KEY,
+    message_id        INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    call_id           TEXT NOT NULL,
+    name              TEXT,
+    arguments         TEXT,
+    result_message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+    is_error          INTEGER
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
+    USING fts5(text, content='messages', content_rowid='id');
+CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
+END;
+"""
+
+
+@dataclass
+class ToolCall:
+    call_id: str
+    name: str
+    arguments: str  # JSON text
+
+
+@dataclass
+class Message:
+    ord: int
+    native_id: str | None
+    parent_native_id: str | None
+    on_main_path: bool
+    role: str  # user | assistant | tool_result | system
+    ts: str | None
+    text: str
+    model: str | None
+    stop_reason: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    raw: str
+    tool_calls: list[ToolCall] = field(default_factory=list)  # assistant only
+    results: list[tuple[str, bool]] = field(default_factory=list)  # tool_result only
+
+
+@dataclass
+class Session:
+    native_id: str
+    cwd: str | None = None
+    project_key: str | None = None
+    kind: str = "main"  # main | subagent
+    parent_native_id: str | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    model: str | None = None
+    title: str | None = None
+
+
+@dataclass
+class ParsedFile:
+    session: Session
+    messages: list[Message]
+
+
+def open_db(dest_root: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(dest_root / "transcripts.db")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.executescript(SCHEMA)
+    return conn
+
+
+def iter_raw_files(dest_root: Path) -> list[tuple[str, Path]]:
+    """Every raw transcript file under the cache root, as (harness, path), sorted."""
+    raw = dest_root / "raw"
+    found: list[tuple[str, Path]] = []
+    for harness, pattern in (
+        ("claude", "*/**/*.jsonl"),
+        ("pi", "*/**/*.jsonl"),
+        ("dsh", "*/sessions/*/*/session.jsonl.zstd"),
+    ):
+        found += [(harness, p) for p in (raw / harness).glob(pattern) if p.is_file()]
+    return sorted(found, key=lambda row: (row[0], str(row[1])))
+
+
+def to_iso(ms: int) -> str:
+    """Epoch milliseconds -> `YYYY-MM-DDTHH:MM:SS.mmmZ` (the stored timestamp shape)."""
+    dt = datetime.fromtimestamp(ms / 1000, timezone.utc)
+    return f"{dt:%Y-%m-%dT%H:%M:%S}.{dt.microsecond // 1000:03d}Z"
+
+
+# ------------------------------------------------------------- ingest: parsers
+
+
+def _blocks_text(content) -> str:
+    """Text blocks only, joined by newlines. A plain string is one block."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(
+        b.get("text") or ""
+        for b in content
+        if isinstance(b, dict) and b.get("type") == "text"
+    )
+
+
+def _mark_main_path(messages: list[Message]) -> None:
+    """Walk from the last record up via parent ids; every id visited is on the path."""
+    if not messages:
+        return
+    by_id = {m.native_id: m for m in messages if m.native_id}
+    seen: set[str] = set()  # a self-referencing parent id must not loop forever
+    cur: Message | None = messages[-1]
+    while cur is not None and cur.native_id not in seen:
+        cur.on_main_path = True
+        if cur.native_id:
+            seen.add(cur.native_id)
+        cur = by_id.get(cur.parent_native_id) if cur.parent_native_id else None
+
+
+def _finalize(session: Session, messages: list[Message]) -> ParsedFile:
+    """Session span and model derive from the messages."""
+    stamps = [m.ts for m in messages if m.ts]
+    session.started_at = stamps[0] if stamps else None
+    session.ended_at = stamps[-1] if stamps else None
+    models = [m.model for m in messages if m.role == "assistant" and m.model]
+    session.model = models[-1] if models else None
+    return ParsedFile(session=session, messages=messages)
+
+
+def _json_lines(path: Path) -> list[str]:
+    return [line for line in path.read_text().splitlines() if line.strip()]
+
+
+def parse_claude(path: Path, relpath: str) -> ParsedFile:
+    """One JSONL per session; `<session>/subagents/<name>.jsonl` are its subagents."""
+    parts = Path(relpath).parts
+    project_key = None
+    if "projects" in parts and parts.index("projects") + 1 < len(parts):
+        project_key = parts[parts.index("projects") + 1]
+    # The file name is the session id for a main session and the agent id for a subagent.
+    session = Session(native_id=path.stem, project_key=project_key)
+    if path.parent.name == "subagents":
+        session.kind = "subagent"
+        session.parent_native_id = path.parent.parent.name
+
+    messages: list[Message] = []
+    for line in _json_lines(path):
+        rec = json.loads(line)
+        rtype = rec.get("type")
+        if rtype == "ai-title":
+            session.title = rec.get("title")
+            continue
+        if rtype not in ("user", "assistant"):
+            continue  # system, mode, attachment, … carry no conversation
+        msg = rec.get("message") or {}
+        content = msg.get("content")
+        blocks = content if isinstance(content, list) else []
+        calls: list[ToolCall] = []
+        results: list[tuple[str, bool]] = []
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "tool_use":
+                calls.append(
+                    ToolCall(
+                        call_id=b.get("id") or "",
+                        name=b.get("name") or "",
+                        arguments=json.dumps(b.get("input"), sort_keys=True),
+                    )
+                )
+            elif b.get("type") == "tool_result":
+                results.append((b.get("tool_use_id") or "", bool(b.get("is_error"))))
+        if session.cwd is None:
+            session.cwd = rec.get("cwd")
+        usage = msg.get("usage") or {}
+        messages.append(
+            Message(
+                ord=len(messages),
+                native_id=rec.get("uuid"),
+                parent_native_id=rec.get("parentUuid"),
+                on_main_path=False,
+                role="tool_result" if (rtype == "user" and results) else rtype,
+                ts=rec.get("timestamp"),
+                text=_blocks_text(content),
+                model=msg.get("model"),
+                stop_reason=msg.get("stop_reason"),
+                input_tokens=usage.get("input_tokens"),
+                output_tokens=usage.get("output_tokens"),
+                raw=line,
+                tool_calls=calls,
+                results=results,
+            )
+        )
+    _mark_main_path(messages)
+    return _finalize(session, messages)
+
+
+def parse_pi(path: Path, relpath: str) -> ParsedFile:
+    """Header line plus `message` entries; non-message entries are skipped."""
+    lines = _json_lines(path)
+    header = json.loads(lines[0]) if lines else {}
+    if header.get("type") != "session":
+        raise ValueError("pi session file does not start with a session header")
+    if header.get("version") == 1:
+        raise ValueError("pi session format v1 is unsupported")
+    cwd = header.get("cwd")
+    session = Session(
+        native_id=header.get("id") or path.stem,
+        cwd=cwd,
+        project_key=cwd.replace("/", "-") if cwd else None,
+    )
+    parent = header.get("parentSession")
+    if parent:
+        session.kind = "subagent"
+        # parentSession is a path; the parent session id follows the `_` in its file name.
+        session.parent_native_id = Path(parent).stem.split("_", 1)[-1]
+
+    model: str | None = None  # set by model_change for later messages that lack one
+    messages: list[Message] = []
+    for line in lines[1:]:
+        rec = json.loads(line)
+        rtype = rec.get("type")
+        if rtype == "model_change":
+            model = rec.get("modelId")
+            continue
+        if rtype == "session_info":
+            session.title = rec.get("name")
+            continue
+        if rtype != "message":
+            continue
+        msg = rec.get("message") or {}
+        role = msg.get("role")
+        calls: list[ToolCall] = []
+        results: list[tuple[str, bool]] = []
+        if role == "toolResult":
+            role = "tool_result"
+            results.append((msg.get("toolCallId") or "", bool(msg.get("isError"))))
+        content = msg.get("content")
+        if isinstance(content, list):
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "toolCall":
+                    calls.append(
+                        ToolCall(
+                            call_id=b.get("id") or "",
+                            name=b.get("name") or "",
+                            arguments=json.dumps(b.get("arguments"), sort_keys=True),
+                        )
+                    )
+        usage = msg.get("usage") or {}
+        messages.append(
+            Message(
+                ord=len(messages),
+                native_id=rec.get("id"),
+                parent_native_id=rec.get("parentId"),
+                on_main_path=False,
+                role=role or "user",
+                ts=rec.get("timestamp"),
+                text=_blocks_text(content),
+                model=(msg.get("model") or model) if role == "assistant" else None,
+                stop_reason=msg.get("stopReason"),
+                input_tokens=usage.get("input"),
+                output_tokens=usage.get("output"),
+                raw=line,
+                tool_calls=calls,
+                results=results,
+            )
+        )
+    _mark_main_path(messages)
+    return _finalize(session, messages)
+
+
+def decode_zstd_lines(path: Path) -> list[str]:
+    """Concatenated zstd frames -> complete lines; a truncated tail frame is dropped."""
+    import zstandard
+
+    buf = bytearray()
+    dctx = zstandard.ZstdDecompressor()
+    with path.open("rb") as fh:
+        with dctx.stream_reader(fh, read_across_frames=True) as reader:
+            try:
+                while True:
+                    chunk = reader.read(65536)
+                    if not chunk:
+                        break
+                    buf += chunk
+            except zstandard.ZstdError:
+                pass  # truncated final frame: keep whatever decoded before it
+    lines = buf.decode("utf-8", errors="replace").split("\n")
+    return [line for line in lines[:-1] if line.strip()]  # last element is incomplete
+
+
+DSH_EVENTS = ("user/message", "assistant/message", "tool/call", "tool/result")
+
+
+def parse_dsh(path: Path, relpath: str) -> ParsedFile:
+    """Header frame plus seq-ordered event rows; chunk and control rows are dropped."""
+    rows = [(line, json.loads(line)) for line in decode_zstd_lines(path)]
+    if not rows or rows[0][1].get("type") != "session":
+        raise ValueError("dsh session file does not start with a session header")
+    header = rows[0][1]
+    session = Session(
+        native_id=header.get("id") or path.parent.name,
+        cwd=header.get("cwd"),
+        project_key=path.parent.parent.name,
+        kind="subagent" if header.get("origin") == "subagent" else "main",
+        parent_native_id=header.get("parentSession"),
+    )
+    for _, rec in rows:
+        if rec.get("type") == "session/title":
+            session.title = (rec.get("data") or {}).get("title")
+
+    events = [r for r in rows if r[1].get("type") in DSH_EVENTS]
+    events.sort(key=lambda r: r[1].get("seq") or 0)
+    messages: list[Message] = []
+    last_assistant: Message | None = None
+    for line, rec in events:
+        data = rec.get("data") or {}
+        rtype = rec.get("type")
+        ts = to_iso(rec["time"]) if rec.get("time") else None
+        if rtype == "tool/call":
+            # tool/call rows are the source of truth; the assistant block may repeat one.
+            if last_assistant is None:
+                continue
+            call_id = data.get("callId") or ""
+            call = next(
+                (c for c in last_assistant.tool_calls if c.call_id == call_id), None
+            )
+            if call is None:
+                call = ToolCall(call_id=call_id, name="", arguments="")
+                last_assistant.tool_calls.append(call)
+            call.name = data.get("name") or ""
+            call.arguments = json.dumps(data.get("arguments"), sort_keys=True)
+            continue
+
+        msg = data if rtype == "user/message" else (data.get("message") or {})
+        calls: list[ToolCall] = []
+        results: list[tuple[str, bool]] = []
+        text = _blocks_text(msg.get("content"))
+        if rtype == "assistant/message":
+            for b in msg.get("content") or []:
+                if isinstance(b, dict) and b.get("type") == "toolCall":
+                    calls.append(
+                        ToolCall(
+                            call_id=b.get("id") or "",
+                            name=b.get("name") or "",
+                            arguments=json.dumps(b.get("arguments"), sort_keys=True),
+                        )
+                    )
+        elif rtype == "tool/result":
+            texts = []
+            for b in msg.get("content") or []:
+                if isinstance(b, dict) and b.get("type") == "toolResult":
+                    results.append((b.get("toolCallId") or "", bool(b.get("isError"))))
+                    texts.append(_blocks_text(b.get("content")))
+            text = "\n".join(t for t in texts if t)
+        source = msg.get("source") or {}
+        usage = data.get("usage") or {}
+        message = Message(
+            ord=len(messages),
+            native_id=msg.get("id"),
+            parent_native_id=None,  # dsh files carry no intra-file tree
+            on_main_path=True,
+            role={"user/message": "user", "assistant/message": "assistant"}.get(
+                rtype, "tool_result"
+            ),
+            ts=ts,
+            text=text,
+            model=source.get("model"),
+            stop_reason=(
+                ((source.get("replayState") or {}).get("response") or {}).get(
+                    "stopReason"
+                )
+            ),
+            input_tokens=usage.get("inputTokens"),
+            output_tokens=usage.get("outputTokens"),
+            raw=line,
+            tool_calls=calls,
+            results=results,
+        )
+        messages.append(message)
+        if rtype == "assistant/message":
+            last_assistant = message
+    return _finalize(session, messages)
+
+
+PARSERS = {"claude": parse_claude, "pi": parse_pi, "dsh": parse_dsh}
+
+
+# --------------------------------------------------------------- ingest: write
+
+
+def _record_file(conn, harness: str, relpath: str, st, status: str, error) -> int:
+    """Replace the file's row; the cascade drops the sessions parsed from it before."""
+    conn.execute("DELETE FROM files WHERE relpath = ?", (relpath,))
+    cur = conn.execute(
+        "INSERT INTO files (harness, relpath, size, mtime, parser_version, status,"
+        " error, parsed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            harness,
+            relpath,
+            st.st_size,
+            int(st.st_mtime),
+            PARSER_VERSION,
+            status,
+            error,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    return cur.lastrowid
+
+
+def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> None:
+    s = parsed.session
+    cur = conn.execute(
+        "INSERT INTO sessions (harness, native_id, file_id, cwd, project_key, kind,"
+        " parent_native_id, started_at, ended_at, model, title)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            harness,
+            s.native_id,
+            file_id,
+            s.cwd,
+            s.project_key,
+            s.kind,
+            s.parent_native_id,
+            s.started_at,
+            s.ended_at,
+            s.model,
+            s.title,
+        ),
+    )
+    session_id = cur.lastrowid
+    inserted: list[tuple[int, Message]] = []
+    for m in parsed.messages:
+        mcur = conn.execute(
+            "INSERT INTO messages (session_id, ord, native_id, parent_native_id,"
+            " on_main_path, role, ts, text, model, stop_reason, input_tokens,"
+            " output_tokens, raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                m.ord,
+                m.native_id,
+                m.parent_native_id,
+                int(m.on_main_path),
+                m.role,
+                m.ts,
+                m.text,
+                m.model,
+                m.stop_reason,
+                m.input_tokens,
+                m.output_tokens,
+                m.raw,
+            ),
+        )
+        message_id = mcur.lastrowid
+        inserted.append((message_id, m))
+        for c in m.tool_calls:
+            conn.execute(
+                "INSERT INTO tool_calls (message_id, call_id, name, arguments)"
+                " VALUES (?, ?, ?, ?)",
+                (message_id, c.call_id, c.name, c.arguments),
+            )
+    # Link results to their calls once every message of the file exists.
+    for message_id, m in inserted:
+        for call_id, is_error in m.results:
+            conn.execute(
+                "UPDATE tool_calls SET result_message_id = ?, is_error = ?"
+                " WHERE call_id = ? AND message_id IN"
+                " (SELECT id FROM messages WHERE session_id = ?)",
+                (message_id, int(is_error), call_id, session_id),
+            )
+
+
+def ingest(dest_root: Path, rebuild: bool) -> int:
+    """Parse every new or changed raw file into the db. Returns the parse-error count."""
+    db_path = dest_root / "transcripts.db"
+    if rebuild and db_path.exists():
+        db_path.unlink()
+    conn = open_db(dest_root)
+    known = {
+        row[0]: (row[1], row[2], row[3])
+        for row in conn.execute(
+            "SELECT relpath, size, mtime, parser_version FROM files"
+        )
+    }
+    parsed_count = unchanged = errors = 0
+    for harness, path in iter_raw_files(dest_root):
+        relpath = path.relative_to(dest_root).as_posix()
+        st = path.stat()
+        if known.get(relpath) == (st.st_size, int(st.st_mtime), PARSER_VERSION):
+            unchanged += 1
+            continue
+        try:
+            parsed = PARSERS[harness](path, relpath)
+        except Exception as e:  # one bad file is recorded, never stops the run
+            with conn:
+                _record_file(conn, harness, relpath, st, "error", repr(e))
+            errors += 1
+            print(f"error: {relpath}: {e!r}", file=sys.stderr)
+            continue
+        with conn:
+            file_id = _record_file(conn, harness, relpath, st, "ok", None)
+            _insert_parsed(conn, file_id, harness, parsed)
+        parsed_count += 1
+    conn.close()
+    print(f"ingest: parsed={parsed_count} unchanged={unchanged} errors={errors}")
+    return errors
+
+
+def stats(conn) -> str:
+    """One table: files by status, sessions, messages and tool calls per harness."""
+    header = ("harness", "files", "ok", "error", "sessions", "messages", "tool_calls")
+    rows: list[tuple] = []
+    for harness in HARNESSES:
+        counts = dict(
+            conn.execute(
+                "SELECT status, count(*) FROM files WHERE harness = ? GROUP BY status",
+                (harness,),
+            )
+        )
+        rows.append(
+            (
+                harness,
+                sum(counts.values()),
+                counts.get("ok", 0),
+                counts.get("error", 0),
+                conn.execute(
+                    "SELECT count(*) FROM sessions WHERE harness = ?", (harness,)
+                ).fetchone()[0],
+                conn.execute(
+                    "SELECT count(*) FROM messages m JOIN sessions s"
+                    " ON s.id = m.session_id WHERE s.harness = ?",
+                    (harness,),
+                ).fetchone()[0],
+                conn.execute(
+                    "SELECT count(*) FROM tool_calls t JOIN messages m"
+                    " ON m.id = t.message_id JOIN sessions s ON s.id = m.session_id"
+                    " WHERE s.harness = ?",
+                    (harness,),
+                ).fetchone()[0],
+            )
+        )
+    rows.append(("total", *(sum(r[i] for r in rows) for i in range(1, len(header)))))
+    widths = [max(len(str(r[i])) for r in (header, *rows)) for i in range(len(header))]
+    out = []
+    for row in (header, *rows):
+        cells = [str(row[0]).ljust(widths[0])]
+        cells += [str(c).rjust(widths[i + 1]) for i, c in enumerate(row[1:])]
+        out.append("  ".join(cells).rstrip())
+    return "\n".join(out)
+
+
 # ------------------------------------------------------------------- commands
 
 
@@ -443,13 +1051,14 @@ def cmd_export(args) -> int:
 
 
 def cmd_ingest(args) -> int:
-    print("ingest: not implemented", file=sys.stderr)
-    return 2
+    return ingest(resolve_dest(args.dest), args.rebuild)
 
 
 def cmd_stats(args) -> int:
-    print("stats: not implemented", file=sys.stderr)
-    return 2
+    conn = open_db(resolve_dest(args.dest))
+    print(stats(conn))
+    conn.close()
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

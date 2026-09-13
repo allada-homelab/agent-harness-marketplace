@@ -14,9 +14,6 @@ instead of re-parsing three formats.
 rebuild re-reads `raw/`. A parse failure is recorded against the file and does not stop the
 run.
 
-Not implemented yet in this version: `./transcripts.py ingest` and `stats` exit non-zero
-with a message. Export works today.
-
 ## The commands
 
 ```bash
