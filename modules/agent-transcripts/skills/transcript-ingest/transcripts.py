@@ -541,6 +541,10 @@ class ParsedFile:
 def open_db(dest_root: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(dest_root / "transcripts.db")
     conn.execute("PRAGMA foreign_keys=ON")
+    # One commit per file: WAL + NORMAL keeps every committed file durable across a
+    # process kill while avoiding a full fsync per file on a multi-GB first ingest.
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(SCHEMA)
     return conn
 
