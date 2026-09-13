@@ -436,7 +436,7 @@ def test_dsh_tool_call_is_not_duplicated_by_the_call_row(cache):
 def test_dsh_truncated_tail_keeps_the_complete_prefix(tmp_path):
     root = build_cache(tmp_path, truncated=True)
     path = root / "raw/dsh/host/sessions/--tmp-proj--/session-0000/session.jsonl.zstd"
-    lines = tr.decode_zstd_lines(path)
+    lines = list(tr.decode_zstd_lines(path))
     assert len(lines) == len(DSH_BODY) + 1  # header + every complete body row
     assert all("lost to truncation" not in line for line in lines)
 

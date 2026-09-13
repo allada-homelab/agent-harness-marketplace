@@ -23,6 +23,7 @@ import argparse
 import fnmatch
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -745,32 +746,49 @@ def parse_pi(path: Path, relpath: str) -> ParsedFile:
     return _finalize(session, messages)
 
 
-def decode_zstd_lines(path: Path) -> list[str]:
-    """Concatenated zstd frames -> complete lines; a truncated tail frame is dropped."""
+def decode_zstd_lines(path: Path):
+    """Concatenated zstd frames -> complete lines, streamed; a truncated tail frame is dropped.
+
+    A generator on purpose: a chunk-heavy dsh log decompresses to many times its size,
+    so the whole text must never be held at once.
+    """
     import zstandard
 
-    buf = bytearray()
+    buf = b""
     dctx = zstandard.ZstdDecompressor()
     with path.open("rb") as fh:
         with dctx.stream_reader(fh, read_across_frames=True) as reader:
             try:
                 while True:
-                    chunk = reader.read(65536)
+                    chunk = reader.read(1 << 20)
                     if not chunk:
                         break
                     buf += chunk
+                    *complete, buf = buf.split(b"\n")
+                    for raw in complete:
+                        if raw.strip():
+                            yield raw.decode("utf-8", errors="replace")
             except zstandard.ZstdError:
                 pass  # truncated final frame: keep whatever decoded before it
-    lines = buf.decode("utf-8", errors="replace").split("\n")
-    return [line for line in lines[:-1] if line.strip()]  # last element is incomplete
+    # Whatever is left never saw a newline: an incomplete last line, dropped.
 
 
 DSH_EVENTS = ("user/message", "assistant/message", "tool/call", "tool/result")
+# Cheap pre-filter so chunk rows are never JSON-parsed; tolerant of JSON spacing.
+_DSH_KEEP = re.compile(
+    r'"type":\s*"(?:' + "|".join(re.escape(t) for t in ("session", "session/title", *DSH_EVENTS)) + r')"'
+)
 
 
 def parse_dsh(path: Path, relpath: str) -> ParsedFile:
     """Header frame plus seq-ordered event rows; chunk and control rows are dropped."""
-    rows = [(line, json.loads(line)) for line in decode_zstd_lines(path)]
+    # Only rows whose type we keep are JSON-parsed; chunk rows dominate the log and
+    # are discarded on the cheap prefix match instead.
+    rows = [
+        (line, json.loads(line))
+        for line in decode_zstd_lines(path)
+        if _DSH_KEEP.search(line)
+    ]
     if not rows or rows[0][1].get("type") != "session":
         raise ValueError("dsh session file does not start with a session header")
     header = rows[0][1]
