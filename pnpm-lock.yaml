@@ -12,6 +12,8 @@ importers:
         specifier: 0.25.0
         version: 0.25.0
 
+  modules/agent-transcripts: {}
+
   modules/claude-transcripts: {}
 
   modules/dual-agent-pr-review: {}
@@ -21,6 +23,10 @@ importers:
   modules/get-shit-done-claude: {}
 
   modules/minimalist-code-review: {}
+
+  modules/plan-for-dummies: {}
+
+  modules/pr-flow: {}
 
   modules/research: {}
 

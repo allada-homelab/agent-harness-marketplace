@@ -57,6 +57,13 @@
       "source": "./modules/dual-agent-pr-review"
     },
     {
+      "name": "agent-transcripts",
+      "description": "Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a derived sqlite database.",
+      "category": "development",
+      "version": "0.1.0",
+      "source": "./modules/agent-transcripts"
+    },
+    {
       "name": "pr-flow",
       "description": "Work off main on every harness: branch + worktree, PR, watch CI until green, merge only when told, tear down after merge.",
       "category": "development",

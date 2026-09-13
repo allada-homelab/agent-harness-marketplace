@@ -121,9 +121,15 @@ def lint_skill(path: Path, out: list[str]) -> int:
             warn("command takes $ARGUMENTS but has no argument-hint")
 
     # Assets the body names must exist beside the skill.
-    for m in re.finditer(r"(?<![\w/])\./([\w./-]+)", body):
+    for m in re.finditer(r"(?<![\w./])\./([\w./-]+)", body):
         if not (path.parent / m.group(1)).exists():
             fail(f"references ./{m.group(1)} which does not exist in the skill directory")
+    # A sibling skill's asset: it must exist and stay inside the same module.
+    module_dir = path.parent.parent.parent.resolve()
+    for m in re.finditer(r"(?<![\w/])\.\./([\w./-]+)", body):
+        target = (path.parent / ".." / m.group(1)).resolve()
+        if not target.exists() or module_dir not in target.parents:
+            fail(f"references ../{m.group(1)} which does not exist inside this module")
     return fails
 
 

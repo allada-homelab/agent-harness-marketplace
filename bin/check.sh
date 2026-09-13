@@ -210,7 +210,7 @@ fi
 
 step "python tests"
 if compgen -G "modules/*/test/test_*.py" >/dev/null; then
-    uv run --with pytest --with pyyaml --python 3.12 pytest -q modules/*/test || fail=1
+    uv run --with pytest --with pyyaml --with zstandard --python 3.12 pytest -q modules/*/test || fail=1
 else
     echo "  (none)"
 fi

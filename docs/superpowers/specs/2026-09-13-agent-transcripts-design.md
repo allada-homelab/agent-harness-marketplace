@@ -68,7 +68,7 @@ raw/claude/<source>/projects/<slug>/<session>.jsonl
 raw/claude/<source>/projects/<slug>/<session>/subagents/*.jsonl and *.meta.json
 raw/claude/<source>/projects/<slug>/<session>/tool-results/*.txt
 raw/pi/<source>/<root-tag>/<ts>_<uuid>.jsonl
-raw/dsh/<source>/<cwd-key>/<session-id>/session.jsonl.zstd
+raw/dsh/<source>/sessions/<cwd-key>/<session-id>/session.jsonl.zstd
 manifest.json
 transcripts.db
 ```
@@ -93,7 +93,7 @@ coexist without collision.
   zstd-compressed.
 
 Attachments (`dsh attachments/`), spill directories (dsh `spill/`, pi's third-party
-`spill/`) are **not exported** in v0.1; `manifest.json` records `"skipped": [...]` per source.
+`spill/`) are **not exported** in v0.1: dsh keeps them beside `sessions/` so they are never reached, and the pi exporter skips a top-level `spill/` directory inside a session root; `manifest.json` records `"skipped": [...]` per source.
 
 **Incremental:** a file is copied when its size or integer mtime differs from the existing
 copy. Volume extraction runs a throwaway `alpine` container with the volume mounted `:ro`

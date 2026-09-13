@@ -3,6 +3,62 @@
 # of its SKILL.md files. `harness` omitted on a skill means every harness;
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
+- name: agent-transcripts
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  - pi
+  - dsh
+  description: Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a
+    derived sqlite database.
+  skills:
+  - name: transcript-export-claude
+    path: modules/agent-transcripts/skills/transcript-export-claude/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - observability
+    command: false
+    summary: Export Claude Code transcript JSONL from the host config directory and dev-container docker
+      volumes into the on-device agent-transcripts cache.
+  - name: transcript-export-dsh
+    path: modules/agent-transcripts/skills/transcript-export-dsh/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - observability
+    command: false
+    summary: Export dsh (DeepSeek harness) zstd session logs from the host DSH_HOME and dev-container
+      docker volumes into the on-device agent-transcripts cache.
+  - name: transcript-export-pi
+    path: modules/agent-transcripts/skills/transcript-export-pi/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - observability
+    command: false
+    summary: Export pi coding-agent session JSONL from its settings and default session directories into
+      the on-device agent-transcripts cache.
+  - name: transcript-ingest
+    path: modules/agent-transcripts/skills/transcript-ingest/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - observability
+    command: false
+    summary: Build or refresh the derived sqlite index over exported Claude Code, pi and dsh transcripts
+      in the agent-transcripts cache.
 - name: claude-transcripts
   version: 0.1.1
   kinds:
