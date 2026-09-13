@@ -1,6 +1,6 @@
 ---
 name: transcript-ingest
-description: Build or refresh the derived sqlite index over exported Claude Code, pi and dsh transcripts in the agent-transcripts cache. Use when the user wants to "index transcripts", "ingest transcripts into sqlite", or "query transcripts across harnesses". The database is derived and safe to delete; raw files stay canonical.
+description: Build or refresh the derived sqlite index over exported Claude Code, pi and dsh transcripts in the agent-transcripts cache. Use when the user wants to "index transcripts", "ingest transcripts into sqlite", or "refresh the transcript index". The database is derived and safe to delete; raw files stay canonical. Querying it is the transcript-query skill.
 tags: [observability]
 ---
 
