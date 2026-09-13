@@ -519,3 +519,13 @@ def test_stats_table_counts_every_harness(cache):
     assert lines[2] == ["pi", "2", "1", "1", "1", "5", "1"]
     assert lines[3] == ["dsh", "2", "2", "0", "2", "5", "1"]
     assert lines[4] == ["total", "6", "5", "1", "5", "18", "3"]
+
+
+def test_json_lines_splits_on_newline_only_and_drops_a_torn_tail(tmp_path):
+    # U+2028 inside a JSON string is not a record boundary; a NUL-padded final
+    # line is a crash-torn write and must not fail the whole file.
+    good = '{"type": "user", "note": "line separator inside"}'
+    path = tmp_path / "s.jsonl"
+    path.write_text(good + "\n" + good + "\n" + "\x00" * 16, encoding="utf-8")
+    lines = tr._json_lines(path)
+    assert lines == [good, good]

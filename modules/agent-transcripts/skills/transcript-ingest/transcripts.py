@@ -426,7 +426,7 @@ def export_sources(
 
 # --------------------------------------------------------------- ingest: model
 
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -616,7 +616,16 @@ def _finalize(session: Session, messages: list[Message]) -> ParsedFile:
 
 
 def _json_lines(path: Path) -> list[str]:
-    return [line for line in path.read_text().splitlines() if line.strip()]
+    """Non-empty lines split on newline only — never str.splitlines(), which also
+    breaks on U+2028 and friends that appear inside JSON strings. A final line that
+    is not valid JSON is a write torn by a crash and is dropped, as for dsh."""
+    lines = [line for line in path.read_text().split("\n") if line.strip()]
+    if lines:
+        try:
+            json.loads(lines[-1])
+        except json.JSONDecodeError:
+            lines.pop()
+    return lines
 
 
 def parse_claude(path: Path, relpath: str) -> ParsedFile:
