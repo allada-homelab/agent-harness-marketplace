@@ -479,6 +479,13 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     result_message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
     is_error          INTEGER
 );
+-- Result linking and cascade deletes look rows up by these; without them each
+-- UPDATE scans the table and a large file inserts in minutes instead of seconds.
+CREATE INDEX IF NOT EXISTS sessions_file_id ON sessions(file_id);
+CREATE INDEX IF NOT EXISTS messages_session_id ON messages(session_id);
+CREATE INDEX IF NOT EXISTS tool_calls_message_id ON tool_calls(message_id);
+CREATE INDEX IF NOT EXISTS tool_calls_call_id ON tool_calls(call_id);
+CREATE INDEX IF NOT EXISTS tool_calls_result_message_id ON tool_calls(result_message_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
     USING fts5(text, content='messages', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
