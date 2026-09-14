@@ -8,7 +8,9 @@ is a shortcut.
 
 ## In a chat harness (Claude Code, pi, dsh)
 
-1. Reopen the same URL in a window:
+1. Close the session first, so no `auto` browser is still holding the profile:
+   `browserctl close --identity <id> --session <s>`. Then reopen the same URL in
+   a window, same identity and same session name:
    `browserctl run --identity <id> --mode hybrid --session <s> -- open <url>`
    (the profile is shared between modes, so nothing is lost).
 2. Tell the operator, in one message: which identity, which site, what to do

@@ -25,15 +25,18 @@ pins the profile, the browser binary and the tab binding.
    identities` lists what exists.
 3. **Pick a session name once** and pass `--session <name>` on every call
    (omit it and the name derives from the working directory — fine for one
-   task, wrong when two tasks run in one directory).
+   task, wrong when two tasks run in one directory). An `auto` session is
+   closed after 30 minutes idle; the login stays in the profile, so a later
+   command just starts it again.
 4. **Drive:** `browserctl run --identity work --session t1 -- <agent-browser
    command>`. The vocabulary is in `./references/commands.md`. Always
    `snapshot -i` after navigating; act on `@eN` refs from the latest snapshot
    only — refs go stale on any page change.
-5. **Hit a login, MFA or CAPTCHA?** Follow `./references/handoff.md`: rerun the
-   same `open` in `--mode hybrid`, ask the operator to finish in the window,
-   wait for their reply, then continue in the same session and identity. The
-   login persists on disk; the next task can use `auto`.
+5. **Hit a login, MFA or CAPTCHA?** Follow `./references/handoff.md`: `close`
+   the session, rerun the same `open` in `--mode hybrid`, ask the operator to
+   finish in the window, wait for their reply, then continue in the same
+   session and identity. The login persists on disk; the next task can use
+   `auto`.
 6. **Finish:** `browserctl close --identity work --session t1`. Never delete a
    profile directory and never close a session you did not open.
 

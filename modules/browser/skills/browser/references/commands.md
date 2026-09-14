@@ -14,7 +14,7 @@ Everything below goes after `browserctl run --identity <id> --session <s> --`.
 | screenshot | `screenshot [path]` · `screenshot --full [path]` |
 | page text | `get text` |
 | tabs | `tab list` · `tab new <url>` · `tab t2` |
-| save / load auth | `state save <file>` · `state load <file>` (prefer `browserctl export/import`) |
+| save / load auth | `state save <file>` · `state load <file>` — prefer `browserctl export --identity <id> --session <s> --out <file>` and `browserctl import --identity <id> --session <s> --in <file>` |
 
 ## Reading a snapshot
 
