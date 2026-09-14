@@ -1,0 +1,7 @@
+{
+  "name": "feature-dev",
+  "version": "0.1.0",
+  "description": "A comprehensive, structured 7-phase workflow for building new features that explores the codebase, asks clarifying questions, designs architecture, implements, reviews for quality, and summarizes.",
+  "author": { "name": "David Allada", "email": "davidanilallada@gmail.com" },
+  "license": "MIT"
+}

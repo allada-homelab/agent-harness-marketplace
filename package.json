@@ -18,7 +18,8 @@
       "modules/*/skills/*",
       "!modules/claude-transcripts/**",
       "!modules/dual-agent-pr-review/**",
-      "!modules/get-shit-done-claude/**"
+      "!modules/get-shit-done-claude/**",
+      "!modules/feature-dev/**"
     ]
   },
   "scripts": {
