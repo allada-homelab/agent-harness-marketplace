@@ -69,6 +69,13 @@
       "category": "development",
       "version": "0.2.0",
       "source": "./modules/pr-flow"
+    },
+    {
+      "name": "browser",
+      "description": "Drive a browser from any harness: headless auto mode and headed hybrid mode where a human logs in and the agent takes over, through agent-browser on a persistent per-identity profile.",
+      "category": "development",
+      "version": "0.1.0",
+      "source": "./modules/browser"
     }
   ]
 }
