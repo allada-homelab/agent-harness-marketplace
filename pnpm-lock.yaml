@@ -14,6 +14,8 @@ importers:
 
   modules/agent-transcripts: {}
 
+  modules/browser: {}
+
   modules/claude-transcripts: {}
 
   modules/dual-agent-pr-review: {}
