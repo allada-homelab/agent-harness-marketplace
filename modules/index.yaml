@@ -70,6 +70,29 @@ modules:
     command: false
     summary: Query the agent-transcripts sqlite index to measure tool use, sessions, projects and activity
       across Claude Code, pi and dsh without loading transcript prose into context.
+- name: browser
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  - pi
+  - dsh
+  description: 'Drive a browser from any harness: headless auto mode and headed hybrid mode where a human
+    logs in and the agent takes over, through agent-browser on a persistent per-identity profile.'
+  skills:
+  - name: browser
+    path: modules/browser/skills/browser/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - browser
+    - web
+    command: true
+    summary: Drive a browser from any harness.
 - name: claude-transcripts
   version: 0.1.1
   kinds:
