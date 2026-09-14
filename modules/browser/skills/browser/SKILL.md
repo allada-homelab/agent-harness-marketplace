@@ -35,8 +35,9 @@ pins the profile, the browser binary and the tab binding.
 5. **Hit a login, MFA or CAPTCHA?** Follow `./references/handoff.md`: `close`
    the session, rerun the same `open` in `--mode hybrid`, ask the operator to
    finish in the window, wait for their reply, then continue in the same
-   session and identity. The login persists on disk; the next task can use
-   `auto`.
+   session and identity. A `close` that reports no such session is fine — there
+   was nothing running; continue with the hybrid `open`. The login persists on
+   disk; the next task can use `auto`.
 6. **Finish:** `browserctl close --identity work --session t1`. Never delete a
    profile directory and never close a session you did not open.
 

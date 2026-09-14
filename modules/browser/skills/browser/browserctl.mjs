@@ -120,7 +120,16 @@ function sessionName(opts, id) {
   return `${id}-${h}`;
 }
 
+// The tail is appended after the composed flags, so a passthrough copy of any of
+// these would win and repoint the launch at the user's everyday browser.
+const RESERVED = new Set(["--profile", "--executable-path", "--session", "--cdp",
+  "--auto-connect", "--headed", "--idle-timeout"]);
+
 function invoke(opts, tail) {
+  for (const a of tail) {
+    const flag = a.split("=")[0];
+    if (RESERVED.has(flag)) die(`${flag} is set by browserctl and cannot be passed after --`);
+  }
   const id = identity(opts);
   const mode = opts.mode || "auto";
   if (mode !== "auto" && mode !== "hybrid") die("--mode must be auto or hybrid");
@@ -141,7 +150,9 @@ switch (cmd) {
   case "doctor": doctor(opts); break;
   case "run": if (!passthrough.length) die("run needs `-- <agent-browser args>`"); invoke(opts, passthrough); break;
   case "identities": {
-    const names = existsSync(PROFILES) ? readdirSync(PROFILES).filter((n) => IDENT.test(n)).sort() : [];
+    const names = existsSync(PROFILES)
+      ? readdirSync(PROFILES).filter((n) => IDENT.test(n) && statSync(join(PROFILES, n)).isDirectory()).sort()
+      : [];
     process.stdout.write(names.map((n) => n + "\n").join("")); break;
   }
   case "export": if (!opts.out) die("export needs --out <file>"); invoke(opts, ["state", "save", opts.out]); break;

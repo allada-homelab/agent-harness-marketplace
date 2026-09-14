@@ -28,7 +28,7 @@ The tree is Playwright-style, one node per line, refs in brackets:
 
 Act with `@` + the ref: `click @e3`. Refs are reassigned on every snapshot.
 
-## Exit codes
+## Failures
 
 Non-zero means the command failed; the message is on stderr. `tab_gone` means
 the operator closed the pinned tab — recover with `tab new <url>`, never by

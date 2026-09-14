@@ -75,10 +75,29 @@ def test_run_rejects_bad_identity(sandbox, run):
     assert r.returncode == 2
 
 
+def test_run_refuses_passthrough_flag_that_repoints_the_launcher(sandbox, run):
+    home, _, _ = sandbox
+    r = run(sandbox, "run", "--identity", "work", "--session", "s1", "--", "--profile", "x", "open", "https://example.com")
+    assert r.returncode == 2
+    assert "--profile" in r.stderr
+    assert not (home / "ab-argv.json").exists()
+
+
+def test_run_locks_an_existing_profile_dir_to_0700(sandbox, run):
+    home, _, _ = sandbox
+    profile = home / ".browserctl" / "profiles" / "work"
+    profile.mkdir(parents=True)
+    profile.chmod(0o755)
+    r = run(sandbox, "run", "--identity", "work", "--session", "s1", "--", "get", "url")
+    assert r.returncode == 0, r.stderr
+    assert stat.S_IMODE(profile.stat().st_mode) == 0o700
+
+
 def test_identities_lists_profiles(sandbox, run):
     home, _, _ = sandbox
     for n in ("work", "scratch"):
         (home / ".browserctl" / "profiles" / n).mkdir(parents=True)
+    (home / ".browserctl" / "profiles" / "stray.json").write_text("{}")
     r = run(sandbox, "identities")
     assert r.stdout.split() == ["scratch", "work"]
 
