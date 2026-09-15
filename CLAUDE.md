@@ -30,6 +30,17 @@ has the portable `SKILL.md` contract. Do not reconstruct either from memory.
   the skill is scoped `harness: [claude]` — and that unlocks them only when the
   scope is *exactly* `[claude]`. Claude Code's loader executes a bang-backtick
   sequence at load time even inside a code span, so never write one in any body.
+- **Agent `tools:` (and a forked skill's `allowed-tools:`) is written in Claude's
+  tool names and translated per harness — a name a harness does not have is
+  dropped with one warning line, by design, and never an error.** This is the
+  documented `agent-contract` behavior. Our standing decision is to keep the
+  full tool list and embrace the drop-with-a-warning rather than trim to the
+  intersection that exists on every harness: the dropped names are informational
+  (pi runs and exits 0; dsh omits `toolFilter`), the read-only capability the
+  agent actually uses is unaffected, and it lets one file declare harness-
+  specific tool spellings (e.g. `read-image` and `ReadImage`) so each harness
+  uses the name it knows. Do not trim a `tools:` list purely to silence the
+  startup warning.
 - **No private paths** — no absolute paths, homelab hostnames or RFC1918
   addresses anywhere under `modules/`, `docs/` or `README.md`. There is a grep.
 

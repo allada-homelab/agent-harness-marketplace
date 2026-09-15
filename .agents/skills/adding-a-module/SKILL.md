@@ -21,11 +21,30 @@ is relative to the repo root.
 | You are adding | Do this |
 |---|---|
 | A skill to an existing module | Create `skills/<skill>/SKILL.md`, bump that module's version everywhere it appears (`package.json`, and `plugin.json` + the marketplace entry if it has them), regenerate the index, verify. |
+| Agents | Create `agents/<name>.md` in Claude's shape (`name` == filename, `description`, optional `tools`, `model`). Read `agent-contract/README.md` first — see "Agent tools" below for how the `tools:` list is treated on pi and dsh. |
 | A new module | Full procedure below. |
 | Hooks | `hooks/hooks.json` in Claude's shape, `"type": "command"` handlers, event keys drawn from `hook-contract/events.json`, and every `CLAUDE_PLUGIN_ROOT`-prefixed command path resolving to a file that ships in the module. Read `hook-contract/README.md` for the stdin/stdout contract and the two fidelity gaps. |
 | Workflows | `workflows/*.js` in Claude's shape: a pure-literal `export const meta = {name, description, phases?}` and a body built from `agent()`/`parallel()`/`pipeline()`. The filename is the `<module>:<name>` dispatch id off Claude. Read `workflow-contract/README.md`; `bin/lint-workflows.py` enforces the literal. |
 | MCP servers | One `mcp.json` at the module root (Agent Plugins v1 shape). `.mcp.json` beside it is generated — see step 5 — and `docs/authoring.md` has the two shapes and the rules the gate enforces. |
 | A pi extension (`extensions/`) or dsh plugin code (`lib/`) | **Stop and ask.** The conformance tests currently forbid both outright — `tests/conformance/pi.test.mjs` and `dsh.test.mjs` assert no module contains either. The harness-side foundation left this repo; reintroducing executable code is a repo-shape decision, not a module change. |
+
+## Agent tools
+
+An agent file's `tools:` (and a forked skill's `allowed-tools:`) is written in
+**Claude's tool names** and translated per harness by the pi and dsh bridges. A
+name a harness does not have is **dropped with one warning line** — by design,
+never an error. The contract table is `agent-contract/README.md`; the pi bridge
+warns `pi has no <name>; dropped from its tool allowlist` and the dsh bridge
+warns `no dsh equivalent for <name>`.
+
+Our standing decision is to **keep the full tool list and embrace the
+drop-with-a-warning** rather than trim to the intersection that exists on every
+harness. The dropped names are informational (pi runs and exits 0; dsh omits
+`toolFilter`), and the read-only capability the agent actually uses is
+unaffected. It also lets one file declare harness-specific tool spellings — e.g.
+`read-image` and `ReadImage` both listed — so each harness uses the name it
+knows and drops the other. Do not trim a `tools:` list purely to silence the
+startup warning; see `CLAUDE.md` → "Constraints that bite".
 
 ## New module, step by step
 
