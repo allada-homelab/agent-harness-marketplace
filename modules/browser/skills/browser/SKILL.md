@@ -9,6 +9,20 @@ tags: [browser, web]
 # browser
 
 Two concepts. An **identity** is a named, persistent browser profile
+(`personal`, `work`, `scratch`) — log in once, reuse forever. A **launch option**
+is how the browser gets running, and which one fits depends on the task:
+
+| Option | Command | Browser | Use when |
+|---|---|---|---|
+| headless | `browserctl run --mode auto` (default) | skill's own Chromium | unattended automation; no human in the loop |
+| hybrid | `browserctl run --mode hybrid` | skill's own Chromium | a human must log in, do MFA/CAPTCHA, or watch |
+| attach | `browserctl attach --cdp <port>` | a browser *the user* opened | the user wants their own browser driven |
+
+The tool is `browserctl` — on a fleet host it is on
+`PATH`; otherwise run `./browserctl.mjs` beside this file with `node`. It wraps
+`agent-browser`; never call `agent-browser` directly, because only `browserctl`
+pins the profile, the browser binary and the tab binding — except `attach`, where
+the browser is externally owned and must NOT be repointed.
 (`personal`, `work`, `scratch`) — log in once, reuse forever. A **mode** is how
 the browser runs: `auto` (headless, default) or `hybrid` (a visible window the
 operator can act in). The tool is `browserctl` — on a fleet host it is on
@@ -40,6 +54,46 @@ pins the profile, the browser binary and the tab binding.
    disk; the next task can use `auto`.
 6. **Finish:** `browserctl close --identity work --session t1`. Never delete a
    profile directory and never close a session you did not open.
+
+## Attach to a browser the user opened
+
+The user may want *their own* Chrome driven rather than the skill's. That needs
+the browser to expose a DevTools endpoint, which Chrome only does when started
+with `--remote-debugging-port` **and** a non-default data directory.
+
+Guide the user (they run it, not you):
+
+1. **Quit Chrome completely first.** Chrome is single-instance per profile — if
+   any window is still open, the new command is swallowed by the existing
+   instance and the flag is silently ignored. Confirm with `ps aux | grep chrome`.
+2. **Launch with a dedicated data dir** (Chrome refuses the debug port on the
+   default profile: *"DevTools remote debugging requires a non-default data
+   directory"*):
+
+   ```bash
+   google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-debug
+   ```
+
+   The `--user-data-dir` is a **fresh, separate profile** — it does not carry the
+   user's existing logins. If the task needs them, the user logs in from that
+   window.
+3. **Verify the endpoint is up** (a JSON body with `webSocketDebuggerUrl` is
+   success; a connection-refused means the flag didn't take):
+
+   ```bash
+   curl -s http://localhost:9222/json/version
+   ```
+
+Then attach and drive it as your own session:
+
+```bash
+browserctl attach --identity scratch --session t1 --cdp 9222 -- open https://example.com
+```
+
+Caveats: the debug port exposes full browser control on localhost, so any local
+process can attach — only use on a trusted machine, and have the user close
+Chrome when done. `--auto-connect` is the alternative when the port isn't
+known; it auto-discovers a running Chrome.
 
 ## Rules
 

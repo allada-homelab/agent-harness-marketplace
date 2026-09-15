@@ -1,6 +1,11 @@
 # browser
 
 One skill, `browser`, plus the `browserctl.mjs` launcher beside it. `browserctl`
+maps an *identity* (a named, persistent browser profile) and a *launch option*
+(`auto` headless, `hybrid` headed — both the skill's own Chromium; or `attach`,
+which drives a browser the user opened) onto an `agent-browser` invocation, so
+the agent never composes agent-browser flags itself and never touches your
+everyday browser profile.
 maps an *identity* (a named, persistent browser profile) and a *mode* (`auto`
 headless, `hybrid` headed) onto an `agent-browser` invocation, so the agent
 never composes agent-browser flags itself and never touches your everyday

@@ -1,7 +1,7 @@
 {
   "name": "browser",
-  "version": "0.1.1",
-  "description": "Drive a browser from any harness: headless auto mode and headed hybrid mode where a human logs in and the agent takes over, through agent-browser on a persistent per-identity profile.",
+  "version": "0.1.2",
+  "description": "Drive a browser from any harness: headless auto mode, headed hybrid mode where a human logs in and the agent takes over, or attach to a browser the user opened via its debug port — through agent-browser on a persistent per-identity profile.",
   "author": {
     "name": "David Allada",
     "email": "davidanilallada@gmail.com"
