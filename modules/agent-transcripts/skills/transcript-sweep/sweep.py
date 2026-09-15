@@ -2,12 +2,13 @@
 # /// script
 # requires-python = ">=3.12"
 # ///
-"""Sweep the agent-transcripts index for obvious and potential problems, one JSONL per flag.
+"""Sweep the agent-transcripts index for obvious and potential problems into the findings store.
 
 Deterministic first pass: no model reads a transcript here. The sweep streams tool calls in
-session order, keeps a little per-session state, and writes one record per session per flag
-kind. A later analysis skill reads the JSONL; this script only counts and quotes at most a
-200-character snippet of a tool result.
+session order, keeps a little per-session state, and writes one row per session per flag kind
+into `findings.db` — keyed by (harness, native_id), so it outlives an index rebuild — plus an
+optional JSONL copy. A later analysis skill reads the store; this script only counts and
+quotes at most a 200-character snippet of a tool result.
 """
 
 from __future__ import annotations
@@ -20,10 +21,13 @@ import re
 import sqlite3
 import sys
 from collections import Counter, deque
-from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import findings  # noqa: E402  sibling module, not a package
+
 DEFAULT_DEST_NAME = "agent-transcripts"
+COMMIT_EVERY = 500  # sessions per commit: one commit per session dominates a full sweep
 SNIPPET = 200
 MAX_EVIDENCE = 3
 RETRY_WINDOW = 2  # a repeat within this many following tool calls counts as a retry
@@ -341,6 +345,57 @@ def count_sessions(conn, since, harnesses, session) -> int:
     return conn.execute(f"SELECT count(*) FROM sessions s {where}", params).fetchone()[0]
 
 
+def retire_clean(store, conn, since, harnesses, session, run_id, flagged) -> None:
+    """Clear the stored flags of every scanned session this run found clean.
+
+    A session that used to be flagged and is now clean yields no record at all, so its rows
+    have to be retired explicitly. This runs after the inserts, not before them: an up-front
+    sweep-wide clear means a crash mid-run leaves the store empty instead of merely stale.
+    """
+    where, params = _filters(since, harnesses, session)
+    cur = conn.execute(f"SELECT s.harness, s.native_id FROM sessions s {where}", params)
+    pending = 0
+    while rows := cur.fetchmany(COMMIT_EVERY):
+        for harness, native_id in rows:
+            if (harness, native_id) in flagged:
+                continue
+            findings.replace_sweep_flags(store, run_id, harness, native_id, [])
+            pending += 1
+        if pending >= COMMIT_EVERY:
+            store.commit()
+            pending = 0
+    if pending:
+        store.commit()
+
+
+def emit(records, summary, fh, store, run_id) -> None:
+    """Fan the streamed records out to the summary, the optional JSONL and the findings store.
+
+    One session's records arrive together, so the store is written a session at a time and the
+    commit is batched.
+    """
+    key, batch, uncommitted = None, [], 0
+    for rec in records:
+        summary.add(rec)
+        if fh is not None:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        if store is None:
+            continue
+        rec_key = (rec["harness"], rec["native_id"])
+        if rec_key != key:
+            if key is not None:
+                findings.replace_sweep_flags(store, run_id, key[0], key[1], batch)
+                uncommitted += 1
+            if uncommitted >= COMMIT_EVERY:
+                store.commit()
+                uncommitted = 0
+            key, batch = rec_key, []
+        batch.append(rec)
+    if store is not None and key is not None:
+        findings.replace_sweep_flags(store, run_id, key[0], key[1], batch)
+        store.commit()
+
+
 # --------------------------------------------------------------------- reporting
 
 
@@ -362,11 +417,16 @@ class Summary:
         )
         entry[rec["severity"]] += rec["count"]
 
-    def render(self, scanned: int, out_path: Path, top: int) -> str:
+    def render(self, scanned: int, top: int, out_path=None, db_path=None, run_id=None) -> str:
         kinds = [k for k, _ in KINDS]
         harnesses = sorted({h for h, _ in self.grid})
         width = max([len(h) for h in harnesses] + [len("harness")])
-        lines = [f"wrote {self.records} records to {out_path}", ""]
+        lines = [f"{self.records} records"]
+        if out_path is not None:
+            lines[0] = f"wrote {self.records} records to {out_path}"
+        if db_path is not None:
+            lines.append(f"findings store: {db_path} (run {run_id})")
+        lines.append("")
         lines.append(" ".join(["harness".ljust(width)] + kinds))
         for harness in harnesses:
             cells = [str(self.grid[(harness, k)]).rjust(len(k)) for k in kinds]
@@ -394,12 +454,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--harness", action="append", choices=["claude", "pi", "dsh"],
                     help="limit to one harness; repeatable")
     ap.add_argument("--session", help="one session, by native_id or numeric id")
-    ap.add_argument("--out", help="JSONL path (default <dest>/sweeps/<UTC timestamp>.jsonl)")
+    ap.add_argument("--out", help="also write a JSONL report here (default: only findings.db)")
+    ap.add_argument("--no-db", action="store_true",
+                    help="do not write the findings store; only --out, if given, is written")
     ap.add_argument("--long-result", type=int, default=5000,
                     help="a tool result longer than this is flagged (default 5000)")
     ap.add_argument("--long-session", type=int, default=150,
                     help="a session with more tool calls than this is flagged (default 150)")
     ap.add_argument("--top", type=int, default=20, help="sessions listed in the summary (default 20)")
+    cli_args = list(argv) if argv is not None else sys.argv[1:]
     args = ap.parse_args(argv)
 
     dest = resolve_dest(args.dest)
@@ -413,22 +476,36 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    out_path = None
     if args.out:
         out_path = Path(args.out).expanduser()
-    else:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        out_path = dest / "sweeps" / f"{stamp}.jsonl"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    store = run_id = None
+    if not args.no_db:
+        store = findings.open_findings(dest)
+        run_id = findings.start_run(store, "transcript-sweep", None, cli_args)
 
     summary = Summary()
-    with out_path.open("w", encoding="utf-8") as fh:
-        for rec in sweep(conn, args.since, args.harness, args.session,
-                         args.long_result, args.long_session):
-            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
-            summary.add(rec)
+    records = sweep(conn, args.since, args.harness, args.session,
+                    args.long_result, args.long_session)
+    fh = out_path.open("w", encoding="utf-8") if out_path else None
+    try:
+        emit(records, summary, fh, store, run_id)
+        if store is not None:
+            retire_clean(
+                store, conn, args.since, args.harness, args.session, run_id,
+                {(s["harness"], s["native_id"]) for s in summary.per_session.values()},
+            )
+    finally:
+        if fh is not None:
+            fh.close()
+        if store is not None:
+            store.close()
 
     scanned = count_sessions(conn, args.since, args.harness, args.session)
-    print(summary.render(scanned, out_path, args.top))
+    db_path = None if args.no_db else dest / findings.FINDINGS_NAME
+    print(summary.render(scanned, args.top, out_path, db_path, run_id))
     return 0
 
 

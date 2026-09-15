@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: agent-transcripts
-  version: 0.3.0
+  version: 0.4.0
   kinds:
   - skills
   - dsh-plugin
@@ -70,6 +70,18 @@ modules:
     command: false
     summary: Query the agent-transcripts sqlite index to measure tool use, sessions, projects and activity
       across Claude Code, pi and dsh without loading transcript prose into context.
+  - name: transcript-review
+    path: modules/agent-transcripts/skills/transcript-review/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - observability
+    command: false
+    summary: Read one flagged agent session at a time and record what a deterministic sweep cannot see
+      — a repeated failing approach, tool misuse, a user correction, a claim made without evidence — as
+      validated findings in the shared findings database.
   - name: transcript-sweep
     path: modules/agent-transcripts/skills/transcript-sweep/SKILL.md
     harness:
@@ -79,9 +91,9 @@ modules:
     tags:
     - observability
     command: false
-    summary: Sweep the agent-transcripts sqlite index for sessions worth a closer look and write one JSONL
-      report of flagged tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers,
-      and oversized results or sessions.
+    summary: Sweep the agent-transcripts sqlite index for sessions worth a closer look and record flagged
+      tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized
+      results or sessions in the findings store beside it.
 - name: browser
   version: 0.1.1
   kinds:
