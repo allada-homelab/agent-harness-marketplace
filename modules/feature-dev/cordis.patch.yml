@@ -1,0 +1,5 @@
+# Empty on purpose. This module is a dsh BUNDLE (package.json `dsh.bundle`)
+# so the harness lists it in the profile's dsh.profile.bundles — and the
+# always-installed skills and agents bridges in the maintainer's harness layer
+# discover every bundle that ships skills/ or agents/. Nothing to insert.
+[]
