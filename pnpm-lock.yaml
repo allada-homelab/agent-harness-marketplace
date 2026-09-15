@@ -20,6 +20,8 @@ importers:
 
   modules/dual-agent-pr-review: {}
 
+  modules/feature-dev: {}
+
   modules/get-shit-done: {}
 
   modules/get-shit-done-claude: {}

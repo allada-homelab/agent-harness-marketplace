@@ -139,6 +139,28 @@ modules:
     command: true
     summary: Review a GitHub PR with two independent CLI reviewers (Claude Code and Codex) in parallel,
       then reconcile their findings into one evidence-backed consensus set.
+- name: feature-dev
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  - pi
+  - dsh
+  description: 'Guided seven-phase feature development: explore the codebase with parallel specialist
+    agents, ask clarifying questions, compare architectures, implement, then review. A harness-neutral
+    port of Anthropic''s feature-dev plugin whose agents dispatch on Claude Code, pi and dsh.'
+  skills:
+  - name: feature-dev
+    path: modules/feature-dev/skills/feature-dev/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: true
+    summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: get-shit-done
   version: 0.1.1
   kinds:

@@ -168,6 +168,45 @@ print("  ok" if not bad else f"  {bad} problem(s)")
 sys.exit(1 if bad else 0)
 PY2
 
+step "agent files match agent-contract/fields.json"
+py - <<'PY' || fail=1
+# agents/*.md are Claude subagent files consumed on pi/dsh through a bridge held
+# to agent-contract/. `claude plugin validate` is the only other check of their
+# shape and it is skipped locally without the CLI, so this is the local gate.
+import json, pathlib, re, sys, yaml
+spec = json.load(open("agent-contract/fields.json"))
+known = set(spec["required"]) | set(spec["optional"])
+bad = 0
+for md in sorted(pathlib.Path("modules").glob("*/agents/*.md")):
+    t = md.read_text(); e = t.find("\n---", 4)
+    fm = yaml.safe_load(t[4:e]) if t.startswith("---\n") and e != -1 else None
+    if not isinstance(fm, dict):
+        print(f"  FAIL {md}: no frontmatter"); bad += 1; continue
+    name = md.stem
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
+        print(f"  FAIL {md}: filename must be kebab-case; it is the agent's identity"); bad += 1
+    if "name" in fm and fm["name"] != name:
+        print(f"  FAIL {md}: frontmatter name {fm['name']!r} != filename {name!r}"); bad += 1
+    for key in spec["required"]:
+        if not str(fm.get(key, "")).strip():
+            print(f"  FAIL {md}: {key} is required"); bad += 1
+    for key in fm:
+        if key not in known:
+            print(f"  WARN {md}: unknown frontmatter key {key!r} (carried through, ignored by every harness)")
+    tools = fm.get("tools")
+    if tools is not None:
+        names = tools if isinstance(tools, list) else [x.strip() for x in str(tools).split(",") if x.strip()]
+        for n in names:
+            if n not in spec["claudeTools"] and not n.startswith("mcp__"):
+                print(f"  WARN {md}: tool {n!r} is not a known Claude tool; pi/dsh drop it")
+    if "model" in fm and fm["model"] not in spec["models"]:
+        print(f"  WARN {md}: model {fm['model']!r} is not an alias; pi/dsh inherit the parent model unless mapped")
+    if "{{" in t[e:]:
+        print(f"  WARN {md}: body contains a '{{{{' pair; dsh renders it as '{{ {{'")
+print("  ok" if not bad else f"  {bad} problem(s)")
+sys.exit(1 if bad else 0)
+PY
+
 step "claude plugin validate (marketplace + every Claude plugin module)"
 if command -v claude >/dev/null; then
     claude plugin validate . >/dev/null 2>&1 && echo "  ok marketplace" || { echo "  FAIL: marketplace.json"; claude plugin validate . 2>&1 | tail -5; fail=1; }
