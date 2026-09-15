@@ -1,0 +1,7 @@
+{
+  "$comment": "What bin/check.sh validates a module's agents/*.md against. See README.md.",
+  "required": ["description"],
+  "optional": ["name", "tools", "model", "color", "permissionMode", "maxTurns", "skills", "memory", "isolation", "background", "effort", "hooks", "mcpServers", "disallowedTools"],
+  "claudeTools": ["Bash", "Read", "Write", "Edit", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "TodoWrite", "NotebookRead", "NotebookEdit", "KillShell", "BashOutput", "Agent", "Skill", "Task", "TaskOutput", "TaskStop", "AskUserQuestion", "ToolSearch"],
+  "models": ["sonnet", "opus", "haiku", "inherit"]
+}
