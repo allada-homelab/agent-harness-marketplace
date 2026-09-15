@@ -94,8 +94,9 @@ blocker (missing task, an unsafe/irreversible action that needs confirmation, or
 
 5. **Adjudicate flagged units.** For each unit in the workflow's `flagged`, read its `refutedBy` /
    `unverified` evidence. If the defect is trivial, fix it **inline**. Otherwise dispatch **exactly one**
-   targeted retry: one implementer subagent (the **Agent** tool on Claude, **`delegate_agent`** on pi and
-   dsh; tier per the rubric) briefed with the
+   targeted retry: one implementer subagent (the **Agent** tool on Claude, **`delegate_agent`** on pi,
+   and the **`subagent`** tool on dsh — `subagent_fork` when the child should inherit your completed
+   turns; tier per the rubric) briefed with the
    original subtask prompt + the concrete refutation evidence + the changed-file list, then one **Opus**
    verifier subagent checking the same criteria. **One retry only — no loop**; whatever is still refuted
    after that escalates to the user with the evidence. (The spine stays single-pass-then-escalate; the

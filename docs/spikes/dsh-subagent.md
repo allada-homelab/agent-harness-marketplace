@@ -4,6 +4,16 @@
 
 **Status.** Ran live. Scratch `DSH_HOME` (copy of `~/.dsh/profiles` + `settings.yaml` + `.credentials.yaml`, chmod 600), profile `headless`, provider `litellm`, model `fast-default`. Code: `spikes/dsh-subagent/`. Raw logs were written to the session scratchpad (`out/dsh-<mode>/spike.jsonl`), quoted below.
 
+> **Staleness note.** This spike documents the **one-shot programmatic path only**
+> (`ctx.subagents.start()`). Since it was written, dsh's delegation subsystem has grown: the
+> **continuable** path (`startContinuable()`, durable child with an inbox), the **`fork`** backend
+> (child seeded with the parent's completed turns), **background subagent jobs**, **per-child model
+> selection** (`provider`/`model`/`reasoning_effort` + `list_subagent_models`), and the model-facing
+> tool family (`subagent`, `subagent_fork`, `subagent_codex`, `subagent_claude_code`,
+> `send_message`, `interrupt_agent`, `list_agents`, `workflow`, `ralph`). The authoritative current
+> picture is `docs/dsh-plugin-capabilities.md` §2 — treat the specifics below as a point-in-time
+> snapshot, not current behavior.
+
 ---
 
 ## The API that works

@@ -5,6 +5,16 @@ Sources verified this session: dsh 0.1.5-rc.2 and pi 0.84.1 as installed, the of
 `feature-dev` plugin (cache `022b3c274938`), this repo's gate, and the maintainer's harness
 layer (private).
 
+> **Update note.** The verified seam facts below describe dsh's **one-shot programmatic** seam
+> (`ctx.subagents.start()` with per-call `persona`/`toolFilter`/`agentOptions`/`maxDepth`). dsh
+> `0.1.5-rc.2` also ships the **continuable** path (`startContinuable()`, durable child + inbox),
+> the **`fork`** backend, **background subagent jobs**, **per-child model selection**, and the
+> model-facing tool family (`subagent`, `subagent_fork`, `send_message`, `interrupt_agent`,
+> `list_agents`, `list_subagent_models`, `workflow`, `ralph`). The bridge's per-call seam call
+> remains correct; for a module-defined agent type (`feature-dev:code-*`) the dsh surface is the
+> `delegate_agent` bridge tool, while ad-hoc delegation uses the native `subagent` tool. See
+> `docs/dsh-plugin-capabilities.md` §2.
+
 ## Decisions taken (final)
 
 1. Bridges, not degradation: `agents/*.md` becomes a real dispatchable agent type on all three harnesses.
