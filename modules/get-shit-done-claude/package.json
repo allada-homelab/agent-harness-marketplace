@@ -1,6 +1,6 @@
 {
   "name": "@allada-homelab/get-shit-done-claude",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "type": "module",
   "description": "The driver for get-shit-done: the run skill fans out through the checked spine workflow \u2014 the Workflow tool on Claude Code, run_workflow on pi and dsh.",

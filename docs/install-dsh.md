@@ -27,6 +27,13 @@ Warnings from both foundation plugins go to `process.stderr` (dsh's
 
 ## Verified 2026-09-06 (dsh 0.1.1-rc.2, throwaway `DSH_HOME`, local-path installs)
 
+> **Staleness note.** This verification was captured against dsh `0.1.1-rc.2`. The harness in use
+> has since advanced to `0.1.5-rc.2` — the module install/bridge mechanics described below still
+> hold, but dsh's **delegation/subagent capabilities have grown substantially** since this was
+> written (continuable children, a `fork` backend, background subagent jobs, per-child model
+> selection). See `docs/dsh-plugin-capabilities.md` for the current picture; re-verify the
+> install/smoke claims here before relying on them.
+
 Captured before the 2026-09-07 move: `dsh-module-skills` and `hook-runner-dsh`
 were sibling modules of this repo at the time, installed with the same `dsh
 plugin add` command shown below. On the current layout they are installed
