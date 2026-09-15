@@ -11,6 +11,58 @@ WORKTREE_ROOT="${DUAL_REVIEW_WORKTREES:-$HOME/.git-worktree}"
 die() { echo "ERROR: $*" >&2; exit 1; }
 info() { echo "  $*" >&2; }
 
+# `timeout SECONDS cmd...`, portably.
+#
+# macOS ships neither GNU `timeout` nor `gtimeout` unless coreutils is
+# installed, so without this every agent launch dies instantly with
+# "timeout: command not found" — a round that reads as an agent failure but
+# never started one. Prefer the real binaries; emulate otherwise, reporting 124
+# on expiry so the caller's "failed (exit N)" line is the same either way.
+run_with_timeout() {
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then timeout "$secs" "$@"; return $?; fi
+  if command -v gtimeout >/dev/null 2>&1; then gtimeout "$secs" "$@"; return $?; fi
+
+  # No timeout binary anywhere: emulate one. The template is not optional —
+  # BSD mktemp (i.e. macOS, the platform this fallback exists for) rejects a
+  # bare `mktemp`. If even that fails we cannot track expiry, so run unbounded
+  # rather than not at all.
+  local expired
+  expired="$(mktemp "${TMPDIR:-/tmp}/dual-review-timeout.XXXXXX" 2>/dev/null)" \
+    || { "$@"; return $?; }
+
+  # Job control puts the command in its OWN process group, so the watchdog can
+  # signal the whole tree. This is load-bearing: without it the job shares THIS
+  # shell's group, and a group-directed kill would take down the review run
+  # itself. An agent launch spawns tool subprocesses, and GNU timeout kills the
+  # group too (that is what --foreground opts out of), so signalling only the
+  # top-level PID leaves those children running past the deadline — measured.
+  local had_monitor=0; case "$-" in *m*) had_monitor=1 ;; esac
+  set -m
+  "$@" &
+  local job=$!
+  [[ $had_monitor -eq 1 ]] || set +m
+
+  (
+    sleep "$secs"
+    # Record expiry BEFORE signalling. `wait` can return the instant TERM
+    # lands, so inferring expiry afterwards from the watchdog still being
+    # alive is a race that reports the job's 143 instead of timeout's 124.
+    printf 1 > "$expired"
+    # The group first; the bare PID only if the job never became a leader.
+    kill -TERM -"$job" 2>/dev/null || kill -TERM "$job" 2>/dev/null
+  ) &
+  local killer=$!
+
+  local rc=0
+  wait "$job" 2>/dev/null || rc=$?
+  [[ -s "$expired" ]] && rc=124
+  kill -TERM "$killer" 2>/dev/null
+  wait "$killer" 2>/dev/null || true
+  rm -f "$expired"
+  return "$rc"
+}
+
 # ── codex is frequently not on PATH; the Cursor ChatGPT extension ships a real one
 resolve_codex() {
   if [[ -n "${CODEX_BIN:-}" ]]; then echo "$CODEX_BIN"; return; fi
@@ -302,7 +354,7 @@ cmd_run() {
 
   (
     cd "$WORKTREE" || exit 1
-    timeout "$AGENT_TIMEOUT" claude -p "$(cat "$dir/claude.prompt.md")" \
+    run_with_timeout "$AGENT_TIMEOUT" claude -p "$(cat "$dir/claude.prompt.md")" \
       --model "$CLAUDE_MODEL" --effort "$CLAUDE_EFFORT" \
       --output-format json --json-schema "$(cat "$schema_file")" \
       --permission-mode bypassPermissions \
@@ -315,7 +367,7 @@ cmd_run() {
 
   (
     cd "$WORKTREE" || exit 1
-    timeout "$AGENT_TIMEOUT" "$codex_bin" exec "$(cat "$dir/codex.prompt.md")" \
+    run_with_timeout "$AGENT_TIMEOUT" "$codex_bin" exec "$(cat "$dir/codex.prompt.md")" \
       --model "$CODEX_MODEL" -c model_reasoning_effort="$CODEX_EFFORT" \
       "${codex_iso[@]}" \
       --output-schema "$schema_file" \
