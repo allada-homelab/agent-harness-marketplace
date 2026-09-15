@@ -28,7 +28,7 @@ This module ships three agents: `feature-dev:code-explorer`, `feature-dev:code-a
 - **pi and dsh**: the `delegate_agent` tool with `agent_type` set to the agent's name above. On pi the tool is inactive until this skill is invoked; if it is missing, run `/agents` once.
 - **No delegation tool at all**: do the phase yourself, sequentially, using the agent's role description as your brief. The agent definitions are in `./../../agents/` beside this skill for reference.
 
-Issue independent agent calls together in one assistant message so they run in parallel. On a session whose provider is a local model, run the explorer and reviewer passes sequentially instead: open-ended parallel briefs on local models have hung for very long stretches.
+Issue independent agent calls together in one assistant message so they run in parallel. Prefer concurrency on every harness — including a session whose provider is a local model, where parallel delegation is supported. Fall back to a sequential phase only if you actually observe a parallel brief hang or stall, not in advance.
 
 ---
 

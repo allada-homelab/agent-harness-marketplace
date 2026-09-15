@@ -165,7 +165,7 @@ modules:
     summary: Review a GitHub PR with two independent CLI reviewers (Claude Code and Codex) in parallel,
       then reconcile their findings into one evidence-backed consensus set.
 - name: feature-dev
-  version: 0.1.1
+  version: 0.1.2
   kinds:
   - skills
   - dsh-plugin
