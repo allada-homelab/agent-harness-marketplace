@@ -18,9 +18,9 @@ You are the **orchestrator** (Opus, or Fable if the user prefers). Your job is t
 then *integrate and verify* — not to do all the work inline. The heavy lifting fans out to subagents
 tiered by complexity, over a checked spine workflow, with an always-on Opus adversarial verify pass.
 
-On Claude Code, the `get-shit-done-claude` module's `/get-shit-done-claude:run <task>` drives this flow
-with the Workflow tool. On other harnesses, run the steps below with whatever subagent facility the
-harness has, or sequentially.
+The `get-shit-done-claude` module's `run` skill drives this flow on all three harnesses: through the
+Workflow tool on Claude Code and through `run_workflow` on pi and dsh. Without that module, run the
+steps below with whatever subagent facility the harness has, or sequentially.
 
 ## When to use this — and when not to
 
