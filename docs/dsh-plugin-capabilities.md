@@ -2231,13 +2231,15 @@ Cross-package constraints worth remembering when you compose a profile or write 
 This is the concrete gap the subagent changes opened. The repo's docs and skills were largely
 written against dsh `0.1.1-rc.2`/`0.1.2` and describe a narrower delegation surface.
 
-- **`modules/get-shit-done-claude/skills/run/SKILL.md:97`** and
-  **`modules/feature-dev/skills/feature-dev/SKILL.md:28`** name **`delegate_agent`** as the dsh
-  dispatch tool. That is a marketplace-bridge tool. The **native dsh delegation surface is a family
-  of tools**: `subagent`, `subagent_fork`, `subagent_codex`, `subagent_claude_code`,
+- **`delegate_agent` vs the native dsh subagent tools are different features.** `delegate_agent`
+  is the marketplace **bridge** tool that dispatches a *module-defined* agent type
+  (e.g. `feature-dev:code-explorer`) on pi/dsh — **`modules/feature-dev/skills/feature-dev/SKILL.md:28`**
+  uses it correctly for that, so it is **not** stale. The **native dsh ad-hoc delegation surface** is a
+  family of tools: `subagent`, `subagent_fork`, `subagent_codex`, `subagent_claude_code`,
   `send_message`, `interrupt_agent`, `list_agents`, `list_subagent_models`, `workflow`, `ralph`.
-  A skill should describe the harness-neutral shape ("a subagent tool") and let each harness's
-  tools: mapping translate, rather than hardcode `delegate_agent`.
+  **`modules/get-shit-done-claude/skills/run/SKILL.md:97`** names `delegate_agent` for an *ad-hoc*
+  implementer/verifier retry — that is the stale one: on dsh the native tool is `subagent` (or
+  `subagent_fork` to seed the child with the parent's completed turns), not the bridge.
 - **`docs/spikes/dsh-subagent.md`** documents the one-shot `ctx.subagents.start()` path accurately,
   but predates (or omits) the **continuable** path (`startContinuable()`), the **fork** backend,
   **background subagent jobs**, **per-child model selection**, and the **model-facing tool set** —
