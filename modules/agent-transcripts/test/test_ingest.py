@@ -449,6 +449,297 @@ def test_dsh_truncated_tail_keeps_the_complete_prefix(tmp_path):
     ) == [(3,)]
 
 
+# The shape dsh actually writes: `tool-result` content items, the call id on the
+# item and on message.source, and tool/call arguments as a JSON *string*.
+DSH_NATIVE_TOOLS = [
+    {
+        "type": "user/message",
+        "seq": 1,
+        "time": 1700000001000,
+        "data": {
+            "id": "nu1",
+            "role": "user",
+            "content": [{"type": "text", "text": "count the widgets"}],
+        },
+    },
+    {
+        "type": "assistant/message",
+        "seq": 2,
+        "time": 1700000002000,
+        "data": {
+            "turn": 1,
+            "step": 1,
+            "message": {
+                "id": "na1",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "listing the widgets"}],
+                "source": {"model": "model-epsilon", "provider": "provider-x"},
+            },
+        },
+    },
+    {
+        "type": "tool/call",
+        "seq": 3,
+        "time": 1700000003000,
+        "data": {
+            "turn": 1,
+            "step": 1,
+            "callId": "call-ok",
+            "name": "run_code",
+            "arguments": '{"command": "ls"}',
+        },
+    },
+    {
+        "type": "tool/result",
+        "seq": 4,
+        "time": 1700000004000,
+        "data": {
+            "turn": 1,
+            "step": 1,
+            "message": {
+                "id": "res-ok",
+                "role": "toolResult",
+                "source": {"kind": "tool", "callId": "call-ok"},
+                "content": [
+                    {
+                        "type": "tool-result",
+                        "toolCallId": "call-ok",
+                        "isError": False,
+                        "content": [{"type": "text", "text": "widget-one"}],
+                    }
+                ],
+            },
+        },
+    },
+    {
+        "type": "tool/call",
+        "seq": 5,
+        "time": 1700000005000,
+        "data": {
+            "turn": 1,
+            "step": 2,
+            "callId": "call-bad",
+            "name": "run_code",
+            "arguments": "not json at all",
+        },
+    },
+    {
+        "type": "tool/result",
+        "seq": 6,
+        "time": 1700000006000,
+        "data": {
+            "turn": 1,
+            "step": 2,
+            "error": {"name": "ToolArgsError", "code": "INVALID_ARGS"},
+            "message": {
+                "id": "res-bad",
+                "role": "toolResult",
+                "source": {"kind": "tool", "callId": "call-bad"},
+                "content": [
+                    {
+                        "type": "tool-result",
+                        "toolCallId": "call-bad",
+                        "isError": True,
+                        "content": [{"type": "text", "text": "Error: bad arguments"}],
+                    }
+                ],
+            },
+        },
+    },
+    {
+        "type": "tool/call",
+        "seq": 7,
+        "time": 1700000007000,
+        "data": {"turn": 1, "step": 3, "callId": "call-row", "name": "run_code"},
+    },
+    {
+        "type": "tool/result",
+        "seq": 8,
+        "time": 1700000008000,
+        "data": {
+            "turn": 1,
+            "step": 3,
+            "error": {"name": "ToolArgsError", "code": "INVALID_ARGS"},
+            "message": {
+                "id": "res-row",
+                "role": "toolResult",
+                "source": {"kind": "tool", "callId": "call-row"},
+                "content": [
+                    {
+                        "type": "tool-result",
+                        "toolCallId": "call-row",
+                        "content": [{"type": "text", "text": "row-level failure"}],
+                    }
+                ],
+            },
+        },
+    },
+]
+
+
+@pytest.fixture
+def dsh_native_cache(tmp_path):
+    """A cache holding one dsh session written the way dsh really writes tool rows."""
+    root = tmp_path / "cache"
+    session = root / "raw/dsh/host/sessions/--tmp-proj--/session-9999"
+    session.mkdir(parents=True)
+    (session / "session.jsonl.zstd").write_bytes(
+        _frame([{**DSH_HEADER, "id": "session-9999"}]) + _frame(DSH_NATIVE_TOOLS)
+    )
+    return root
+
+
+def test_dsh_native_tool_results_link_and_carry_their_error_flag(dsh_native_cache):
+    errors, conn = _ingested(dsh_native_cache)
+    assert errors == 0
+    assert _rows(
+        conn,
+        "SELECT t.call_id, t.is_error, r.native_id FROM tool_calls t"
+        " JOIN messages r ON r.id = t.result_message_id ORDER BY t.call_id",
+    ) == [
+        ("call-bad", 1, "res-bad"),
+        ("call-ok", 0, "res-ok"),
+        ("call-row", 1, "res-row"),  # flagged by data.error alone
+    ]
+
+
+def test_dsh_tool_result_text_is_stored_and_indexed(dsh_native_cache):
+    _, conn = _ingested(dsh_native_cache)
+    assert _rows(
+        conn,
+        "SELECT native_id, text FROM messages WHERE role = 'tool_result' ORDER BY ord",
+    ) == [
+        ("res-ok", "widget-one"),
+        ("res-bad", "Error: bad arguments"),
+        ("res-row", "row-level failure"),
+    ]
+    assert _rows(
+        conn,
+        "SELECT m.native_id FROM messages_fts f JOIN messages m ON m.id = f.rowid"
+        " WHERE messages_fts MATCH '\"widget-one\"'",
+    ) == [("res-ok",)]
+
+
+def test_dsh_arguments_are_unwrapped_from_their_json_string(dsh_native_cache):
+    _, conn = _ingested(dsh_native_cache)
+    assert _rows(
+        conn, "SELECT call_id, arguments FROM tool_calls ORDER BY call_id"
+    ) == [
+        ("call-bad", '"not json at all"'),  # not JSON: kept as the string it is
+        ("call-ok", '{"command": "ls"}'),
+        ("call-row", "null"),
+    ]
+
+
+# ------------------------------------------------------- claude tool results
+
+
+CLAUDE_RESULT_LINES = [
+    {
+        "type": "assistant",
+        "uuid": "ra1",
+        "parentUuid": None,
+        "timestamp": "2026-01-01T00:00:01.000Z",
+        "message": {
+            "role": "assistant",
+            "model": "model-alpha",
+            "content": [
+                {"type": "tool_use", "id": "tu9", "name": "Read", "input": {"f": "a"}},
+                {"type": "tool_use", "id": "tu8", "name": "Read", "input": {"f": "b"}},
+            ],
+        },
+    },
+    {
+        "type": "user",
+        "uuid": "rr1",
+        "parentUuid": "ra1",
+        "timestamp": "2026-01-01T00:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tu9",
+                    "is_error": True,
+                    "content": "<tool_use_error>File has not been read yet."
+                    "</tool_use_error>",
+                }
+            ],
+        },
+    },
+    {
+        "type": "user",
+        "uuid": "rr2",
+        "parentUuid": "rr1",
+        "timestamp": "2026-01-01T00:00:03.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tu8",
+                    "is_error": False,
+                    "content": [
+                        {"type": "text", "text": "widget-one"},
+                        {"type": "tool_reference", "name": "Read"},
+                        {"type": "text", "text": "widget-two"},
+                    ],
+                }
+            ],
+        },
+    },
+]
+
+
+def test_claude_tool_result_text_covers_both_content_shapes(tmp_path):
+    path = tmp_path / "s9.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in CLAUDE_RESULT_LINES))
+    parsed = tr.parse_claude(path, "raw/claude/host/projects/-tmp-proj/s9.jsonl")
+    results = [m for m in parsed.messages if m.role == "tool_result"]
+    # a plain string is the whole result; a block list keeps only its text blocks
+    assert [m.text for m in results] == [
+        "<tool_use_error>File has not been read yet.</tool_use_error>",
+        "widget-one\nwidget-two",
+    ]
+    assert [m.results for m in results] == [[("tu9", True)], [("tu8", False)]]
+
+
+CLAUDE_MIXED_RESULT_LINES = [
+    {
+        "type": "assistant",
+        "uuid": "ma1",
+        "parentUuid": None,
+        "timestamp": "2026-01-01T00:00:01.000Z",
+        "message": {
+            "role": "assistant",
+            "model": "model-alpha",
+            "content": [{"type": "tool_use", "id": "tu7", "name": "Read", "input": {"f": "a"}}],
+        },
+    },
+    {
+        "type": "user",
+        "uuid": "mr1",
+        "parentUuid": "ma1",
+        "timestamp": "2026-01-01T00:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "the user typed this alongside the result"},
+                {"type": "tool_result", "tool_use_id": "tu7", "content": "widget-one"},
+            ],
+        },
+    },
+]
+
+
+def test_claude_tool_result_keeps_sibling_text_blocks(tmp_path):
+    path = tmp_path / "s10.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in CLAUDE_MIXED_RESULT_LINES))
+    parsed = tr.parse_claude(path, "raw/claude/host/projects/-tmp-proj/s10.jsonl")
+    (result,) = [m for m in parsed.messages if m.role == "tool_result"]
+    assert result.text == "the user typed this alongside the result\nwidget-one"
+
+
 # ------------------------------------------------------------------ general
 
 

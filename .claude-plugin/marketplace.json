@@ -60,7 +60,7 @@
       "name": "agent-transcripts",
       "description": "Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a derived sqlite database.",
       "category": "development",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "source": "./modules/agent-transcripts"
     },
     {
