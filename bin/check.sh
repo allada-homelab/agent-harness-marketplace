@@ -18,6 +18,9 @@ uv run --script bin/render-index.py --check || fail=1
 step "modules/*/plugin.json (Agent Plugins v1 manifests) are current and valid"
 uv run --script bin/render-plugin-manifests.py --check || fail=1
 
+step "module mcp.json manifests are valid and .mcp.json is current"
+uv run --script bin/render-plugin-manifests.py --check-mcp || fail=1
+
 step "every skill satisfies the portable contract"
 uv run --script bin/lint-skills.py || fail=1
 
@@ -30,7 +33,7 @@ cat > "$tmp/bad/skills/renamed/SKILL.md" <<'EOF'
 ---
 name: other-name
 description: A skill that breaks the contract on purpose.
-context: fork
+context: agent
 allowed-tools: Bash
 ---
 Run `${CLAUDE_PLUGIN_ROOT}/x.py` and read ~/.agents/lib/thing then ./missing.md
@@ -210,6 +213,9 @@ print("  ok" if not bad else f"  {bad} problem(s)")
 sys.exit(1 if bad else 0)
 PY
 
+step "workflow scripts declare a literal meta"
+uv run --script bin/lint-workflows.py || fail=1
+
 step "claude plugin validate (marketplace + every Claude plugin module)"
 if command -v claude >/dev/null; then
     claude plugin validate . >/dev/null 2>&1 && echo "  ok marketplace" || { echo "  FAIL: marketplace.json"; claude plugin validate . 2>&1 | tail -5; fail=1; }
@@ -251,8 +257,11 @@ else
 fi
 
 step "python tests"
-if compgen -G "modules/*/test/test_*.py" >/dev/null; then
-    uv run --with pytest --with pyyaml --with zstandard --python 3.12 pytest -q modules/*/test || fail=1
+suites=()
+compgen -G "modules/*/test/test_*.py" >/dev/null && suites+=(modules/*/test)
+compgen -G "tests/test_*.py" >/dev/null && suites+=(tests)
+if [ "${#suites[@]}" -gt 0 ]; then
+    uv run --with pytest --with pyyaml --with zstandard --python 3.12 pytest -q "${suites[@]}" || fail=1
 else
     echo "  (none)"
 fi

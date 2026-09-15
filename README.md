@@ -36,9 +36,11 @@ harness (the dsh skills bridge, the pi and dsh hook runners, and pi's `/name`
 commands) is no longer part of this repo: it lives in
 the maintainer's dotfiles harness layer (a private repo; not published here)
 under `agents/harnesses/`, always installed there. This repo ships
-user-facing modules only. The hook contract's prose stays in
-[`hook-contract/README.md`](hook-contract/README.md); its executable corpus
-now lives beside the runners in that repo.
+user-facing modules only. The three author-facing contracts stay here —
+[`hook-contract/`](hook-contract/README.md), [`agent-contract/`](agent-contract/README.md)
+and [`workflow-contract/`](workflow-contract/README.md), for `hooks/hooks.json`,
+`agents/*.md` (and forked skills) and `workflows/*.js` — while the executable
+corpus each one holds its runners to now lives beside them in that repo.
 
 ## Authoring
 

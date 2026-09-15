@@ -1,0 +1,16 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "docs": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@example/docs-mcp", "--stdio"],
+      "env": { "DOCS_API_KEY": "${DOCS_API_KEY}" }
+    },
+    "search": {
+      "type": "streamable-http",
+      "url": "https://mcp.example.com/search",
+      "headers": { "Authorization": "Bearer ${SEARCH_TOKEN}" }
+    }
+  }
+}

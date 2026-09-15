@@ -11,6 +11,7 @@ silently gets wrong (dsh drops `allowed-tools`, hands flat skills the wrong
 resourceBase, never shows `whenToUse`; pi ignores unknown keys; Claude needs
 name == dirname). A skill scoped with `harness:` to a subset may use that
 subset's extras: `harness: [claude]` unlocks Claude-only keys and `${CLAUDE_*}`.
+One Claude key is portable on its own: `context: fork` — see FORK_UNLOCKS below.
 
     uv run --script bin/lint-skills.py [modules/<name> ...]   # default: modules/*
 
@@ -38,6 +39,13 @@ ALLOWED = {
 CLAUDE_ONLY = {"context", "agent", "hooks", "effort", "model", "allowed-tools",
                "disallowed-tools", "background", "paths", "shell", "arguments", "when_to_use"}
 UNRENDERED = {"whenToUse", "when_to_use"}  # parsed by dsh, shown nowhere (A11)
+# `context: fork` is portable: the pi and dsh bridges dispatch such a skill as an
+# isolated agent of type <module>:<skill> (persona = body, tools = the
+# `allowed-tools` tokens, model = the `model` alias), so those keys carry meaning
+# off Claude and are unlocked with it. `agent` names the Claude child type only.
+FORK_UNLOCKS = {"allowed-tools", "model", "agent"}
+CLAUDE_BUILTIN_AGENTS = ("Explore", "Plan", "general-purpose")
+AGENT_TYPE_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*:[a-z0-9]+(-[a-z0-9]+)*")
 
 CLAUDE_TOKEN = re.compile(r"\$\{CLAUDE_[A-Z_]+\}")
 ABS_PATH = re.compile(r"(?<![\w./-])(?:~|/home|/Users|/usr|/opt|/etc)/[\w./-]+")
@@ -97,16 +105,29 @@ def lint_skill(path: Path, out: list[str]) -> int:
     scope = set(harness) if harness else HARNESSES
     claude_only = scope == {"claude"}
 
+    context = fm.get("context")
+    forked = context == "fork"
+    if "context" in fm and not claude_only and not forked:
+        fail(f"context: {context!r} is Claude-only; only `context: fork` is portable "
+             "(drop it or scope the skill with `harness: [claude]`)")
+
     for key in fm:
         if key in ALLOWED:
             continue
         if key in CLAUDE_ONLY:
-            if not claude_only:
-                fail(f"key {key!r} is Claude-only; drop it or scope the skill with `harness: [claude]`")
+            if claude_only or key == "context" or (forked and key in FORK_UNLOCKS):
+                continue
+            fail(f"key {key!r} is Claude-only; drop it or scope the skill with `harness: [claude]`")
         elif key in UNRENDERED:
             warn(f"{key!r} reaches no catalog or UI on dsh; fold it into description")
         else:
             warn(f"unknown key {key!r} (ignored by every harness)")
+
+    agent = fm.get("agent")
+    if forked and not claude_only and agent is not None:
+        if str(agent) not in CLAUDE_BUILTIN_AGENTS and not AGENT_TYPE_RE.fullmatch(str(agent)):
+            warn(f"agent {agent!r} is neither a Claude built-in ({', '.join(CLAUDE_BUILTIN_AGENTS)}) "
+                 "nor a <module>:<agent> type; only Claude honours the key")
 
     if not claude_only:
         for m in CLAUDE_TOKEN.finditer(body):
