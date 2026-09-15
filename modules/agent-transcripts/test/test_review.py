@@ -569,3 +569,117 @@ def test_the_skill_shows_the_same_example_as_the_script():
     skill = (MODULE / "skills/transcript-review/SKILL.md").read_text(encoding="utf-8")
     block = skill.split("```json", 1)[1].split("```", 1)[0]
     assert json.loads(block) == rv.EXAMPLE_VERDICT
+
+
+# --------------------------------------------------------------- unclassified
+
+
+def test_record_accepts_an_unclassified_flag(index, store, tmp_path, capsys):
+    s = index.session("u1")
+    ord_ = index.user(s, "no, I said don't touch the migration")
+    index.close()
+    run_id = fi.start_run(store[0], "transcript-review", "small-local", "{}")
+
+    payload = verdict()
+    payload["unclassified"] = {"confidence": "high", "evidence_ord": ord_,
+                               "quote": "I said don't touch the migration",
+                               "note": "a failure mode none of the 13 names"}
+    assert record(tmp_path, "u1", payload, run_id=run_id) == 0
+    assert "13 findings (0 present) + 1 unclassified" in capsys.readouterr().out
+
+    row = store[0].execute(
+        "SELECT category, present, confidence, evidence_ord, quote FROM review_flags"
+        " WHERE native_id = 'u1' AND category = '__unclassified__'"
+    ).fetchone()
+    assert row == ("__unclassified__", 1, "high", ord_, "I said don't touch the migration")
+    # the 13 categories are still all answered — the rate denominator is unchanged
+    assert store[0].execute(
+        "SELECT count(*) FROM review_flags WHERE native_id = 'u1'"
+    ).fetchone() == (len(rv.CATEGORIES) + 1,)
+
+
+def test_record_rejects_an_unclassified_without_a_quote(index, store, tmp_path, capsys):
+    s = index.session("u2")
+    ord_ = index.user(s, "no, I said don't touch the migration")
+    index.close()
+    run_id = fi.start_run(store[0], "transcript-review", "small-local", "{}")
+
+    payload = verdict()
+    payload["unclassified"] = {"confidence": "high", "evidence_ord": ord_}
+    assert record(tmp_path, "u2", payload, run_id=run_id) == 2
+    assert "unclassified: needs a quote" in capsys.readouterr().err
+    assert store[0].execute("SELECT count(*) FROM review_flags").fetchone() == (0,)
+
+
+def test_record_rejects_an_unclassified_quote_not_in_the_session(index, store, tmp_path,
+                                                                 capsys):
+    s = index.session("u3")
+    ord_ = index.user(s, "fix the build")
+    index.close()
+    run_id = fi.start_run(store[0], "transcript-review", "small-local", "{}")
+
+    payload = verdict()
+    payload["unclassified"] = {"confidence": "high", "evidence_ord": ord_,
+                               "quote": "words that were never said"}
+    assert record(tmp_path, "u3", payload, run_id=run_id) == 2
+    assert "unclassified: quote is not in message" in capsys.readouterr().err
+    assert store[0].execute("SELECT count(*) FROM review_flags").fetchone() == (0,)
+
+
+def test_record_rejects_an_unclassified_with_bad_confidence(index, store, tmp_path, capsys):
+    s = index.session("u4")
+    ord_ = index.user(s, "fix the build")
+    index.close()
+    run_id = fi.start_run(store[0], "transcript-review", "small-local", "{}")
+
+    payload = verdict()
+    payload["unclassified"] = {"confidence": "certain", "evidence_ord": ord_,
+                               "quote": "fix the build"}
+    assert record(tmp_path, "u4", payload, run_id=run_id) == 2
+    assert "unclassified: confidence must be one of" in capsys.readouterr().err
+
+
+def test_record_unclassified_does_not_substitute_for_a_missing_category(index, store,
+                                                                        tmp_path, capsys):
+    s = index.session("u5")
+    ord_ = index.user(s, "fix the build")
+    index.close()
+    run_id = fi.start_run(store[0], "transcript-review", "small-local", "{}")
+
+    payload = verdict()
+    del payload["findings"][0]  # drop one category — an unclassified flag cannot replace it
+    payload["unclassified"] = {"confidence": "high", "evidence_ord": ord_,
+                               "quote": "fix the build"}
+    assert record(tmp_path, "u5", payload, run_id=run_id) == 2
+    assert "missing" in capsys.readouterr().err
+
+
+def test_rollup_counts_unclassified_separately(index, store, tmp_path, capsys):
+    run_id = fi.start_run(store[0], "transcript-review", "small-local", "{}")
+    a = index.session("a")
+    ord_a = index.user(a, "no, I said don't touch the migration")
+    b = index.session("b")
+    ord_b = index.user(b, "something unclassifiable happened")
+    index.close()
+
+    assert record(tmp_path, "a", verdict(user_correction={
+        "present": 1, "confidence": "high", "evidence_ord": ord_a,
+        "quote": "don't touch the migration", "note": ""}), run_id=run_id) == 0
+    payload = verdict()
+    payload["unclassified"] = {"confidence": "high", "evidence_ord": ord_b,
+                               "quote": "something unclassifiable happened",
+                               "note": "fits no category"}
+    assert record(tmp_path, "b", payload, run_id=run_id) == 0
+    capsys.readouterr()
+
+    assert rv.main(["--dest", str(tmp_path), "rollup"]) == 0
+    out = capsys.readouterr().out
+    assert "__unclassified__" not in out          # never a category rate
+    assert "unclassified: 1 session(s) flagged" in out
+    assert "sessions reviewed: 2" in out
+
+
+def test_rubric_mentions_the_unclassified_escape_hatch(capsys):
+    assert rv.main(["rubric"]) == 0
+    out = capsys.readouterr().out
+    assert "unclassified" in out

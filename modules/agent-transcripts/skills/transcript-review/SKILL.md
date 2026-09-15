@@ -111,6 +111,22 @@ Write the whole thing to a file, all 13 categories, in this shape:
 ]}
 ```
 
+Sometimes a session shows a real problem that fits none of the categories above — a
+failure mode the taxonomy has no name for yet. Do not force it into the nearest
+category (a wrong yes poisons the rollup) and do not drop it (a finding that is lost
+can never become the next category). Instead add one `unclassified` object to the same
+file, with the same evidence discipline — `confidence`, `evidence_ord` from the view,
+and a `quote` copied character for character from that message, which the recorder
+checks just as it checks the categories:
+
+```json
+{"unclassified": {"confidence": "high", "evidence_ord": 88, "quote": "npm ERR! peer dep missing", "note": "a failure mode none of the 13 categories names"}}
+```
+
+It is recorded but never counted in a category rate. It is a cue — the sign that a new
+category might be worth adding — not a category, so leave it out when every problem
+fits one.
+
 `uv run --script ./review.py rubric` prints this table and this same complete example again
 if you need it.
 
