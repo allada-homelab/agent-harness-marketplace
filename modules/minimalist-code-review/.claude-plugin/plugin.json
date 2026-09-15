@@ -1,6 +1,6 @@
 {
   "name": "minimalist-code-review",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A pragmatic, anti-over-engineering pull-request reviewer with a warm, Socratic voice.",
   "author": {
     "name": "David Allada",

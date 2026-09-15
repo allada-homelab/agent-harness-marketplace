@@ -40,6 +40,7 @@ The directory name is the identity and three files must agree with it:
 modules/<name>/
   package.json                     # every module needs one; it carries the version
   .claude-plugin/plugin.json       # only if Claude should install it as a plugin
+  plugin.json                      # GENERATED (Agent Plugins v1) — never hand-edit; step 5 renders it
   cordis.patch.yml                 # required whenever the module has skills/ or a dsh key
   README.md                        # convention: every module has one
   skills/<skill>/SKILL.md
@@ -115,13 +116,21 @@ what every pi user gets:
 
 Getting this backwards fails in both directions.
 
-### 5. Regenerate the index
+### 5. Regenerate the generated files
 
-`modules/index.yaml` is generated — never hand-edit it.
+`modules/index.yaml` and every `modules/<name>/plugin.json` are generated — never
+hand-edit them.
 
 ```
 uv run --script bin/render-index.py --write
+uv run --script bin/render-plugin-manifests.py --write
 ```
+
+`plugin.json` is the [Agent Plugins v1](https://agent-plugins.org/specification)
+manifest, rendered from the module's `package.json` (name from the directory,
+version, description, license) so the module installs in Cursor, Codex, Copilot,
+Kiro and VS Code as well. It carries the version too, so a bump must be followed
+by a re-render or the `plugin.json is current` step fails.
 
 Module `description` comes from the module's `package.json`; each skill's
 `summary` is the **first sentence** of its `SKILL.md` `description`, so write that
@@ -174,8 +183,8 @@ These pass a casual reading and fail the gate:
 - **The asset-exists lint only fires on paths written with a `./` prefix.**
   `references/x.md` in a SKILL.md body is *not* checked and will ship broken;
   write `./references/x.md`.
-- **Never hand-edit `modules/index.yaml`** — regenerate it, or the
-  `index.yaml is current` step fails.
+- **Never hand-edit `modules/index.yaml` or `modules/<name>/plugin.json`** —
+  regenerate them, or the `is current` steps fail.
 - **No absolute or `~/` paths** anywhere under `modules/`, `docs/` or `README.md`,
   and no homelab hostnames or RFC1918 addresses. There is a grep for it.
 - **A changed module must bump its version.** CI checks this against

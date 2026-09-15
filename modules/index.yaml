@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: agent-transcripts
-  version: 0.2.0
+  version: 0.2.1
   kinds:
   - skills
   - dsh-plugin
@@ -71,7 +71,7 @@ modules:
     summary: Query the agent-transcripts sqlite index to measure tool use, sessions, projects and activity
       across Claude Code, pi and dsh without loading transcript prose into context.
 - name: browser
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -94,7 +94,7 @@ modules:
     command: true
     summary: Drive a browser from any harness.
 - name: claude-transcripts
-  version: 0.1.1
+  version: 0.1.2
   kinds:
   - skills
   - dsh-plugin
@@ -122,7 +122,7 @@ modules:
     summary: Export Claude Code transcript JSONL out of the host and dev-container docker volumes to an
       on-device cache for later analysis.
 - name: dual-agent-pr-review
-  version: 0.1.1
+  version: 0.1.2
   kinds:
   - skills
   - dsh-plugin
@@ -140,7 +140,7 @@ modules:
     summary: Review a GitHub PR with two independent CLI reviewers (Claude Code and Codex) in parallel,
       then reconcile their findings into one evidence-backed consensus set.
 - name: feature-dev
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -162,7 +162,7 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: get-shit-done
-  version: 0.1.1
+  version: 0.1.2
   kinds:
   - skills
   - dsh-plugin
@@ -186,7 +186,7 @@ modules:
       for hard reasoning) under an Opus/Fable orchestrator, run concurrent Sonnet research (web + context7),
       fan out through a checked dynamic workflow, and adversarially verify before done.
 - name: get-shit-done-claude
-  version: 0.1.1
+  version: 0.1.2
   kinds:
   - skills
   - dsh-plugin
@@ -205,7 +205,7 @@ modules:
       capable model under an Opus/Fable orchestrator, research concurrently, fan out through a checked
       dynamic workflow, and adversarially verify (Opus) before reporting done.
 - name: minimalist-code-review
-  version: 0.1.1
+  version: 0.1.2
   kinds:
   - skills
   - dsh-plugin
@@ -228,7 +228,7 @@ modules:
       and reuse over speculative flexibility, watches runtime/query cost, marks nits explicitly, and keeps
       a warm, concise tone.
 - name: plan-for-dummies
-  version: 0.3.0
+  version: 0.3.1
   kinds:
   - skills
   - dsh-plugin
@@ -250,7 +250,7 @@ modules:
     summary: Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent)
       will execute without the planner present.
 - name: pr-flow
-  version: 0.2.0
+  version: 0.2.1
   kinds:
   - skills
   - dsh-plugin
@@ -274,7 +274,7 @@ modules:
     command: true
     summary: Use whenever a task will change files in a git repository.
 - name: research
-  version: 0.1.1
+  version: 0.1.2
   kinds:
   - skills
   - dsh-plugin

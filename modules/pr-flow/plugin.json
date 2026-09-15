@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "pr-flow",
+  "version": "0.2.1",
+  "description": "Work off main on every harness: branch + worktree, PR, watch CI until green, merge only when told, tear down after merge.",
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
+  "homepage": "https://github.com/allada-homelab/agent-harness-marketplace/tree/main/modules/pr-flow",
+  "repository": "https://github.com/allada-homelab/agent-harness-marketplace",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "claude-code",
+    "pi",
+    "dsh"
+  ]
+}

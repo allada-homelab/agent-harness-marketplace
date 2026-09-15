@@ -1,6 +1,6 @@
 {
   "name": "agent-transcripts",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a derived sqlite database.",
   "author": {
     "name": "David Allada",

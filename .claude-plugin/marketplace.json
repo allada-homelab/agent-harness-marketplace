@@ -11,77 +11,77 @@
       "name": "minimalist-code-review",
       "description": "A pragmatic, anti-over-engineering pull-request reviewer with a warm, Socratic voice.",
       "category": "development",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "source": "./modules/minimalist-code-review"
     },
     {
       "name": "get-shit-done",
       "description": "Method for getting a complex or fan-out task done by decomposing it and delegating each subtask to the cheapest capable model.",
       "category": "development",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "source": "./modules/get-shit-done"
     },
     {
       "name": "get-shit-done-claude",
       "description": "The Claude Code face of get-shit-done: /get-shit-done-claude:run drives the checked Workflow fan-out.",
       "category": "development",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "source": "./modules/get-shit-done-claude"
     },
     {
       "name": "research",
       "description": "Run the research-before-acting ladder as an explicit step and return a scope with a recommendation.",
       "category": "development",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "source": "./modules/research"
     },
     {
       "name": "claude-transcripts",
       "description": "Export Claude Code transcripts out of dev containers and analyze hook fire rates, CLAUDE.md adherence and tool-use patterns.",
       "category": "observability",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "source": "./modules/claude-transcripts"
     },
     {
       "name": "plan-for-dummies",
       "description": "Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent) will execute without the planner present.",
       "category": "development",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "source": "./modules/plan-for-dummies"
     },
     {
       "name": "dual-agent-pr-review",
       "description": "Review a GitHub PR with Claude Code and Codex in parallel, then reconcile their findings into one consensus set.",
       "category": "development",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "source": "./modules/dual-agent-pr-review"
     },
     {
       "name": "agent-transcripts",
       "description": "Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a derived sqlite database.",
       "category": "development",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "source": "./modules/agent-transcripts"
     },
     {
       "name": "pr-flow",
       "description": "Work off main on every harness: branch + worktree, PR, watch CI until green, merge only when told, tear down after merge.",
       "category": "development",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "source": "./modules/pr-flow"
     },
     {
       "name": "browser",
       "description": "Drive a browser from any harness: headless auto mode and headed hybrid mode where a human logs in and the agent takes over, through agent-browser on a persistent per-identity profile.",
       "category": "development",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "source": "./modules/browser"
     },
     {
       "name": "feature-dev",
       "description": "Guided seven-phase feature development: explore the codebase with parallel specialist agents, ask clarifying questions, compare architectures, implement, then review. A harness-neutral port of Anthropic's feature-dev plugin whose agents dispatch on Claude Code, pi and dsh.",
       "category": "development",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "source": "./modules/feature-dev"
     }
   ]
