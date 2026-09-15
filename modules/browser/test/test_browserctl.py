@@ -123,3 +123,41 @@ def test_chrome_env_override_wins(sandbox, tmp_path, run, argv):
     assert r.returncode == 0, r.stderr
     a = argv(sandbox)
     assert a[a.index("--executable-path") + 1] == str(alt)
+
+
+# --- attach: drive a browser someone else owns (the user's Chrome via CDP) ---
+
+
+def test_attach_cdp_composes_cdp_and_pin_tab_without_profile(sandbox, run, argv):
+    r = run(sandbox, "attach", "--identity", "work", "--session", "s1", "--cdp", "9222", "--", "open", "https://example.com")
+    assert r.returncode == 0, r.stderr
+    a = argv(sandbox)
+    assert a == ["--session", "s1", "--pin-tab", "--cdp", "9222", "open", "https://example.com"]
+    # externally-owned browser: no profile/executable-path, and no Chrome needed
+    assert "--profile" not in a
+    assert "--executable-path" not in a
+
+
+def test_attach_auto_connect_without_cdp(sandbox, run, argv):
+    r = run(sandbox, "attach", "--identity", "work", "--session", "s1", "--auto-connect", "--", "get", "url")
+    assert r.returncode == 0, r.stderr
+    a = argv(sandbox)
+    assert a == ["--session", "s1", "--pin-tab", "--auto-connect", "get", "url"]
+
+
+def test_attach_needs_cdp_or_auto_connect(sandbox, run):
+    r = run(sandbox, "attach", "--identity", "work", "--session", "s1", "--", "get", "url")
+    assert r.returncode == 2
+    assert "--cdp" in r.stderr
+
+
+def test_attach_rejects_both_cdp_and_auto_connect(sandbox, run):
+    r = run(sandbox, "attach", "--identity", "work", "--session", "s1", "--cdp", "9222", "--auto-connect", "--", "get", "url")
+    assert r.returncode == 2
+    assert "not both" in r.stderr
+
+
+def test_attach_refuses_passthrough_flag_that_repoints_the_launcher(sandbox, run):
+    r = run(sandbox, "attach", "--identity", "work", "--session", "s1", "--cdp", "9222", "--", "--profile", "x", "get", "url")
+    assert r.returncode == 2
+    assert "--profile" in r.stderr

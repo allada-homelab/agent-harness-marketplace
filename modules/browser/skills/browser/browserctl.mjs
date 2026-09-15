@@ -7,6 +7,7 @@
 //
 //   browserctl doctor [--json]
 //   browserctl run --identity <name> [--mode auto|hybrid] [--session <id>] -- <agent-browser args...>
+//   browserctl attach --identity <name> [--session <id>] (--cdp <port|url> | --auto-connect) -- <agent-browser args...>
 //   browserctl identities
 //   browserctl export --identity <name> [--session <id>] --out <file>
 //   browserctl import --identity <name> [--session <id>] --in <file>
@@ -34,6 +35,7 @@ function parse(argv) {
     if (a.startsWith("--")) {
       const k = a.slice(2);
       if (k === "json") { opts.json = true; continue; }
+      if (k === "auto-connect") { opts.autoConnect = true; continue; }
       const v = argv[++i];
       if (v === undefined) die(`--${k} needs a value`);
       opts[k] = v;
@@ -144,11 +146,34 @@ function invoke(opts, tail) {
   process.exit(r.status ?? 1);
 }
 
+// Attach to a browser someone else owns — the user's own Chrome launched with
+// --remote-debugging-port, or any externally-owned browser (Electron, remote
+// service). Unlike run, it composes no --profile/--executable-path and needs no
+// pinned Chrome: the browser is externally owned and keeps its own profile.
+// --pin-tab binds the session to its own tab rather than adopting the active one.
+function attach(opts, tail) {
+  for (const a of tail) {
+    const flag = a.split("=")[0];
+    if (RESERVED.has(flag)) die(`${flag} is set by browserctl and cannot be passed after --`);
+  }
+  const id = identity(opts);
+  const cdp = opts.cdp;
+  const auto = opts.autoConnect;
+  if (!cdp && !auto) die("attach needs --cdp <port|url> or --auto-connect");
+  if (cdp && auto) die("attach takes --cdp OR --auto-connect, not both");
+  const args = ["--session", sessionName(opts, id), "--pin-tab"];
+  if (cdp) args.push("--cdp", cdp); else args.push("--auto-connect");
+  const r = spawnSync("agent-browser", [...args, ...tail], { stdio: "inherit" });
+  if (r.error) die(`cannot exec agent-browser: ${r.error.message}`);
+  process.exit(r.status ?? 1);
+}
+
 const { opts, rest, passthrough } = parse(process.argv.slice(2));
 const cmd = rest[0];
 switch (cmd) {
   case "doctor": doctor(opts); break;
   case "run": if (!passthrough.length) die("run needs `-- <agent-browser args>`"); invoke(opts, passthrough); break;
+  case "attach": if (!passthrough.length) die("attach needs `-- <agent-browser args>`"); attach(opts, passthrough); break;
   case "identities": {
     const names = existsSync(PROFILES)
       ? readdirSync(PROFILES).filter((n) => IDENT.test(n) && statSync(join(PROFILES, n)).isDirectory()).sort()
@@ -158,5 +183,5 @@ switch (cmd) {
   case "export": if (!opts.out) die("export needs --out <file>"); invoke(opts, ["state", "save", opts.out]); break;
   case "import": if (!opts.in) die("import needs --in <file>"); invoke(opts, ["state", "load", opts.in]); break;
   case "close": invoke(opts, ["close"]); break;
-  default: die("usage: browserctl doctor|run|identities|export|import|close (see SKILL.md)");
+  default: die("usage: browserctl doctor|run|attach|identities|export|import|close (see SKILL.md)");
 }

@@ -95,7 +95,7 @@ modules:
       tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized
       results or sessions in the findings store beside it.
 - name: browser
-  version: 0.1.1
+  version: 0.1.2
   kinds:
   - skills
   - dsh-plugin
@@ -103,8 +103,9 @@ modules:
   - claude
   - pi
   - dsh
-  description: 'Drive a browser from any harness: headless auto mode and headed hybrid mode where a human
-    logs in and the agent takes over, through agent-browser on a persistent per-identity profile.'
+  description: 'Drive a browser from any harness: headless auto mode, headed hybrid mode where a human
+    logs in and the agent takes over, or attach to a browser the user opened via its debug port — through
+    agent-browser on a persistent per-identity profile.'
   skills:
   - name: browser
     path: modules/browser/skills/browser/SKILL.md
