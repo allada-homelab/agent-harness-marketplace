@@ -72,6 +72,44 @@ no row is dropped, with one stderr line, so the child's capability set is exact.
 | `maxTurns`, `skills`, `memory`, `permissionMode`, `isolation` | native | ignored | ignored | **degraded** |
 | Concurrency | harness | 4 in flight, per-child timeout | provider's | pi capped |
 
+## Forked skills
+
+A skill may *be* an agent instead of naming one. `context: fork` in a
+`SKILL.md` is the one Claude key that is portable on its own: Claude runs the
+skill in a forked context, and the pi and dsh bridges dispatch it as an isolated
+agent of type **`<module>:<skill>`** — the same namespace as `agents/*.md`, so a
+caller names it the same way. It is the cheap form: one file, no `agents/`
+directory, and the skill's own body is the child's persona.
+
+```markdown
+---
+name: scout
+description: Explore an unfamiliar area of the codebase and report back a brief.
+context: fork
+allowed-tools: Read, Grep, Glob, Bash(git log:*)
+model: sonnet
+agent: Explore
+---
+You are a scout. Trace the code for $ARGUMENTS and return …
+```
+
+| Skill field | Where it lands |
+|---|---|
+| the body | the child's system prompt (`persona`), exactly as an `agents/*.md` body |
+| `description` | what the dispatcher shows the model, as for an agent |
+| `allowed-tools` | the child's tool set: **each token up to its `(`** (`Bash(git log:*)` → `Bash`), then translated through the table above. Claude additionally honours the argument pattern; pi and dsh get the bare tool. |
+| `model` | the same alias (`sonnet`, `opus`, `haiku`, `inherit`) an agent file takes |
+| `agent` | Claude's child type — a built-in (`Explore`, `Plan`, `general-purpose`) or a `<module>:<agent>` type. **Ignored off Claude**, where the skill is itself the agent; the lint warns on any other value. |
+| `context` | `fork` is the only portable value. Any other value is Claude-only and fails a portable skill. |
+
+`$ARGUMENTS` in a forked body is **left verbatim** — the bridges dispatch the
+body as a persona, not as a command template, so write it to read correctly with
+the token unexpanded and the caller's text following as prose.
+
+**Collision rule: `agents/` wins.** If a module ships both `agents/x.md` and a
+forked `skills/x/SKILL.md`, the type `<module>:x` resolves to the agent file and
+the skill is dispatched only as a skill. Do not ship both under one name.
+
 ## Writing a skill that uses agents
 
 Name the type once (`feature-dev:code-explorer`) and tell the model which tool

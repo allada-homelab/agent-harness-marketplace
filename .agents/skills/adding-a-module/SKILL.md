@@ -23,6 +23,8 @@ is relative to the repo root.
 | A skill to an existing module | Create `skills/<skill>/SKILL.md`, bump that module's version everywhere it appears (`package.json`, and `plugin.json` + the marketplace entry if it has them), regenerate the index, verify. |
 | A new module | Full procedure below. |
 | Hooks | `hooks/hooks.json` in Claude's shape, `"type": "command"` handlers, event keys drawn from `hook-contract/events.json`, and every `CLAUDE_PLUGIN_ROOT`-prefixed command path resolving to a file that ships in the module. Read `hook-contract/README.md` for the stdin/stdout contract and the two fidelity gaps. |
+| Workflows | `workflows/*.js` in Claude's shape: a pure-literal `export const meta = {name, description, phases?}` and a body built from `agent()`/`parallel()`/`pipeline()`. The filename is the `<module>:<name>` dispatch id off Claude. Read `workflow-contract/README.md`; `bin/lint-workflows.py` enforces the literal. |
+| MCP servers | One `mcp.json` at the module root (Agent Plugins v1 shape). `.mcp.json` beside it is generated — see step 5 — and `docs/authoring.md` has the two shapes and the rules the gate enforces. |
 | A pi extension (`extensions/`) or dsh plugin code (`lib/`) | **Stop and ask.** The conformance tests currently forbid both outright — `tests/conformance/pi.test.mjs` and `dsh.test.mjs` assert no module contains either. The harness-side foundation left this repo; reintroducing executable code is a repo-shape decision, not a module change. |
 
 ## New module, step by step
@@ -42,6 +44,8 @@ modules/<name>/
   .claude-plugin/plugin.json       # only if Claude should install it as a plugin
   plugin.json                      # GENERATED (Agent Plugins v1) — never hand-edit; step 5 renders it
   cordis.patch.yml                 # required whenever the module has skills/ or a dsh key
+  mcp.json                         # optional: MCP servers (Agent Plugins v1 shape)
+  .mcp.json                        # GENERATED from mcp.json — the spelling Claude reads; step 5
   README.md                        # convention: every module has one
   skills/<skill>/SKILL.md
   skills/<skill>/references/*.md   # optional assets, referenced skill-relative
@@ -118,8 +122,8 @@ Getting this backwards fails in both directions.
 
 ### 5. Regenerate the generated files
 
-`modules/index.yaml` and every `modules/<name>/plugin.json` are generated — never
-hand-edit them.
+`modules/index.yaml`, every `modules/<name>/plugin.json` and every
+`modules/<name>/.mcp.json` are generated — never hand-edit them.
 
 ```
 uv run --script bin/render-index.py --write
