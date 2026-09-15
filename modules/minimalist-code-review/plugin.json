@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "minimalist-code-review",
+  "version": "0.1.2",
+  "description": "A pragmatic, anti-over-engineering pull-request reviewer with a warm, Socratic voice.",
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
+  "homepage": "https://github.com/allada-homelab/agent-harness-marketplace/tree/main/modules/minimalist-code-review",
+  "repository": "https://github.com/allada-homelab/agent-harness-marketplace",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "claude-code",
+    "pi",
+    "dsh"
+  ]
+}

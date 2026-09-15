@@ -15,6 +15,9 @@ py() { uv run --with pyyaml --python 3.12 python "$@"; }
 step "modules/index.yaml is current"
 uv run --script bin/render-index.py --check || fail=1
 
+step "modules/*/plugin.json (Agent Plugins v1 manifests) are current and valid"
+uv run --script bin/render-plugin-manifests.py --check || fail=1
+
 step "every skill satisfies the portable contract"
 uv run --script bin/lint-skills.py || fail=1
 

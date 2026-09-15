@@ -1,4 +1,5 @@
 {
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "feature-dev",
   "version": "0.1.1",
   "description": "Guided seven-phase feature development: explore the codebase with parallel specialist agents, ask clarifying questions, compare architectures, implement, then review. A harness-neutral port of Anthropic's feature-dev plugin whose agents dispatch on Claude Code, pi and dsh.",
@@ -6,5 +7,13 @@
     "name": "David Allada",
     "email": "davidanilallada@gmail.com"
   },
-  "license": "Apache-2.0"
+  "homepage": "https://github.com/allada-homelab/agent-harness-marketplace/tree/main/modules/feature-dev",
+  "repository": "https://github.com/allada-homelab/agent-harness-marketplace",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agent-skills",
+    "claude-code",
+    "pi",
+    "dsh"
+  ]
 }

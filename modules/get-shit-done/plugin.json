@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "get-shit-done",
+  "version": "0.1.2",
+  "description": "Method for getting a complex or fan-out task done by decomposing it and delegating each subtask to the cheapest capable model.",
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
+  "homepage": "https://github.com/allada-homelab/agent-harness-marketplace/tree/main/modules/get-shit-done",
+  "repository": "https://github.com/allada-homelab/agent-harness-marketplace",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "claude-code",
+    "pi",
+    "dsh"
+  ]
+}

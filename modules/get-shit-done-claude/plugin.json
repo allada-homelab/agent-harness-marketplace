@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "get-shit-done-claude",
+  "version": "0.1.2",
+  "description": "The Claude Code face of get-shit-done: /get-shit-done-claude:run drives the checked Workflow fan-out.",
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
+  "homepage": "https://github.com/allada-homelab/agent-harness-marketplace/tree/main/modules/get-shit-done-claude",
+  "repository": "https://github.com/allada-homelab/agent-harness-marketplace",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "claude-code",
+    "pi",
+    "dsh"
+  ]
+}

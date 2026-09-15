@@ -4,6 +4,8 @@ One content tree, three harnesses. Every module under `modules/<name>/` installs
 natively on **Claude Code**, **pi** (`@earendil-works/pi-coding-agent`) and **dsh**
 (`@deepseek-ai/dsh`) from the same directory: the shared content is Agent Skills
 (`skills/<skill>/SKILL.md`), and each harness reads its own thin manifest beside it.
+Every module also carries a generated [Agent Plugins v1](https://agent-plugins.org)
+`plugin.json`, so it installs in Cursor, Codex, Copilot, Kiro and VS Code too.
 
 | Harness | Install | Update | Narrow |
 |---|---|---|---|

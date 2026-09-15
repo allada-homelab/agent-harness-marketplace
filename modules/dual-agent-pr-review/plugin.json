@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "dual-agent-pr-review",
+  "version": "0.1.2",
+  "description": "Review a GitHub PR with Claude Code and Codex in parallel, then reconcile their findings into one consensus set.",
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
+  "homepage": "https://github.com/allada-homelab/agent-harness-marketplace/tree/main/modules/dual-agent-pr-review",
+  "repository": "https://github.com/allada-homelab/agent-harness-marketplace",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "claude-code",
+    "pi",
+    "dsh"
+  ]
+}

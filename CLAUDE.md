@@ -14,8 +14,9 @@ has the portable `SKILL.md` contract. Do not reconstruct either from memory.
 
 ## Constraints that bite
 
-- **`modules/index.yaml` is generated.** Never hand-edit it; run
-  `uv run --script bin/render-index.py --write`.
+- **`modules/index.yaml` and every `modules/<name>/plugin.json` are generated.**
+  Never hand-edit them; run `uv run --script bin/render-index.py --write` and
+  `uv run --script bin/render-plugin-manifests.py --write`.
 - **A module's version lives in three files** (`package.json`,
   `.claude-plugin/plugin.json`, and its `.claude-plugin/marketplace.json` entry)
   and they must agree. A changed module must bump it — pi and dsh install at a
