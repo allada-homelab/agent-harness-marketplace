@@ -64,6 +64,10 @@ RUBRIC = {
 }
 CATEGORIES = tuple(RUBRIC)
 
+# A finding that fits no category is stored under this category and is never counted in
+# the category rates — it is a cue for the next category, not a category itself.
+UNCLASSIFIED = "__unclassified__"
+
 # Injected text that is not the user talking. Learned by reading the live index: on claude
 # and dsh roughly half of all "user" characters are one of these. Each entry is
 # (label, harness or "*", regex); a match is replaced by `[stripped: <label>]`.
@@ -681,7 +685,7 @@ def quote_needle(quote: str) -> str:
     return needle
 
 
-def validate(verdict, conn, session_id: int, harness: str) -> list[dict]:
+def validate(verdict, conn, session_id: int, harness: str) -> tuple[list[dict], dict | None]:
     if not isinstance(verdict, dict) or not isinstance(verdict.get("findings"), list):
         raise Invalid('verdict must be a JSON object with a "findings" list')
     seen: set[str] = set()
@@ -740,7 +744,42 @@ def validate(verdict, conn, session_id: int, harness: str) -> list[dict]:
             "every category must be answered, including the negatives; missing: "
             + ", ".join(missing)
         )
-    return rows
+
+    # The optional escape hatch: a real finding that fits no category. It carries the same
+    # evidence discipline as a present=1 category — a verbatim quote the recorder can find
+    # in the session — but is stored separately and never counted in the category rates.
+    unclassified = verdict.get("unclassified")
+    if unclassified is not None:
+        if not isinstance(unclassified, dict):
+            raise Invalid(
+                '"unclassified" must be an object with confidence, evidence_ord and a quote'
+            )
+        where = "unclassified"
+        confidence = unclassified.get("confidence")
+        if confidence not in CONFIDENCES:
+            raise Invalid(f"{where}: confidence must be one of {'/'.join(CONFIDENCES)}")
+        ord_ = unclassified.get("evidence_ord")
+        if not isinstance(ord_, int) or isinstance(ord_, bool):
+            raise Invalid(f"{where}: needs an integer evidence_ord")
+        quote = unclassified.get("quote")
+        if not isinstance(quote, str) or not quote_needle(quote):
+            raise Invalid(f"{where}: needs a quote copied verbatim from the view")
+        if len(quote) > QUOTE_MAX:
+            raise Invalid(f"{where}: quote is {len(quote)} chars, the cap is {QUOTE_MAX}")
+        haystack = message_haystack(conn, session_id, ord_, harness)
+        if haystack is None:
+            raise Invalid(f"{where}: no message with ord {ord_} in this session")
+        if quote_needle(quote) not in normalize(haystack):
+            raise Invalid(
+                f"{where}: quote is not in message {ord_}; copy it verbatim from the view"
+            )
+        unclassified = {
+            "confidence": confidence,
+            "evidence_ord": ord_,
+            "quote": quote,
+            "note": unclassified.get("note") or "",
+        }
+    return rows, unclassified
 
 
 def cmd_record(args) -> int:
@@ -784,7 +823,7 @@ def cmd_record(args) -> int:
         print(f"verdict is not valid JSON: {exc}", file=sys.stderr)
         return 2
     try:
-        rows = validate(verdict, conn, session_id, harness)
+        rows, unclassified = validate(verdict, conn, session_id, harness)
     except Invalid as exc:
         print(f"invalid verdict: {exc}", file=sys.stderr)
         return 2
@@ -802,10 +841,19 @@ def cmd_record(args) -> int:
         [(run_id, harness, native_id, r["category"], r["present"], r["confidence"],
           r["evidence_ord"], r["quote"], r["note"], stamp) for r in rows],
     )
+    if unclassified:
+        fconn.execute(
+            "INSERT INTO review_flags (run_id, harness, native_id, category, present,"
+            " confidence, evidence_ord, quote, note, created_at)"
+            " VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
+            (run_id, harness, native_id, UNCLASSIFIED, unclassified["confidence"],
+             unclassified["evidence_ord"], unclassified["quote"], unclassified["note"], stamp),
+        )
     fconn.commit()
     present = sum(r["present"] for r in rows)
+    suffix = " + 1 unclassified" if unclassified else ""
     print(
-        f"recorded {len(rows)} findings ({present} present) for {harness}/{native_id} "
+        f"recorded {len(rows)} findings ({present} present){suffix} for {harness}/{native_id} "
         f"in run {run_id}"
     )
     return 0
@@ -879,7 +927,7 @@ def cmd_rollup(args) -> int:
         return 0
 
     reviewed = {(r[0], r[1]) for r in rows}
-    present_rows = [r for r in rows if r[3] == 1]
+    present_rows = [r for r in rows if r[3] == 1 and r[2] != UNCLASSIFIED]
 
     def bucket(row) -> str:
         harness, native_id, category, _present, ord_ = row
@@ -920,6 +968,11 @@ def cmd_rollup(args) -> int:
     ]
     print(f"\nsessions reviewed: {len(reviewed)}")
     print(render_table(["category", "sessions present", "rate"], rates))
+
+    unclassified_sessions = {(r[0], r[1]) for r in rows if r[2] == UNCLASSIFIED}
+    if unclassified_sessions:
+        print(f"\nunclassified: {len(unclassified_sessions)} session(s) flagged as fitting "
+              "no category — a cue for a new category, never a category rate")
     return 0
 
 
@@ -972,6 +1025,19 @@ def cmd_rubric(args) -> int:
         f"{QUOTE_MAX} characters copied verbatim from that message; present=0 requires both "
         "of them to be null."
     )
+    print(
+        "\noptional escape hatch: when a real problem fits no category, add an \"unclassified\""
+        " object with the same evidence discipline — it is recorded but never counted in the"
+        " category rates, and is a cue for the next category:"
+    )
+    print(json.dumps({
+        "unclassified": {
+            "confidence": "high",
+            "evidence_ord": 88,
+            "quote": "npm ERR! peer dep missing",
+            "note": "a failure mode none of the 13 categories names",
+        }
+    }, indent=2))
     return 0
 
 
