@@ -162,7 +162,7 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: get-shit-done
-  version: 0.1.2
+  version: 0.1.3
   kinds:
   - skills
   - dsh-plugin
@@ -186,19 +186,23 @@ modules:
       for hard reasoning) under an Opus/Fable orchestrator, run concurrent Sonnet research (web + context7),
       fan out through a checked dynamic workflow, and adversarially verify before done.
 - name: get-shit-done-claude
-  version: 0.1.2
+  version: 0.1.3
   kinds:
   - skills
   - dsh-plugin
   harness:
   - claude
-  description: 'The Claude Code face of get-shit-done: /get-shit-done-claude:run drives the checked Workflow
-    fan-out.'
+  - pi
+  - dsh
+  description: 'The driver for get-shit-done: the run skill fans out through the checked spine workflow
+    — the Workflow tool on Claude Code, run_workflow on pi and dsh.'
   skills:
   - name: run
     path: modules/get-shit-done-claude/skills/run/SKILL.md
     harness:
     - claude
+    - dsh
+    - pi
     tags: []
     command: true
     summary: Get a complex or fan-out task done — decompose it, delegate each subtask to the cheapest
