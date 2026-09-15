@@ -1,6 +1,6 @@
 {
   "name": "@allada-homelab/feature-dev",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "Guided seven-phase feature development: explore the codebase with parallel specialist agents, ask clarifying questions, compare architectures, implement, then review. A harness-neutral port of Anthropic's feature-dev plugin whose agents dispatch on Claude Code, pi and dsh.",
