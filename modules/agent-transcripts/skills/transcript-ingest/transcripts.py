@@ -426,7 +426,7 @@ def export_sources(
 
 # --------------------------------------------------------------- ingest: model
 
-PARSER_VERSION = 2
+PARSER_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -654,6 +654,7 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
         blocks = content if isinstance(content, list) else []
         calls: list[ToolCall] = []
         results: list[tuple[str, bool]] = []
+        result_texts: list[str] = []
         for b in blocks:
             if not isinstance(b, dict):
                 continue
@@ -667,8 +668,11 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
                 )
             elif b.get("type") == "tool_result":
                 results.append((b.get("tool_use_id") or "", bool(b.get("is_error"))))
+                # content is a plain string or text blocks; `<tool_use_error>…` is text too
+                result_texts.append(_blocks_text(b.get("content")))
         if session.cwd is None:
             session.cwd = rec.get("cwd")
+        is_result = rtype == "user" and bool(results)
         usage = msg.get("usage") or {}
         messages.append(
             Message(
@@ -676,9 +680,14 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
                 native_id=rec.get("uuid"),
                 parent_native_id=rec.get("parentUuid"),
                 on_main_path=False,
-                role="tool_result" if (rtype == "user" and results) else rtype,
+                role="tool_result" if is_result else rtype,
                 ts=rec.get("timestamp"),
-                text=_blocks_text(content),
+                text=(
+                    # sibling text blocks sit beside the tool_result; keep both
+                    "\n".join(t for t in (_blocks_text(content), *result_texts) if t)
+                    if is_result
+                    else _blocks_text(content)
+                ),
                 model=msg.get("model"),
                 stop_reason=msg.get("stop_reason"),
                 input_tokens=usage.get("input_tokens"),
@@ -800,6 +809,17 @@ _DSH_KEEP = re.compile(
 )
 
 
+def _dsh_arguments(value) -> str:
+    """dsh writes tool/call arguments as a JSON string; unwrap it once so the column
+    holds the argument object like the other harnesses do."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            pass  # not JSON after all: keep the string, stored as a JSON string
+    return json.dumps(value, sort_keys=True)
+
+
 def parse_dsh(path: Path, relpath: str) -> ParsedFile:
     """Header frame plus seq-ordered event rows; chunk and control rows are dropped."""
     # Only rows whose type we keep are JSON-parsed; chunk rows dominate the log and
@@ -843,7 +863,7 @@ def parse_dsh(path: Path, relpath: str) -> ParsedFile:
                 call = ToolCall(call_id=call_id, name="", arguments="")
                 last_assistant.tool_calls.append(call)
             call.name = data.get("name") or ""
-            call.arguments = json.dumps(data.get("arguments"), sort_keys=True)
+            call.arguments = _dsh_arguments(data.get("arguments"))
             continue
 
         msg = data if rtype == "user/message" else (data.get("message") or {})
@@ -863,8 +883,10 @@ def parse_dsh(path: Path, relpath: str) -> ParsedFile:
         elif rtype == "tool/result":
             texts = []
             for b in msg.get("content") or []:
-                if isinstance(b, dict) and b.get("type") == "toolResult":
-                    results.append((b.get("toolCallId") or "", bool(b.get("isError"))))
+                if isinstance(b, dict) and b.get("type") in ("tool-result", "toolResult"):
+                    # data.error is the row-level failure; seen only with isError so far
+                    is_error = bool(b.get("isError")) or bool(data.get("error"))
+                    results.append((b.get("toolCallId") or "", is_error))
                     texts.append(_blocks_text(b.get("content")))
             text = "\n".join(t for t in texts if t)
         source = msg.get("source") or {}

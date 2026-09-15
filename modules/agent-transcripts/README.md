@@ -1,18 +1,28 @@
 # agent-transcripts
 
 Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a
-derived sqlite database. Five portable skills: `transcript-export-claude`,
+derived sqlite database. Six portable skills: `transcript-export-claude`,
 `transcript-export-pi` and `transcript-export-dsh` each do a read-only, incremental export
 of one harness's raw session files (host directories plus dev-container docker volumes for
 claude and dsh) into a cache root outside any git worktree, `transcript-ingest` builds
-the derived sqlite index over everything exported, and `transcript-query` reads it to answer
-questions about tool use, sessions and activity across harnesses. The raw files are
+the derived sqlite index over everything exported, `transcript-query` reads it to answer
+questions about tool use, sessions and activity across harnesses, and `transcript-sweep`
+scans it for sessions worth a closer look. The raw files are
 canonical; the database is rebuildable and safe to delete. The three export skills call the
 one script that ships beside the ingest skill.
 
 Because the index holds the user's whole chat history, `transcript-query` is built around
 aggregates: its helper caps every cell and every result set, so answering a question does not
 empty transcript prose into the context asking it.
+
+## The sweep
+
+`transcript-sweep` is the deterministic first pass between indexing and analysis: one
+ordered scan of the index flags tool errors, error streaks, retries of a failed call,
+duplicate calls, shell one-liners a dedicated tool covers, and oversized results or
+sessions, then writes one JSONL record per session per flag kind. Only the script reads
+transcripts — the model reads a counts summary and reports where the JSONL landed — so a
+small local model can run it. Judging the flags is a later skill's job.
 
 ## Install
 
