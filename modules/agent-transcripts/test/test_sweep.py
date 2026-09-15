@@ -72,8 +72,9 @@ def index(tmp_path):
 
 
 def run(tmp_path, *extra):
+    """The JSONL path, with the findings store off: the store has its own tests below."""
     out = tmp_path / "sweep.jsonl"
-    code = sw.main(["--dest", str(tmp_path), "--out", str(out), *extra])
+    code = sw.main(["--dest", str(tmp_path), "--out", str(out), "--no-db", *extra])
     assert code == 0
     return [json.loads(line) for line in out.read_text().splitlines()]
 
@@ -297,3 +298,78 @@ def test_evidence_is_capped_at_three(index, tmp_path):
     assert rec["count"] == 5
     assert len(rec["evidence"]) == 3
     assert set(rec["evidence"][0]) == {"tool_call_id", "message_id", "name", "snippet"}
+
+
+def sweep_into_store(tmp_path, *extra):
+    assert sw.main(["--dest", str(tmp_path), *extra]) == 0
+    conn = sqlite3.connect(tmp_path / "findings.db")
+    try:
+        rows = conn.execute(
+            "SELECT harness, native_id, kind, count FROM sweep_flags ORDER BY native_id, kind"
+        ).fetchall()
+        runs = conn.execute("SELECT skill, model, args FROM runs ORDER BY id").fetchall()
+    finally:
+        conn.close()
+    return rows, runs
+
+
+def test_sweep_writes_findings_db_without_a_jsonl(index, tmp_path):
+    s = index.session("s1")
+    for i in range(3):
+        index.call(s, "Bash", '{"command": "x%d"}' % i, is_error=1, result="boom")
+    index.close()
+
+    rows, runs = sweep_into_store(tmp_path)
+    assert ("claude", "s1", "tool_error", 3) in rows
+    assert ("claude", "s1", "error_streak", 1) in rows
+    assert runs == [("transcript-sweep", None, json.dumps(["--dest", str(tmp_path)]))]
+    assert not (tmp_path / "sweeps").exists()  # no --out, no JSONL anywhere
+
+
+def test_a_crash_mid_sweep_leaves_the_stored_flags_alone(index, tmp_path, monkeypatch):
+    s = index.session("s1")
+    for i in range(3):
+        index.call(s, "Bash", '{"command": "x%d"}' % i, is_error=1, result="boom")
+    index.close()
+
+    rows, _ = sweep_into_store(tmp_path)
+    assert len(rows) == 2  # tool_error + error_streak
+
+    def killed(*_args, **_kwargs):
+        raise RuntimeError("killed mid-sweep")
+
+    monkeypatch.setattr(sw, "emit", killed)
+    with pytest.raises(RuntimeError):
+        sw.main(["--dest", str(tmp_path)])
+
+    conn = sqlite3.connect(tmp_path / "findings.db")
+    try:  # a crashed run may leave the store stale; it must never leave it empty
+        assert conn.execute("SELECT count(*) FROM sweep_flags").fetchone()[0] == 2
+    finally:
+        conn.close()
+
+
+def test_resweep_replaces_flags_and_clears_a_now_clean_session(index, tmp_path):
+    keeps = index.session("keeps")
+    clears = index.session("clears")
+    for s in (keeps, clears):
+        for i in range(3):
+            index.call(s, "Bash", '{"command": "%d-%d"}' % (s, i), is_error=1, result="boom")
+    index.close()
+
+    rows, _ = sweep_into_store(tmp_path)
+    assert {r[1] for r in rows} == {"keeps", "clears"}
+
+    fix = sqlite3.connect(tmp_path / "transcripts.db")  # the session stops failing
+    fix.execute(
+        "UPDATE tool_calls SET is_error = 0 WHERE message_id IN"
+        " (SELECT id FROM messages WHERE session_id = ?)",
+        (clears,),
+    )
+    fix.commit()
+    fix.close()
+
+    rows, runs = sweep_into_store(tmp_path)
+    assert {r[1] for r in rows} == {"keeps"}  # stale flags retired, not left behind
+    assert [r[2] for r in rows if r[1] == "keeps"] == ["error_streak", "tool_error"]
+    assert len(runs) == 2  # one run row per invocation
