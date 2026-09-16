@@ -41,8 +41,10 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    prints `next poll in Ns` to stderr before each wait, and tolerates transient
    `gh` failures (gives up after 10 in a row, exit 2). An empty check list is
    polled for up to `--no-checks-grace` seconds (default 300) before being
-   treated as green, so a check that lands late still counts. It returns one
-   verdict:
+   treated as green, so a check that lands late still counts, and a snapshot
+   whose head is not yet the commit you pushed is waited out the same way
+   (`PR head … is not the pushed … yet` on stderr is normal right after a
+   push). It returns one verdict:
    - `green` (exit 0): report the URL; the turn is done unless merge was authorized.
    - `merged` (exit 0): someone merged it; the tool already tore the worktree down.
    - `checks-failed` (10): the failed job's log is in the output. Fix it in the
@@ -58,7 +60,10 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
      still red — the user decides.
    `--merge` binds to the exact commit it last saw green
    (`--match-head-commit`); if the head moved since, it refuses (exit 2) rather
-   than merging a commit nobody watched — run watch again.
+   than merging a commit nobody watched — run watch again. A `green` reached
+   only because a grace window expired (no checks ever reported, or the PR
+   head never caught up with the push) still exits 0 but `--merge` refuses
+   and says so on stdout: merge by hand once you have evidence.
 6. **Merge only when told.** `pr-flow watch --merge` is allowed only when the
    user said, ahead of time and for this task, that the PR may be merged when
    green. Silence means no. A green PR without that permission ends the turn

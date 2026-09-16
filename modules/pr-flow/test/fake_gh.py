@@ -62,8 +62,9 @@ elif argv[:2] == ["pr", "merge"]:
             print("head has been modified since --match-head-commit was set", file=sys.stderr)
             sys.exit(1)
     if views:
-        views[-1]["state"] = "MERGED"
-        replay["pr_view"] = [views[-1]]
+        merged = dict(views[-1], state="MERGED")
+        # merge_lag: how many post-merge `pr view` reads still say OPEN (GitHub read-after-write lag).
+        replay["pr_view"] = [dict(views[-1], state="OPEN")] * int(replay.get("merge_lag", 0)) + [merged]
         save()
 elif argv[:2] == ["pr", "list"]:
     head = argv[argv.index("--head") + 1]
