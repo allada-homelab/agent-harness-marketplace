@@ -146,6 +146,29 @@ modules:
     command: false
     summary: Export Claude Code transcript JSONL out of the host and dev-container docker volumes to an
       on-device cache for later analysis.
+- name: code-review
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  - pi
+  - dsh
+  description: 'Automated pull-request review on every harness: parallel reviewers from five lenses, confidence
+    scoring that drops anything under 80, one comment posted with gh.'
+  skills:
+  - name: code-review
+    path: modules/code-review/skills/code-review/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - github
+    - review
+    command: true
+    summary: Review a GitHub pull request and post one comment with only the high-confidence issues.
 - name: dual-agent-pr-review
   version: 0.1.4
   kinds:
