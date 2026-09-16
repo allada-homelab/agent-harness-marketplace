@@ -243,3 +243,14 @@ def test_attempts_exhausted_message_counts_rounds_correctly(repo):
     r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("FAILURE")])]})
     assert r.returncode == 15
     assert "5 fix rounds" in r.stdout and "sixth" in r.stdout
+
+
+def test_skipped_and_neutral_checks_count_as_passed(repo):
+    # GitHub's own rollup calls "1 skipped, 2 successful" all-passed; a skipped job must not
+    # hold watch open or read as a failure (this repo's `tag` job skips on every PR).
+    _, wt = opened(repo)
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS"), check("SKIPPED"), check("NEUTRAL")])]})
+    assert r.returncode == 0, r.stderr
+    assert last(r) == "pr-flow: watch green https://github.com/o/r/pull/7"
+    calls = [json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()]
+    assert sum(1 for c in calls if c[:2] == ["pr", "view"]) == 1
