@@ -5,6 +5,9 @@ Sources verified this session: dsh 0.1.5-rc.2 and pi 0.84.1 as installed, the of
 `feature-dev` plugin (cache `022b3c274938`), this repo's gate, and the maintainer's harness
 layer (private).
 
+> **Historical record — do not update.** The `get-shit-done` module referenced below was
+> removed from the repo on 2026-09-16.
+
 > **Update note.** The verified seam facts below describe dsh's **one-shot programmatic** seam
 > (`ctx.subagents.start()` with per-call `persona`/`toolFilter`/`agentOptions`/`maxDepth`). dsh
 > `0.1.5-rc.2` also ships the **continuable** path (`startContinuable()`, durable child + inbox),

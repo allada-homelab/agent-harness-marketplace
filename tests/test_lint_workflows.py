@@ -35,13 +35,6 @@ def lint(tmp_path, source, filename="ship-it.workflow.js"):
                           capture_output=True, text=True)
 
 
-def test_the_shipped_workflow_passes():
-    p = subprocess.run([sys.executable, str(LINT), str(ROOT / "modules" / "get-shit-done-claude")],
-                       capture_output=True, text=True)
-    assert p.returncode == 0, p.stdout + p.stderr
-    assert "FAIL" not in p.stdout
-
-
 def test_literal_meta_passes(tmp_path):
     p = lint(tmp_path, GOOD)
     assert p.returncode == 0, p.stdout + p.stderr

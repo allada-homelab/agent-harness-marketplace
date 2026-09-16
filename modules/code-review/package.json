@@ -1,0 +1,10 @@
+{
+  "name": "@allada-homelab/code-review",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Automated pull-request review on every harness: parallel reviewers from five lenses, confidence scoring that drops anything under 80, one comment posted with gh.",
+  "license": "MIT",
+  "pi": { "skills": ["skills/*"] },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

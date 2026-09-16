@@ -3,7 +3,7 @@
 dsh installs per module through pnpm's `path:` fragment:
 
 ```
-dsh plugin --profile <profile> add "github:allada-homelab/agent-harness-marketplace#v0.1.0&path:/modules/research"
+dsh plugin --profile <profile> add "github:allada-homelab/agent-harness-marketplace#v0.1.0&path:/modules/plan-for-dummies"
 ```
 
 dsh's skill provider only reads fixed roots, so an installed package's
@@ -25,54 +25,31 @@ freezes tool arguments before its pre-execute waterfall; see
 Warnings from both foundation plugins go to `process.stderr` (dsh's
 `ctx.logger` does not reach journald).
 
-## Verified 2026-09-06 (dsh 0.1.1-rc.2, throwaway `DSH_HOME`, local-path installs)
+## Verified 2026-09-16 (dsh 0.1.5-rc.2, throwaway `DSH_HOME`, local-path install)
 
-> **Staleness note.** This verification was captured against dsh `0.1.1-rc.2`. The harness in use
-> has since advanced to `0.1.5-rc.2` — the module install/bridge mechanics described below still
-> hold, but dsh's **delegation/subagent capabilities have grown substantially** since this was
-> written (continuable children, a `fork` backend, background subagent jobs, per-child model
-> selection). See `docs/dsh-plugin-capabilities.md` for the current picture; re-verify the
-> install/smoke claims here before relying on them.
-
-Captured before the 2026-09-07 move: `dsh-module-skills` and `hook-runner-dsh`
-were sibling modules of this repo at the time, installed with the same `dsh
-plugin add` command shown below. On the current layout they are installed
-once, by dotfiles, as `@davidallada/dsh-module-skills` and
-`@davidallada/dsh-hook-runner`, not added per profile from this repo.
+This is `tests/smoke/dsh.sh`. The skills bridge and hook runner are harness-side
+foundation installed by dotfiles, not from this repo, so what is proved here is
+that a content module installs as a profile layer without injecting a loader row
+of its own.
 
 ```
-$ dsh plugin --profile e2e add "file:…/modules/dsh-module-skills"
-Done in 615ms using pnpm v11.22.0
-$ dsh plugin --profile e2e add "file:…/modules/hook-runner-dsh"
-$ dsh plugin --profile e2e add "file:…/modules/research"
-$ dsh --profile e2e --dump-config
-# == @allada-homelab/dsh-module-skills
-- id: module-skills
-  name: '@allada-homelab/dsh-module-skills'
-  config:
-    dirs: []
-# == @allada-homelab/hook-runner-dsh
-- id: hook-runner-dsh
-  name: '@allada-homelab/hook-runner-dsh'
-  config:
-    manifests: []
-# == @allada-homelab/research
-- id: module-skills-research
-  name: '@allada-homelab/dsh-module-skills'
-  config:
-    providerName: module-skills-research
-    bundles:
-      - '@allada-homelab/research'
-    dirs: []
+$ dsh plugin --profile e2e add "file:…/modules/plan-for-dummies"
+Done in 481ms using pnpm v11.22.0
+$ dsh --profile e2e --dump-config | grep allada-homelab
+(none)
+$ ls "$DSH_HOME/profiles/e2e/node_modules/@allada-homelab/"
+plan-for-dummies
+  ok   an empty cordis.patch.yml inserts no loader row for plan-for-dummies
+  ok   plan-for-dummies is installed as a bundle dependency
+  ok   @allada-homelab/plan-for-dummies: content module (no plugin to apply)
 ```
 
-Booting the installed bridge against that profile with a stub `ctx` listed the
-skill from the installed package with its own directory as resource base:
+The empty `cordis.patch.yml` is the point: the module arrives as a profile
+dependency the bridge auto-discovers, and `--dump-config` stays free of any
+`module-skills-*` row. Before the `dsh.bundle` key was added to content modules,
+the same `add` printed `declares no dsh.bundle — installed as a plain
+dependency, not a profile layer`; `bin/check.sh` now requires the key.
 
-```
-PROVIDER module-skills-research [{"name":"research","rb":{"kind":"directory","path":"…/profiles/e2e/node_modules/@allada-homelab/research/skills/research"}}]
-```
-
-Before the `dsh.bundle` key was added to content modules, the same `add`
-printed `declares no dsh.bundle — installed as a plain dependency, not a
-profile layer` and no row appeared; `bin/check.sh` now requires the key.
+dsh's delegation/subagent capabilities have grown a lot across the rc series
+(continuable children, a `fork` backend, background subagent jobs, per-child
+model selection) — see `docs/dsh-plugin-capabilities.md` for that picture.

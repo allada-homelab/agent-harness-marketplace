@@ -118,34 +118,29 @@ modules:
     - web
     command: true
     summary: Drive a browser from any harness.
-- name: claude-transcripts
-  version: 0.1.2
+- name: code-review
+  version: 0.1.0
   kinds:
   - skills
   - dsh-plugin
   harness:
   - claude
-  description: Export Claude Code transcripts out of dev containers and analyze hook fire rates, CLAUDE.md
-    adherence and tool-use patterns.
+  - pi
+  - dsh
+  description: 'Automated pull-request review on every harness: parallel reviewers from five lenses, confidence
+    scoring that drops anything under 80, one comment posted with gh.'
   skills:
-  - name: claude-transcript-analyze
-    path: modules/claude-transcripts/skills/claude-transcript-analyze/SKILL.md
+  - name: code-review
+    path: modules/code-review/skills/code-review/SKILL.md
     harness:
     - claude
+    - dsh
+    - pi
     tags:
-    - observability
-    command: false
-    summary: Analyze exported Claude Code transcripts for hook fire rates, CLAUDE.md adherence, and tool-use
-      patterns — without ever loading raw transcript prose into context.
-  - name: claude-transcript-export
-    path: modules/claude-transcripts/skills/claude-transcript-export/SKILL.md
-    harness:
-    - claude
-    tags:
-    - observability
-    command: false
-    summary: Export Claude Code transcript JSONL out of the host and dev-container docker volumes to an
-      on-device cache for later analysis.
+    - github
+    - review
+    command: true
+    summary: Review a GitHub pull request and post one comment with only the high-confidence issues.
 - name: dual-agent-pr-review
   version: 0.1.4
   kinds:
@@ -186,76 +181,6 @@ modules:
     tags: []
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
-- name: get-shit-done
-  version: 0.1.3
-  kinds:
-  - skills
-  - dsh-plugin
-  harness:
-  - claude
-  - pi
-  - dsh
-  description: Method for getting a complex or fan-out task done by decomposing it and delegating each
-    subtask to the cheapest capable model.
-  skills:
-  - name: get-shit-done
-    path: modules/get-shit-done/skills/get-shit-done/SKILL.md
-    harness:
-    - claude
-    - dsh
-    - pi
-    tags: []
-    command: false
-    summary: Method for getting a complex or fan-out software task done by orchestrating subagents — decompose
-      the task, delegate each subtask to the cheapest capable model (Sonnet for well-scoped work, Opus
-      for hard reasoning) under an Opus/Fable orchestrator, run concurrent Sonnet research (web + context7),
-      fan out through a checked dynamic workflow, and adversarially verify before done.
-- name: get-shit-done-claude
-  version: 0.1.4
-  kinds:
-  - skills
-  - dsh-plugin
-  harness:
-  - claude
-  - pi
-  - dsh
-  description: 'The driver for get-shit-done: the run skill fans out through the checked spine workflow
-    — the Workflow tool on Claude Code, run_workflow on pi and dsh.'
-  skills:
-  - name: run
-    path: modules/get-shit-done-claude/skills/run/SKILL.md
-    harness:
-    - claude
-    - dsh
-    - pi
-    tags: []
-    command: true
-    summary: Get a complex or fan-out task done — decompose it, delegate each subtask to the cheapest
-      capable model under an Opus/Fable orchestrator, research concurrently, fan out through a checked
-      dynamic workflow, and adversarially verify (Opus) before reporting done.
-- name: minimalist-code-review
-  version: 0.1.2
-  kinds:
-  - skills
-  - dsh-plugin
-  harness:
-  - claude
-  - pi
-  - dsh
-  description: A pragmatic, anti-over-engineering pull-request reviewer with a warm, Socratic voice.
-  skills:
-  - name: pragmatic-code-review
-    path: modules/minimalist-code-review/skills/pragmatic-code-review/SKILL.md
-    harness:
-    - claude
-    - dsh
-    - pi
-    tags: []
-    command: false
-    summary: Review a GitHub pull request, diff, or code change in a pragmatic, anti-over-engineering
-      style — a Socratic reviewer who pushes hard on whether code needs to exist, prefers determinism
-      and reuse over speculative flexibility, watches runtime/query cost, marks nits explicitly, and keeps
-      a warm, concise tone.
 - name: plan-for-dummies
   version: 0.3.1
   kinds:
@@ -302,25 +227,3 @@ modules:
     - workflow
     command: true
     summary: Use whenever a task will change files in a git repository.
-- name: research
-  version: 0.1.2
-  kinds:
-  - skills
-  - dsh-plugin
-  harness:
-  - claude
-  - pi
-  - dsh
-  description: Run the research-before-acting ladder as an explicit step and return a scope with a recommendation.
-  skills:
-  - name: research
-    path: modules/research/skills/research/SKILL.md
-    harness:
-    - claude
-    - dsh
-    - pi
-    tags:
-    - doctrine
-    command: true
-    summary: Run the research-before-acting ladder as an explicit step — scale depth to blast radius,
-      fan out parallel read-only agents, and return a scope with a recommendation.
