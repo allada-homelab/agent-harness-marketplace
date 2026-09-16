@@ -193,6 +193,74 @@ not tag by hand for a normal release — only to move the minor or major, which 
 job never does on its own. This is separate from the module version you bumped in
 step 2; both exist, and neither derives from the other.
 
+## Porting a Claude Code plugin
+
+Most modules here are ports of a plugin from `anthropics/claude-plugins-official`
+(or another Claude-only marketplace). `modules/code-review` (PR #34) and
+`modules/code-simplifier` (PR #39) are the reference ports; open one beside the
+upstream plugin before starting. The port is the same module procedure above
+plus a fixed set of translations — and the upstream shape is never copied as-is.
+
+### Fetch the upstream
+
+```
+D=$(mktemp -d) && git clone -q --depth 1 --filter=blob:none --sparse \
+  https://github.com/anthropics/claude-plugins-official "$D" \
+  && git -C "$D" sparse-checkout set plugins/<name>
+```
+
+Read every file: `.claude-plugin/plugin.json`, `commands/`, `agents/`,
+`skills/`, `hooks/`, `LICENSE`. The plugin's own README often describes
+behavior the files do not implement; the files are the source of truth.
+
+### Translation table
+
+| Upstream has | Do this | Why |
+|---|---|---|
+| `commands/<x>.md` | `skills/<x>/SKILL.md` with `user-invocable: true` + `argument-hint`; body verbatim, then adapted | commands are skills here; dsh and pi have no `commands/` |
+| `agents/<x>.md` with `model: opus\|sonnet\|haiku` | drop the `model` key | the module is **model-agnostic**: every child inherits the session model on all three harnesses (standing decision, PR #34) |
+| "use a Haiku/Sonnet agent for step N" in a command body | one `agents/<role>.md` per role, no `model` key; the skill names the type `<module>:<role>` | tiers pinned in prose are invisible to pi/dsh; agent files are dispatchable everywhere |
+| `allowed-tools:` on a command or agent-less skill | delete it; write the discipline as prose ("read-only: use `gh` to read, never edit") | dsh drops the key silently — a restriction that vanishes is worse than none |
+| `tools:` on an agent | keep, in Claude spellings; add a `tools:` list if upstream has none and the agent's capability is obvious | the bridges translate; see "Agent tools" above |
+| hardcoded house style ("ES modules, `function` over arrows, React Props types") | replace with "read the project's `CLAUDE.md` / `AGENTS.md` and match the surrounding code" | that list is Anthropic's own repo convention, not the user's |
+| "CLAUDE.md" as the only guideline file | `CLAUDE.md` **and** `AGENTS.md` | dsh and pi projects use `AGENTS.md` |
+| "operates proactively after every edit" / auto-trigger prose | drop it; ship a user-invocable skill as the entrypoint and say so in the README | proactive agent triggering is Claude-only; pi and dsh need an invocation |
+| an agent-only plugin (no command) | still ship one thin skill that dispatches the agent | pi's `delegate_agent` is inactive until a module skill is invoked; a module with only `agents/` has no way in |
+| `$ARGUMENTS` in a command | keep, but write the sentence to read with the token unexpanded ("Scope: $ARGUMENTS — when none is given, …") and define the default | dsh expands only through the bridge |
+| "Claude Code" / "Claude" in user-facing output (comment footers, reports) | neutral wording | the same text ships from three harnesses |
+| `hooks/hooks.json` | keep Claude's shape; check `hook-contract/README.md` for the two fidelity gaps | runs through the hook runners |
+| `${CLAUDE_PLUGIN_ROOT}`, absolute paths, bang-backtick shell injection | only allowed under `harness: [claude]` — otherwise rewrite skill-relative | portability lint |
+| `mcp.json` / `.mcp.json` | keep `mcp.json` only; `.mcp.json` is regenerated | see "MCP servers" in `docs/authoring.md` |
+| upstream `LICENSE` (Apache-2.0 for the official plugins) | keep the module at MIT like its siblings, but the README's **Provenance** section names the upstream, its license, and each change | attribution notice; also the audit trail for the next porter |
+
+### What every port's README carries
+
+Copy the shape of `modules/code-review/README.md`: what a run does as a
+numbered list, per-harness install lines, and a **Provenance** section that
+lists every deviation from upstream and closes with what is *unchanged* (the
+rubric, thresholds, principles). The unchanged list is what a future re-sync
+against upstream diffs against.
+
+### Skill wrapper phrasing
+
+When the skill dispatches agents, use the per-harness block from
+`modules/code-review/skills/code-review/SKILL.md` verbatim (Agent tool on
+Claude Code, `delegate_agent` on pi/dsh with the `/agents` hint, sequential
+inline fallback pointing at `./../../agents/`), and remind the model that a
+child sees none of the conversation so every input must be passed explicitly.
+
+### Port-specific traps
+
+- **Name collisions with built-ins.** Claude Code ships `/simplify`,
+  `/code-review`, `/security-review`, `/init`; a skill with the same name is
+  ambiguous. Name the skill after the module (`code-simplifier`), not the verb.
+- **`pnpm-lock.yaml` changes on the first `bin/check.sh`** because the new
+  module is a workspace project. Commit it — CI installs with a frozen lockfile.
+- **The version is 0.1.0, not upstream's.** Module versions are ours; the
+  upstream version goes in the Provenance section if it matters.
+- **Do not port the README's promises.** If upstream's README claims a step
+  the files never perform, the port performs what the files do.
+
 ## Traps
 
 These pass a casual reading and fail the gate:
