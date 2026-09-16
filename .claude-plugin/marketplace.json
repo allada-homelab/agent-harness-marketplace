@@ -23,7 +23,7 @@
     },
     {
       "name": "get-shit-done-claude",
-      "description": "The driver for get-shit-done: the run skill fans out through the checked spine workflow \u2014 the Workflow tool on Claude Code, run_workflow on pi and dsh.",
+      "description": "The driver for get-shit-done: the run skill fans out through the checked spine workflow — the Workflow tool on Claude Code, run_workflow on pi and dsh.",
       "category": "development",
       "version": "0.1.4",
       "source": "./modules/get-shit-done-claude"
@@ -83,6 +83,13 @@
       "category": "development",
       "version": "0.1.2",
       "source": "./modules/feature-dev"
+    },
+    {
+      "name": "code-review",
+      "description": "Automated pull-request review on every harness: parallel reviewers from five lenses, confidence scoring that drops anything under 80, one comment posted with gh.",
+      "category": "development",
+      "version": "0.1.0",
+      "source": "./modules/code-review"
     }
   ]
 }

@@ -18,6 +18,8 @@ importers:
 
   modules/claude-transcripts: {}
 
+  modules/code-review: {}
+
   modules/dual-agent-pr-review: {}
 
   modules/feature-dev: {}
