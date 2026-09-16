@@ -71,8 +71,9 @@ is live on the fleet only after the paired dotfiles change. Six cases need one:
    pin until the `ref` column is bumped and re-rendered.
 3. **A port of an official Claude plugin** → disable `<name>@claude-plugins-official`
    in the fleet's `claude/settings.json`, or Claude registers the skill twice.
-4. **Removed module** → drop its row, or the next render points at a directory
-   the tag no longer has.
+4. **Removed module** → turn its row `off off off`; never delete it. The row is
+   what keeps pi's `!modules/<m>/**` exclude across a failed ref move (the old
+   clone stays loadable) and gives the renderer a key to retract.
 5. **A contract change** (`agent-contract/`, `hook-contract/`,
    `workflow-contract/`, the `mcp.json` rules) → the executable corpus and the
    bridges live in dotfiles `agents/*-contract/`; land there first, then here.

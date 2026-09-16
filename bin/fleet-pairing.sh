@@ -19,12 +19,15 @@ repo_re='allada-homelab/agent-harness-marketplace'
 warn=0
 w() { echo "  WARN $*"; warn=1; }
 
-# rows for this repo: ref<TAB>module<TAB>claude
-rows=$(grep -v '^[[:space:]]*#' "$tsv" | grep -E "^[^	]*$repo_re" | awk -F'\t' '{print $2"\t"$3"\t"$4}' || true)
-declare -A fleet_ref fleet_claude
-while IFS=$'\t' read -r ref mod claude; do
+# rows for this repo: ref<TAB>module<TAB>claude<TAB>pi<TAB>dsh
+rows=$(grep -v '^[[:space:]]*#' "$tsv" | grep -E "^[^	]*$repo_re" | awk -F'\t' '{print $2"\t"$3"\t"$4"\t"$5"\t"$6}' || true)
+declare -A fleet_ref fleet_live
+while IFS=$'\t' read -r ref mod claude pi dsh; do
     [ -n "${mod:-}" ] || continue
-    fleet_ref["$mod"]="$ref"; fleet_claude["$mod"]="$claude"
+    fleet_ref["$mod"]="$ref"
+    # off on every harness is a tombstone: the row exists so pi keeps its
+    # exclude and the renderer has something to retract.
+    if [ "$claude" = on ] || [ "$pi" = on ] || [ "$dsh" = on ]; then fleet_live["$mod"]=1; fi
 done <<< "$rows"
 
 latest=$(git tag --list 'v*' --sort=-v:refname | head -1)
@@ -39,7 +42,8 @@ for mod in $(ls -d modules/*/ | xargs -n1 basename); do
     fi
 done
 for mod in "${!fleet_ref[@]}"; do
-    [ -d "modules/$mod" ] || w "fleet row for $mod points at a module this checkout no longer has (case 4)"
+    [ -d "modules/$mod" ] && continue
+    [ -n "${fleet_live[$mod]:-}" ] && w "fleet row for $mod is still on somewhere but this checkout has no such module — turn it off off off (case 4)"
 done
 
 [ "$warn" = 0 ] && echo "  ok (fleet declaration matches this checkout)"
