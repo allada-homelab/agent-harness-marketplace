@@ -2,7 +2,6 @@
 name: scorer
 description: Confidence scorer for the code-review skill. Given a pull request, one candidate issue and the project's guideline files, it independently checks the issue and returns a single 0-100 confidence score with a one-line justification. Read-only.
 tools: Bash, Read, Grep, Glob
-model: haiku
 color: yellow
 ---
 

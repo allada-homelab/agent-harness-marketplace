@@ -2,7 +2,6 @@
 name: reviewer
 description: One lens of the code-review skill's parallel pull-request review. Given a pull request and one lens (guideline compliance, shallow bug scan, git history, prior pull-request comments, or in-code comment guidance) it reads only what that lens needs and returns a list of candidate issues, each with the reason it was flagged. Read-only; it never posts or edits.
 tools: Bash, Read, Grep, Glob
-model: sonnet
 color: red
 ---
 

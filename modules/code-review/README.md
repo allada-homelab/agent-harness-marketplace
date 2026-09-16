@@ -8,13 +8,13 @@ subagents it dispatches — `code-review:triage`, `code-review:reviewer`,
 
 What a run does:
 
-1. a small-model triage agent checks the pull request is worth reviewing
+1. a triage agent checks the pull request is worth reviewing
    (open, not a draft, not automated, not already reviewed), lists the
    project's guideline files (`CLAUDE.md`, `AGENTS.md`) and summarizes the change;
-2. five mid-model reviewers run in parallel, one lens each — guideline
+2. five reviewers run in parallel, one lens each — guideline
    compliance, shallow bug scan, git history, prior pull-request comments,
    in-code comment guidance;
-3. a small-model scorer rates every candidate 0-100 against a fixed rubric and
+3. a scorer rates every candidate 0-100 against a fixed rubric and
    anything under 80 is dropped;
 4. eligibility is re-checked, then one comment is posted with `gh pr comment`,
    every issue linked by full commit SHA. Nothing survives, nothing is posted.
@@ -38,8 +38,8 @@ A port of the `code-review` plugin from
 
 - the `allowed-tools` restriction became prose (dsh drops the key silently);
 - the inline "use a Haiku / Sonnet agent" instructions became three
-  `agents/*.md` files with `model` aliases, so the tier economics resolve
-  through the agent bridge on pi and dsh instead of being Claude-only;
+  `agents/*.md` files with no `model` key: the module is model-agnostic and
+  every child inherits the session's model on all three harnesses;
 - guideline discovery covers `AGENTS.md` as well as `CLAUDE.md`;
 - the review target is `$ARGUMENTS` (a number or URL) with the current
   branch's pull request as the default;

@@ -2,7 +2,6 @@
 name: triage
 description: Cheap read-only helper for the code-review skill. Given a pull request and one of three duties — eligibility check, guideline-file discovery, or change summary — it answers with a short structured result and nothing else. Not a reviewer; it never judges code quality.
 tools: Bash, Read, Grep, Glob
-model: haiku
 color: blue
 ---
 

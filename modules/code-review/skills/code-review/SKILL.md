@@ -22,11 +22,11 @@ this review — and never use web fetching where `gh` will do.
 Three agents ship beside this skill; name them by type and dispatch them with
 whatever this harness has:
 
-| Type | Model tier | Job |
-|---|---|---|
-| `code-review:triage` | small | eligibility check · guideline-file discovery · change summary |
-| `code-review:reviewer` | mid | one review lens per dispatch |
-| `code-review:scorer` | small | one confidence score per candidate issue |
+| Type | Job |
+|---|---|
+| `code-review:triage` | eligibility check · guideline-file discovery · change summary |
+| `code-review:reviewer` | one review lens per dispatch |
+| `code-review:scorer` | one confidence score per candidate issue |
 
 - **Claude Code**: the Agent tool with `subagent_type` set to the type above.
 - **pi and dsh**: the `delegate_agent` tool with `agent_type` set to the type
