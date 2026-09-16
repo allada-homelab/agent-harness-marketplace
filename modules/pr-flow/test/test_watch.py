@@ -185,3 +185,44 @@ def test_backoff_grows_caps_and_resets_on_head_change(repo):
     assert r.returncode == 0, r.stderr
     waits = [line.split("next poll in ")[1].rstrip("s") for line in r.stderr.splitlines() if "next poll in" in line]
     assert waits == ["4", "6", "9", "4"]
+
+
+def test_stale_pr_head_after_push_keeps_polling(repo):
+    # Right after `git push`, GitHub's PR object can still report the PREVIOUS head with its
+    # already-green checks. watch must wait until headRefOid catches up with what was pushed.
+    root, wt = opened(repo)
+    (wt / "f").write_text("x\n")
+    git("add", "f", cwd=wt)
+    git("commit", "-q", "-m", "c", cwd=wt)
+    git("push", "-q", "-u", "origin", "feat/w", cwd=wt)
+    pushed = git("rev-parse", "HEAD", cwd=wt)
+    r = run("watch", "--interval", "0", cwd=wt,
+            replay={"pr_view": [pr(checks=[check("SUCCESS")], head="stale"), pr(checks=[check("SUCCESS")], head=pushed)]})
+    assert r.returncode == 0, r.stderr
+    assert "stale" in r.stderr and pushed[:7] in r.stderr
+    calls = [json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()]
+    assert sum(1 for c in calls if c[:2] == ["pr", "view"]) == 2
+
+
+def test_stale_pr_head_but_merged_or_closed_is_still_terminal(repo):
+    root, wt = opened(repo)
+    (wt / "f").write_text("x\n")
+    git("add", "f", cwd=wt)
+    git("commit", "-q", "-m", "c", cwd=wt)
+    git("push", "-q", "-u", "origin", "feat/w", cwd=wt)
+    assert run("watch", cwd=wt, replay={"pr_view": [pr(state="CLOSED", head="stale")]}).returncode == 13
+
+
+def test_stale_pr_head_past_grace_is_classified_but_merge_refuses(repo):
+    root, wt = opened(repo)
+    (wt / "f").write_text("x\n")
+    git("add", "f", cwd=wt)
+    git("commit", "-q", "-m", "c", cwd=wt)
+    git("push", "-q", "-u", "origin", "feat/w", cwd=wt)
+    r = run("watch", "--merge", "--no-checks-grace", "0", cwd=wt,
+            replay={"pr_view": [pr(checks=[check("SUCCESS")], head="stale")]})
+    assert r.returncode == 0, r.stderr
+    assert "classifying it anyway" in r.stderr
+    assert "refusing --merge" in r.stdout
+    calls = [json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()]
+    assert not any(c[:2] == ["pr", "merge"] for c in calls)

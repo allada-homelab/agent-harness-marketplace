@@ -304,6 +304,22 @@ def poll(cwd):
     return json.loads(gh("pr", "view", "--json", FIELDS, cwd=cwd))
 
 
+def pushed_head(cwd, branch):
+    """The commit origin actually has for `branch`, or None when it cannot be known.
+
+    Fetched fresh each poll: the git protocol is consistent the moment a push returns, but
+    GitHub's PR object is not — right after a push `gh pr view` can still report the previous
+    headRefOid with its already-green checks. Comparing against this is what stops watch from
+    calling a commit green before its CI has even been registered.
+    """
+    try:
+        git("fetch", "-q", "origin", branch, cwd=cwd, timeout=120)
+        return git("rev-parse", f"refs/remotes/origin/{branch}", cwd=cwd)
+    except (Fail, subprocess.TimeoutExpired) as e:
+        warn(f"could not read origin/{branch} ({e}); not checking the PR head against it")
+        return None
+
+
 def check_outcome(c):
     return (c.get("conclusion") or c.get("state") or "").upper()
 
@@ -399,9 +415,15 @@ def do_merge(ctx, cwd, pr):
         gh("pr", "merge", str(pr["number"]), "--merge", "--match-head-commit", pr["headRefOid"], cwd=cwd)
     except Fail as e:
         raise Fail(f"merge refused ({e}); if the head moved, run watch again")
-    after = poll(cwd)
-    if after.get("state") != "MERGED":
-        raise Fail(f"merge requested but PR state is {after.get('state')}; not tearing down")
+    # gh reported the merge done, but the PR object can lag the write for a few seconds — the
+    # same read-after-write gap watch guards against on headRefOid. Give it a few reads.
+    for _ in range(5):
+        after = poll(cwd)
+        if after.get("state") == "MERGED":
+            break
+        time.sleep(2 * SLEEP_SCALE)
+    else:
+        raise Fail(f"merge requested but PR state is still {after.get('state')} after 5 reads; not tearing down")
     print(f"merged {pr.get('url', '')}")
     return "merged"
 
@@ -443,6 +465,7 @@ def cmd_watch(a):
     threads = {"n": 0}
     consecutive_fails = 0
     no_checks_since = None
+    stale_since = None
     grace_expired = False
     while True:
         try:
@@ -458,6 +481,24 @@ def cmd_watch(a):
             if pr.get("headRefOid") != last_head:
                 interval, last_head = a.interval, pr.get("headRefOid")
                 no_checks_since = None
+            expected = pushed_head(cwd, ctx.branch) if pr.get("state") not in ("MERGED", "CLOSED") else None
+            stale = bool(expected) and pr.get("headRefOid") != expected
+            if stale:
+                # Same grace window as an empty rollup: a head that never catches up (a PR whose
+                # head branch is not this one) must not stall for the whole timeout, but a verdict
+                # on it is unverified, so --merge refuses below exactly as after an empty rollup.
+                now = time.time()
+                stale_since = stale_since or now
+                if now - stale_since >= a.no_checks_grace:
+                    warn(f"PR head {str(pr.get('headRefOid'))[:7]} still not the pushed {expected[:7]} after "
+                         f"{now - stale_since:.0f}s; classifying it anyway (--merge will refuse)")
+                    grace_expired = True
+                    stale = False
+                else:
+                    warn(f"PR head {str(pr.get('headRefOid'))[:7]} is not the pushed {expected[:7]} yet; waiting for GitHub")
+                    no_checks_since = None
+            else:
+                stale_since = None
 
             def unresolved():
                 try:
@@ -468,7 +509,7 @@ def cmd_watch(a):
                 return threads["n"]
 
             try:
-                verdict = classify(pr, unresolved)
+                verdict = None if stale else classify(pr, unresolved)
             except _Retry:
                 verdict = None
 
@@ -521,7 +562,8 @@ def cmd_watch(a):
         save_state(ctx, ctx.branch, st)
     if verdict == "green" and a.merge:
         if grace_expired:
-            print("no checks reported for this head; refusing --merge — merge by hand once you have evidence")
+            print("this head's checks are unverified (none reported, or the PR head lagged the push); "
+                  "refusing --merge — merge by hand once you have evidence")
         else:
             verdict = do_merge(ctx, cwd, pr)
     if verdict == "merged" and not ctx.is_main:

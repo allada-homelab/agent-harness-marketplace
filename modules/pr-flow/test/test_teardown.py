@@ -107,7 +107,8 @@ def test_watch_merge_merges_then_tears_down(repo):
     git("fetch", "-q", "origin", cwd=root)
     git("merge", "-q", "--no-ff", "-m", "merge", "origin/feat/m", cwd=root)
     git("push", "-q", "origin", "main", cwd=root)
-    r = run("watch", "--merge", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")])]})
+    head = git("rev-parse", "HEAD", cwd=wt)
+    r = run("watch", "--merge", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head)]})
     assert r.returncode == 0, r.stderr
     assert last(r).startswith("pr-flow: watch merged")
     assert not wt.exists()
@@ -121,15 +122,16 @@ def test_watch_merge_refuses_when_head_moved(repo):
     git("add", "h.txt", cwd=wt)
     git("commit", "-q", "-m", "h", cwd=wt)
     git("push", "-q", "-u", "origin", "feat/h", cwd=wt)
+    head = git("rev-parse", "HEAD", cwd=wt)
     r = run("watch", "--merge", cwd=wt,
-            replay={"pr_view": [pr(checks=[check("SUCCESS")], head="h1"), pr(checks=[check("SUCCESS")], head="h2")]})
+            replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head), pr(checks=[check("SUCCESS")], head="h2")]})
     assert r.returncode == 2
     assert "head moved" in r.stderr
     assert wt.exists()
     calls = [json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()]
     merge_call = next(c for c in calls if c[:2] == ["pr", "merge"])
     assert "--match-head-commit" in merge_call
-    assert merge_call[merge_call.index("--match-head-commit") + 1] == "h1"
+    assert merge_call[merge_call.index("--match-head-commit") + 1] == head
 
 
 def test_watch_merge_reports_real_gh_failure(repo):
@@ -140,8 +142,9 @@ def test_watch_merge_reports_real_gh_failure(repo):
     git("add", "mf.txt", cwd=wt)
     git("commit", "-q", "-m", "mf", cwd=wt)
     git("push", "-q", "-u", "origin", "feat/mf", cwd=wt)
+    head = git("rev-parse", "HEAD", cwd=wt)
     r = run("watch", "--merge", cwd=wt,
-            replay={"pr_view": [pr(checks=[check("SUCCESS")])], "merge_fails": True})
+            replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head)], "merge_fails": True})
     assert r.returncode == 2
     assert "boom" in r.stderr
     assert wt.exists()
@@ -187,3 +190,21 @@ def test_gc_protects_a_worktree_on_a_protected_branch(repo):
     assert wt.exists()
     assert "kept:  release" in r.stdout
     assert "protected" in r.stderr
+
+
+def test_watch_merge_tolerates_post_merge_read_lag(repo):
+    root, _ = repo
+    assert run("start", "lag", cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / "feat-lag"
+    (wt / "l.txt").write_text("l\n")
+    git("add", "l.txt", cwd=wt)
+    git("commit", "-q", "-m", "l", cwd=wt)
+    git("push", "-q", "-u", "origin", "feat/lag", cwd=wt)
+    git("fetch", "-q", "origin", cwd=root)
+    git("merge", "-q", "--no-ff", "-m", "merge", "origin/feat/lag", cwd=root)
+    git("push", "-q", "origin", "main", cwd=root)
+    head = git("rev-parse", "HEAD", cwd=wt)
+    r = run("watch", "--merge", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head)], "merge_lag": 3})
+    assert r.returncode == 0, r.stderr
+    assert last(r).startswith("pr-flow: watch merged")
+    assert not wt.exists()

@@ -24,6 +24,13 @@ since, it refuses rather than merging a newer, unreviewed commit. An empty
 before GitHub Actions registers its check runs) is polled for up to
 `--no-checks-grace` seconds (default 300, reset whenever the head moves)
 before `watch` treats it as green — a check that shows up during the grace
-window is classified normally, failure included.
+window is classified normally, failure included. Every poll also fetches
+`origin/<branch>` and refuses to classify a snapshot whose `headRefOid` is not
+the commit actually pushed: right after a push GitHub's PR object can still
+report the previous head with its already-green checks, which used to come back
+`green` in seconds for a commit whose CI had not started. That wait is bounded by
+the same grace window; past it the snapshot is classified but `--merge` refuses,
+as it does after an empty rollup. The post-merge confirmation read tolerates the
+same lag (five reads, two seconds apart) before giving up.
 
 Tests: `uv run --with pytest --python 3.12 pytest -q modules/pr-flow/test`.
