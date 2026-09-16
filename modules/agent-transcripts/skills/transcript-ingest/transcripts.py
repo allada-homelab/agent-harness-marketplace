@@ -14,6 +14,7 @@ the volume mounted `:ro`. The output root must never be inside a git worktree.
 
     uv run --script transcripts.py export claude|pi|dsh [--dry-run] [--dest DIR] [--json]
     uv run --script transcripts.py ingest [--dest DIR] [--rebuild]
+    uv run --script transcripts.py annotate [--dest DIR] [--min-sessions N] [--exclude-role R]
     uv run --script transcripts.py stats  [--dest DIR]
 """
 
@@ -468,7 +469,8 @@ CREATE TABLE IF NOT EXISTS messages (
     stop_reason      TEXT,
     input_tokens     INTEGER,
     output_tokens    INTEGER,
-    raw              TEXT NOT NULL
+    raw              TEXT NOT NULL,
+    injected         INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS tool_calls (
     id                INTEGER PRIMARY KEY,
@@ -522,6 +524,7 @@ class Message:
     input_tokens: int | None
     output_tokens: int | None
     raw: str
+    injected: bool = False
     tool_calls: list[ToolCall] = field(default_factory=list)  # assistant only
     results: list[tuple[str, bool]] = field(default_factory=list)  # tool_result only
 
@@ -553,6 +556,11 @@ def open_db(dest_root: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(SCHEMA)
+    # `CREATE TABLE IF NOT EXISTS` never adds a column to a pre-existing table, so a
+    # database built before the `injected` column gained it needs an explicit ALTER.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
+    if "injected" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN injected INTEGER NOT NULL DEFAULT 0")
     return conn
 
 
@@ -971,7 +979,7 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> None
         mcur = conn.execute(
             "INSERT INTO messages (session_id, ord, native_id, parent_native_id,"
             " on_main_path, role, ts, text, model, stop_reason, input_tokens,"
-            " output_tokens, raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " output_tokens, raw, injected) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session_id,
                 m.ord,
@@ -986,6 +994,7 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> None
                 m.input_tokens,
                 m.output_tokens,
                 m.raw,
+                int(m.injected),
             ),
         )
         message_id = mcur.lastrowid
@@ -1040,7 +1049,74 @@ def ingest(dest_root: Path, rebuild: bool) -> int:
         parsed_count += 1
     conn.close()
     print(f"ingest: parsed={parsed_count} unchanged={unchanged} errors={errors}")
+    annotate(dest_root)
     return errors
+
+
+def _norm_text(text: str) -> str:
+    """Whitespace-collapsed, lowercased key for near-duplicate detection."""
+    return " ".join(text.split()).lower()
+
+
+def annotate(
+    dest_root: Path,
+    min_sessions: int = 3,
+    exclude_roles: tuple[str, ...] = ("tool_result",),
+) -> int:
+    """Flag standing-instruction boilerplate as `injected` so a query can exclude it.
+
+    A message is `injected` when it is a `system` message (the canonical injected
+    context), or when its normalized text appears, outside the excluded roles, in
+    `min_sessions` or more distinct sessions — the signature of a standing
+    instruction the harness prepends to every session (e.g. the AGENTS.md
+    "always check for a dev container first" rule). `tool_result` messages are
+    excluded by default so a recurring *error* (identical text across sessions) is
+    not mistaken for boilerplate and hidden from issue hunts.
+
+    Idempotent: it resets the column and recomputes from the index, so it can be
+    re-run after any ingest. Returns the number of messages flagged.
+    """
+    conn = open_db(dest_root)
+    conn.execute("UPDATE messages SET injected = 0")
+    conn.execute("UPDATE messages SET injected = 1 WHERE role = 'system'")
+    if exclude_roles:
+        placeholders = ",".join("?" * len(exclude_roles))
+        rows = conn.execute(
+            f"SELECT id, session_id, role, text FROM messages"
+            f" WHERE role NOT IN ({placeholders})",
+            tuple(exclude_roles),
+        )
+    else:
+        rows = conn.execute("SELECT id, session_id, role, text FROM messages")
+    buckets: dict[str, tuple[set[int], list[int]]] = {}
+    for mid, sid, _role, text in rows:
+        key = _norm_text(text)
+        if not key:
+            continue
+        entry = buckets.get(key)
+        if entry is None:
+            entry = (set(), [])
+            buckets[key] = entry
+        entry[0].add(sid)
+        entry[1].append(mid)
+    flagged_ids: list[int] = []
+    for key, (sids, mids) in buckets.items():
+        if len(sids) >= min_sessions:
+            flagged_ids.extend(mids)
+    for i in range(0, len(flagged_ids), 500):
+        chunk = flagged_ids[i : i + 500]
+        conn.execute(
+            f"UPDATE messages SET injected = 1 WHERE id IN"
+            f" ({','.join('?' * len(chunk))})",
+            chunk,
+        )
+    conn.commit()
+    conn.close()
+    print(
+        f"annotate: injected={len(flagged_ids)}"
+        f" (min_sessions={min_sessions}, exclude_roles={','.join(exclude_roles)})"
+    )
+    return len(flagged_ids)
 
 
 def stats(conn) -> str:
@@ -1121,6 +1197,11 @@ def cmd_stats(args) -> int:
     return 0
 
 
+def cmd_annotate(args) -> int:
+    roles = tuple(args.exclude_roles) if args.exclude_roles else ("tool_result",)
+    return annotate(resolve_dest(args.dest), args.min_sessions, roles)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Export agent transcripts on-device and index them."
@@ -1150,6 +1231,24 @@ def main(argv: list[str] | None = None) -> int:
     p_stats = sub.add_parser("stats", help="summarize the cache and the index")
     p_stats.add_argument("--dest", help="cache root")
     p_stats.set_defaults(func=cmd_stats)
+
+    p_annotate = sub.add_parser(
+        "annotate", help="flag standing-instruction boilerplate as `injected`"
+    )
+    p_annotate.add_argument("--dest", help="cache root")
+    p_annotate.add_argument(
+        "--min-sessions",
+        type=int,
+        default=3,
+        help="distinct sessions a normalized text must appear in to be flagged (default 3)",
+    )
+    p_annotate.add_argument(
+        "--exclude-role",
+        action="append",
+        default=None,
+        help="role the duplicate detector never flags (repeatable; default tool_result)",
+    )
+    p_annotate.set_defaults(func=cmd_annotate)
 
     args = ap.parse_args(argv)
     return args.func(args)

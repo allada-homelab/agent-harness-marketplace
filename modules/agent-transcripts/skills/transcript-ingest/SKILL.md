@@ -23,6 +23,9 @@ uv run --script ./transcripts.py ingest
 # Start from an empty database (after a parser change).
 uv run --script ./transcripts.py ingest --rebuild
 
+# Flag standing-instruction boilerplate as `injected` (also auto-run at the end of ingest).
+uv run --script ./transcripts.py annotate [--min-sessions N] [--exclude-role R]
+
 # What is in the cache and the index.
 uv run --script ./transcripts.py stats
 ```
@@ -42,7 +45,13 @@ skills.
   (`main` or `subagent`), `parent_native_id`, `started_at`, `ended_at`, `model`, `title`.
 - `messages` — per session: `ord`, `native_id`, `parent_native_id`, `on_main_path`, `role`
   (`user`, `assistant`, `tool_result`, `system`), `ts`, `text`, `model`, `stop_reason`,
-  token counts, and the original record as `raw`.
+  token counts, the original record as `raw`, and `injected`. `injected` is `1` for a message
+  that is standing-instruction boilerplate — a `system` message, or any non-`tool_result`
+  message whose normalized text appears in several distinct sessions (a standing instruction
+  the harness prepends to every session). The `annotate` pass computes it; `ingest` runs it
+  automatically at the end. The `transcript-query` skill's `search.py --exclude-injected` drops
+  these so a term search reflects what sessions actually did, not the instruction text that
+  appears everywhere.
 - `tool_calls` — per message: `call_id`, `name`, `arguments`, the result message, `is_error`.
 - `messages_fts` — an FTS5 external-content index over `messages.text`, kept in sync by
   triggers.

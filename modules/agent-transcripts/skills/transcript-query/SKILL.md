@@ -103,7 +103,73 @@ Two traps, both of which fail loudly:
   alias raises "no such column: f". Write `messages_fts MATCH ?`.
 - **Quote any term containing a hyphen or punctuation.** A bare `force-with-lease` is parsed
   as FTS5 operators and raises a syntax error; pass it as `"force-with-lease"`, quotes
-  included, so it is one phrase.
+  included, so it is one phrase. (`search.py` and `excerpt.py` auto-quote hyphenated tokens
+  for you.)
+
+## Hunting a topic: `search.py`, `excerpt.py`, `cluster.py`
+
+A plain FTS `MATCH` over `messages_fts` returns **where** a term appears, but it is noisy:
+the harness injects standing instructions (e.g. the AGENTS.md "always check for a dev
+container first" rule) into every session, so a term that appears in one of those shows up in
+hundreds of sessions that never actually discussed it. Three sibling scripts close that gap.
+They are read-only and cap output exactly like `query.py`.
+
+### `search.py` — which sessions, with two noise knobs
+
+`search.py` builds the FTS join for you and adds the two knobs that make a real hunt usable:
+
+```bash
+# Drop the injected standing-instruction messages, then rank by error context.
+uv run --script ./search.py --term 'devcontainer' --harness dsh --exclude-injected --errors
+# Only sessions with >= 3 real mentions.
+uv run --script ./search.py --term '"devcontainer-cli"' --min-hits 3
+```
+
+- `--exclude-injected` drops messages the ingest `annotate` pass flagged as standing
+  instructions, so hit counts reflect what a session actually *did*.
+- `--errors` sorts by the number of matches that also carry a failure signal (`error`,
+  `failed`, `permission denied`, `not found`, `exit code`, …), so problem sessions float up.
+- `--harness` / `--roles` narrow to a harness and/or role; `--min-hits` filters the tail.
+
+### `excerpt.py` — bounded, durable per-session excerpts
+
+When you have a matched set and need to read (or hand to a subagent) what each session
+actually said, `excerpt.py` writes one capped file per session plus a `manifest.json`, into a
+durable, non-repo work dir (default `<cache>/work/<run>/`):
+
+```bash
+uv run --script ./excerpt.py --term 'devcontainer' --harness dsh --run devcontainer-audit
+# Explicit sessions, then read the messages AFTER the head window.
+uv run --script ./excerpt.py --ids 18651,18761 --run devcontainer-audit
+uv run --script ./excerpt.py --next 18651 --offset 30 --count 30
+```
+
+Each excerpt file has a header (session id, native id, title, project, started, matching
+count, `truncated`), the first main-path user message, a **head** sample and a **tail** sample
+of the matching messages, and a `… [N messages omitted between head and tail]` marker when the
+sample was truncated. The manifest records the query, caps, and per-session `truncated` /
+`total_matches` so a follow-up agent knows when an excerpt is incomplete and can pull the next
+chunk with `--next`. `--exclude-injected` and `--no-user` tune what goes in.
+
+### `cluster.py` — group judged sessions by shared failure signature
+
+After a batch of subagents returns one-line verdicts, `cluster.py` groups sessions that share a
+failure signature (a rootless docker socket path, a `devcontainer.json` lifecycle command,
+"permission denied", "not found", …) so a recurring theme surfaces as one group with its
+session ids instead of being buried across verdict lines:
+
+```bash
+cat verdicts_*.txt | uv run --script ./cluster.py --min 2
+```
+
+Input is the verdict format (`<id>|VERDICT=…|SEVERITY=…|<summary>`) or a `<id><TAB><summary>`
+TSV. `--min` sets the smallest cluster to report; `--json` emits the groups as data.
+
+### `verdict.schema.json` — validated subagent verdicts
+
+When fanning out excerpt readers, pass `verdict.schema.json` as the `schema` of a
+workflow/`agent()` call so each subagent returns `{session_id, verdict, severity, summary,
+evidence}` (validated, aggregatable) instead of prose that has to be re-parsed.
 
 ## Reading one message
 
