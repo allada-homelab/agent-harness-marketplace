@@ -223,6 +223,9 @@ def cmd_start(a):
         print(existing)
         return done("start", "ok", existing)
     git("fetch", "-q", "origin", base, cwd=root)
+    if subprocess.run([GIT, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=root,
+                      capture_output=True).returncode == 0:
+        raise Fail(f"branch {branch} already exists locally but has no worktree; delete it or pick another slug")
     wt = real / branch.replace("/", "-")
     include = worktreeinclude_matches(root)
     # Exclude .worktreeinclude targets from both the dirty check and the stash — they're
@@ -263,7 +266,19 @@ def cmd_start(a):
             warn("--carry ignored: nothing to carry")
     elif a.carry is not None:
         warn("--carry ignored: run start from the main checkout")
-    git("worktree", "add", "-q", "-b", branch, wt, f"origin/{base}", cwd=root)
+    try:
+        git("worktree", "add", "-q", "-b", branch, wt, f"origin/{base}", cwd=root)
+    except Fail as e:
+        # The carried work is only in the stash at this point: put it back where it came from
+        # before failing, so a failed start is a no-op rather than a hidden stash entry.
+        if tag:
+            sha = stash_sha(root, tag)
+            try:
+                git("stash", "apply", "-q", sha, cwd=root)
+                drop_stash(root, tag)
+            except Fail as e2:
+                raise Fail(f"{e}\ncarried work is in stash '{tag}' (restore failed: {e2})")
+        raise
     git("config", f"branch.{branch}.pr-flow-base", base, cwd=root)
     copy_worktreeinclude(root, wt, include)
     if tag:
@@ -414,7 +429,9 @@ def do_merge(ctx, cwd, pr):
     try:
         gh("pr", "merge", str(pr["number"]), "--merge", "--match-head-commit", pr["headRefOid"], cwd=cwd)
     except Fail as e:
-        raise Fail(f"merge refused ({e}); if the head moved, run watch again")
+        raise Fail(f"gh pr merge refused: {e}\nlikely causes: the head moved since watch saw it green (run watch "
+                   "again), merge commits are disabled for this repo (pr-flow only merges with a merge commit), "
+                   "or a branch-protection rule is unmet (approval, up-to-date branch, required check)")
     # gh reported the merge done, but the PR object can lag the write for a few seconds — the
     # same read-after-write gap watch guards against on headRefOid. Give it a few reads.
     for _ in range(5):
@@ -426,6 +443,16 @@ def do_merge(ctx, cwd, pr):
         raise Fail(f"merge requested but PR state is still {after.get('state')} after 5 reads; not tearing down")
     print(f"merged {pr.get('url', '')}")
     return "merged"
+
+
+def pr_merged_on_github(root, branch):
+    """True/False from `gh pr list --state merged`, None when gh cannot answer."""
+    p = subprocess.run([GH, "pr", "list", "--head", branch, "--state", "merged", "--json", "number", "--jq", "length"],
+                       cwd=root, text=True, capture_output=True)
+    if p.returncode:
+        warn(f"gh pr list failed for {branch} (rc {p.returncode}): {p.stderr.strip() or p.stdout.strip()}")
+        return None
+    return p.stdout.strip() not in ("0", "")
 
 
 def teardown(ctx, branch, dry_run=False):
@@ -440,10 +467,13 @@ def teardown(ctx, branch, dry_run=False):
     base = branch_base(root, branch)
     git("fetch", "-q", "origin", base, cwd=root)
     merged = subprocess.run([GIT, "merge-base", "--is-ancestor", branch, f"origin/{base}"], cwd=root).returncode == 0
-    if not merged:
-        raise Fail(f"branch {branch} is not merged into origin/{base}; refusing to delete it")
+    # A squash or rebase merge lands the change as new commits, so the branch head is never an
+    # ancestor of the base; GitHub's own merged state is the proof then.
+    if not merged and not pr_merged_on_github(root, branch):
+        raise Fail(f"branch {branch} is not merged into origin/{base} and GitHub has no merged PR for it; "
+                   "refusing to delete it")
     if dry_run:
-        print(f"would remove {wt} and delete {branch}")
+        print(f"would remove {wt}, delete {branch} locally and delete origin/{branch}")
         return
     if wt is not None:
         git("worktree", "remove", "--force", wt, cwd=root)
@@ -555,11 +585,15 @@ def cmd_watch(a):
         elif verdict == "conflict":
             print(f"conflicts with base; in the worktree: git fetch origin && git merge origin/{branch_base(ctx.main_root, ctx.branch)}")
         if st["attempts"] > MAX_ATTEMPTS:
-            print(f"{st['attempts'] - 1} fix attempts used on this PR; last verdict {verdict}")
+            print(f"{st['attempts'] - 1} fix rounds used on this PR and this sixth verdict is still {verdict}")
             verdict = "attempts-exhausted"
     elif verdict in ("green", "merged"):
         st["attempts"] = 0
         save_state(ctx, ctx.branch, st)
+        if verdict == "green" and pr.get("mergeStateStatus") == "BEHIND":
+            base = branch_base(ctx.main_root, ctx.branch)
+            print(f"head is behind origin/{base}; a repo that requires up-to-date branches will refuse the merge "
+                  f"— in the worktree: git fetch origin && git merge origin/{base}, push, watch again")
     if verdict == "green" and a.merge:
         if grace_expired:
             print("this head's checks are unverified (none reported, or the PR head lagged the push); "
@@ -569,6 +603,7 @@ def cmd_watch(a):
     if verdict == "merged" and not ctx.is_main:
         # Ruling 1: a PR merged by someone else may not yet be an ancestor of the base in
         # this worktree — teardown failing here must never turn a merged verdict into exit 2.
+        os.chdir(ctx.main_root)  # never end as a process whose cwd was just removed
         try:
             teardown(ctx, ctx.branch)
         except Fail as e:
@@ -586,7 +621,13 @@ def cmd_open(a):
     if state == "MERGED":
         raise Fail(f"PR for {ctx.branch} is already merged; run `pr-flow start` for new work")
     if not url or state == "CLOSED":
-        args = ["pr", "create", "--head", ctx.branch, "--base", branch_base(ctx.main_root, ctx.branch)]
+        try:
+            fork_owner = gh("repo", "view", "--json", "isFork,owner", "--jq", 'if .isFork then .owner.login else "" end', cwd=cwd)
+        except Fail as e:
+            warn(f"could not tell whether origin is a fork ({e}); assuming not")
+            fork_owner = ""
+        head = f"{fork_owner}:{ctx.branch}" if fork_owner else ctx.branch
+        args = ["pr", "create", "--head", head, "--base", branch_base(ctx.main_root, ctx.branch)]
         args += ["--title", a.title] if a.title else ["--fill"]
         if a.body_file:
             args += ["--body-file", a.body_file]
@@ -617,13 +658,7 @@ def cmd_gc(a):
     for path, branch in worktrees(root):
         if path.resolve() == root.resolve() or not branch:
             continue
-        p = subprocess.run([GH, "pr", "list", "--head", branch, "--state", "merged", "--json", "number", "--jq", "length"],
-                            cwd=root, text=True, capture_output=True)
-        if p.returncode:
-            warn(f"gh pr list failed for {branch} (rc {p.returncode}): {p.stderr.strip() or p.stdout.strip()}")
-            kept.append(branch)
-            continue
-        if p.stdout.strip() not in ("0", ""):
+        if pr_merged_on_github(root, branch):
             try:
                 teardown(ctx, branch, dry_run=a.dry_run)
                 swept.append(branch)

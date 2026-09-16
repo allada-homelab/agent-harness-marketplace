@@ -226,3 +226,20 @@ def test_stale_pr_head_past_grace_is_classified_but_merge_refuses(repo):
     assert "refusing --merge" in r.stdout
     calls = [json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()]
     assert not any(c[:2] == ["pr", "merge"] for c in calls)
+
+
+def test_behind_base_is_green_with_a_warning(repo):
+    _, wt = opened(repo)
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], mergeStateStatus="BEHIND")]})
+    assert r.returncode == 0, r.stderr
+    assert last(r) == "pr-flow: watch green https://github.com/o/r/pull/7"
+    assert "behind origin/main" in r.stdout
+
+
+def test_attempts_exhausted_message_counts_rounds_correctly(repo):
+    _, wt = opened(repo)
+    for _ in range(5):
+        assert run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("FAILURE")])]}).returncode == 10
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("FAILURE")])]})
+    assert r.returncode == 15
+    assert "5 fix rounds" in r.stdout and "sixth" in r.stdout

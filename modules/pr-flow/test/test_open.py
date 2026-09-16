@@ -79,3 +79,16 @@ def test_open_refuses_merged_pr(repo):
     assert r.returncode == 2
     assert "merged" in r.stderr
     assert not any(c[:2] == ["pr", "create"] for c in gh_calls(wt))
+
+
+def test_open_from_a_fork_qualifies_head_with_owner(repo):
+    root, _ = repo
+    assert run("start", "fk", cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / "feat-fk"
+    (wt / "a.txt").write_text("a\n")
+    git("add", "a.txt", cwd=wt)
+    git("commit", "-q", "-m", "a", cwd=wt)
+    r = run("open", cwd=wt, replay={"pr_url": "", "fork_owner": "me"})
+    assert r.returncode == 0, r.stderr
+    create = next(c for c in gh_calls(wt) if c[:2] == ["pr", "create"])
+    assert create[create.index("--head") + 1] == "me:feat/fk"

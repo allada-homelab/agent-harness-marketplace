@@ -178,3 +178,18 @@ def test_start_preserves_exclude_file_missing_trailing_newline(repo):
     assert lines.count("node_modules") == 1
     assert lines.count("/.claude/worktrees/") == 1
     assert lines.count("/.agents/worktrees") == 1
+
+
+def test_start_carry_restores_work_when_branch_already_exists(repo):
+    # Finding 1: the carry stash must never be orphaned. A pre-existing local branch makes
+    # `worktree add -b` fail; the uncommitted work has to land back in the main checkout.
+    root, _ = repo
+    git("branch", "feat/dup", cwd=root)
+    (root / "README.md").write_text("edited\n")
+    r = run("start", "dup", "--carry", cwd=root)
+    assert r.returncode == 2
+    assert "already exists" in r.stderr
+    assert (root / "README.md").read_text() == "edited\n"
+    assert git("status", "--porcelain", cwd=root).splitlines() == ["M README.md"]  # helper strips the leading space
+    assert git("stash", "list", cwd=root) == ""
+    assert not (root / ".claude" / "worktrees" / "feat-dup").exists()

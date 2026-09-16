@@ -41,10 +41,15 @@ def hint(ev):
     if git(d, "ls-files", "--error-unmatch", "--", fp).returncode:
         return None  # untracked: .env, overlays, scratch
     sid = str(ev.get("session_id") or os.getppid())
-    marker = os.path.join(tempfile.gettempdir(),
-                          f"pr-flow-hint.{sid}.{hashlib.sha1(root.encode()).hexdigest()[:12]}")
+    # Own 0700 dir per user: in shared /tmp another local user could pre-create the marker
+    # and silence the hint. os.open below still refuses a pre-existing file or symlink.
+    mdir = os.path.join(tempfile.gettempdir(), f"pr-flow-hint-{os.getuid()}")
+    os.makedirs(mdir, mode=0o700, exist_ok=True)
+    if os.stat(mdir).st_uid != os.getuid() or (os.stat(mdir).st_mode & 0o077):
+        return None
+    marker = os.path.join(mdir, f"{sid}.{hashlib.sha1(root.encode()).hexdigest()[:12]}")
     try:
-        fd = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        fd = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(fd)
     except FileExistsError:
         return None

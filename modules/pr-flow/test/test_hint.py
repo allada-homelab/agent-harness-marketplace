@@ -92,3 +92,11 @@ def test_relative_file_path_resolves_against_event_cwd(repo, tmp_path):
     outside = tmp_path / "elsewhere"
     outside.mkdir()
     assert fire_from(tmp_path, outside, "README.md") is None
+
+
+def test_marker_lives_in_a_private_per_user_dir(repo, tmp_path):
+    root, _ = repo
+    assert fire(tmp_path, root / "README.md")
+    d = tmp_path / "tmp" / f"pr-flow-hint-{os.getuid()}"
+    assert d.is_dir() and (d.stat().st_mode & 0o777) == 0o700
+    assert not list((tmp_path / "tmp").glob("pr-flow-hint.*"))

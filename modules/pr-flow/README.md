@@ -6,11 +6,16 @@ PostToolUse hook that hints — never blocks — when a tracked file is edited o
 protected branch in a repo's main checkout.
 
 Verbs: `start <slug> [--base <branch>] [--carry [<path>...]]`, `open`,
-`watch [--merge]`, `teardown [branch]`, `gc`.
+`watch [--merge]`, `teardown [branch]`, `gc`. `teardown` and `gc` remove the
+worktree and delete the branch locally **and on origin**, and only once it is
+merged — an ancestor of `origin/<base>`, or a merged PR on GitHub (squash and
+rebase merges). `open` from a fork clone owner-qualifies the head.
 Exit codes: 0 green/merged/ok · 10 checks-failed · 11 conflict · 12 review ·
 13 closed · 14 timeout · 15 attempts-exhausted · 2 refusal.
 
-`start` refuses on a dirty main checkout by default — pass `--carry` to move
+`start` refuses a local branch that already exists without a worktree, and if the
+worktree cannot be created after a `--carry` it restores the carried work to main
+before failing, so no stash entry is ever left behind. It refuses on a dirty main checkout by default — pass `--carry` to move
 every uncommitted change into the new worktree, or `--carry <path>...` for
 specific ones, so another session's edits are never swept up by accident. The
 `--base` it was started with is recorded (`branch.<name>.pr-flow-base`) and
@@ -19,7 +24,11 @@ a worktree started off a non-default base stays consistent through the whole
 flow. `watch` also reports `review` for a draft PR or one `mergeStateStatus:
 BLOCKED` by branch protection, and its `--merge` binds to the head commit it
 last polled green (`gh pr merge --match-head-commit`) — if the head moved
-since, it refuses rather than merging a newer, unreviewed commit. An empty
+since, it refuses rather than merging a newer, unreviewed commit; the same
+refusal names gh's message and the other likely causes (merge commits disabled
+— pr-flow only merges with a merge commit — or a branch-protection rule unmet).
+A green head that is behind its base is reported with a hint, since "require
+branches to be up to date" protection refuses such a merge. An empty
 `statusCheckRollup` (no CI configured, or the gap right after `open`'s push
 before GitHub Actions registers its check runs) is polled for up to
 `--no-checks-grace` seconds (default 300, reset whenever the head moves)

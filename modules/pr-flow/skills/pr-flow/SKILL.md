@@ -30,10 +30,14 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    tools, `cd <path> &&` or `git -C <path>` for commands.
    A dirty main checkout (uncommitted edits, possibly someone else's) makes
    `start` refuse by default — rerun with `--carry` to move all of it into the
-   new worktree, or `--carry <path>...` for specific paths only.
+   new worktree, or `--carry <path>...` for specific paths only. A local branch
+   of the same name with no worktree is refused up front, and if creating the
+   worktree fails after a carry the carried work is put back on main first.
 3. **Work and commit** in the worktree. Stage only files you changed.
 4. **Open** — `pr-flow open`. Pushes, creates the PR against the branch's
-   recorded base (or reuses the branch's), prints the full URL. Repeat the URL
+   recorded base (or reuses the branch's), prints the full URL. In a clone of
+   a fork the PR targets the upstream repo with an owner-qualified head, as
+   gh requires. Repeat the URL
    in every message that mentions the PR. It refuses when the branch's PR is
    already merged (exit 2 — run `pr-flow start` for new work instead) and opens
    a fresh PR when the old one was closed.
@@ -56,11 +60,18 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
      included) or the blocking condition, push, reply on the thread, watch again.
    - `closed` (13): stop and report.
    - `timeout` (14): nothing finished within the hour; watch again.
-   - `attempts-exhausted` (15): five fix rounds used. Stop and report what is
-     still red — the user decides.
+   - `attempts-exhausted` (15): five fix rounds used and the sixth verdict is
+     still a fix-class one. Stop and report what is still red — the user
+     decides.
    `--merge` binds to the exact commit it last saw green
    (`--match-head-commit`); if the head moved since, it refuses (exit 2) rather
-   than merging a commit nobody watched — run watch again. A `green` reached
+   than merging a commit nobody watched — run watch again. It only ever
+   creates a merge commit, so a repo that allows squash or rebase only refuses
+   too; the refusal carries gh's own message plus the likely causes (head
+   moved, merge commits disabled, branch-protection rule unmet). A `green`
+   whose head is behind the base is reported with a hint: under "require
+   branches to be up to date" the merge will be refused until you merge
+   `origin/<base>` in and push. A `green` reached
    only because a grace window expired (no checks ever reported, or the PR
    head never caught up with the push) still exits 0 but `--merge` refuses
    and says so on stdout: merge by hand once you have evidence.
@@ -69,8 +80,11 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    green. Silence means no. A green PR without that permission ends the turn
    with the URL.
 7. **Teardown** — `pr-flow teardown` after the PR is merged (`--merge` does it
-   itself). `pr-flow gc` tears down every worktree whose PR has merged; run it
-   when you notice stale worktrees.
+   itself). It removes the worktree, deletes the local branch **and deletes the
+   branch on origin**; a branch counts as merged when it is an ancestor of
+   `origin/<base>` or GitHub has a merged PR for it (squash and rebase merges
+   leave no ancestor). `pr-flow gc` tears down every worktree whose PR has
+   merged; run it when you notice stale worktrees.
 
 ## Editing on main anyway
 
