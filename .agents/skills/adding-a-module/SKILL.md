@@ -193,6 +193,19 @@ not tag by hand for a normal release — only to move the minor or major, which 
 job never does on its own. This is separate from the module version you bumped in
 step 2; both exist, and neither derives from the other.
 
+### 8. Pair with the fleet
+
+Merging here ships nothing to a machine. The fleet consumes this repo through
+the dotfiles repo's `agents/modules.tsv` (one row per module: repo, pinned tag,
+module, claude/pi/dsh on|off, why), and `CLAUDE.md` → "Pairing with the fleet"
+lists the six cases that need a dotfiles change. For a module change the usual
+pairing is: a new row (new module) or the row turned `off off off` (removed module — never deleted), the `ref`
+bumped to the tag the merge cut, and — for a port of an official plugin —
+`<name>@claude-plugins-official` set to `false` in the fleet's
+`claude/settings.json`. `bin/fleet-pairing.sh` prints the drift when the
+dotfiles checkout is on this machine. **State the paired change in the
+handoff**, or state that none is needed; do not leave it to be rediscovered.
+
 ## Porting a Claude Code plugin
 
 Most modules here are ports of a plugin from `anthropics/claude-plugins-official`

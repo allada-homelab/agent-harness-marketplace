@@ -256,6 +256,9 @@ else
     echo "  ok"
 fi
 
+step "fleet pairing (advisory: what the paired dotfiles change is)"
+bin/fleet-pairing.sh
+
 step "python tests"
 suites=()
 compgen -G "modules/*/test/test_*.py" >/dev/null && suites+=(modules/*/test)
