@@ -141,6 +141,30 @@ modules:
     - review
     command: true
     summary: Review a GitHub pull request and post one comment with only the high-confidence issues.
+- name: code-simplifier
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  - pi
+  - dsh
+  description: Simplify recently changed code for clarity, consistency and maintainability without changing
+    what it does, following the project's own guideline files.
+  skills:
+  - name: code-simplifier
+    path: modules/code-simplifier/skills/code-simplifier/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - quality
+    - refactor
+    command: true
+    summary: Simplify recently changed code for clarity, consistency and maintainability without changing
+      what it does.
 - name: dual-agent-pr-review
   version: 0.1.4
   kinds:

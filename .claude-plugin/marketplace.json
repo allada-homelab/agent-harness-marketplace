@@ -37,7 +37,7 @@
     },
     {
       "name": "browser",
-      "description": "Drive a browser from any harness: headless auto mode, headed hybrid mode where a human logs in and the agent takes over, or attach to a browser the user opened via its debug port \u2014 through agent-browser on a persistent per-identity profile.",
+      "description": "Drive a browser from any harness: headless auto mode, headed hybrid mode where a human logs in and the agent takes over, or attach to a browser the user opened via its debug port — through agent-browser on a persistent per-identity profile.",
       "category": "development",
       "version": "0.1.2",
       "source": "./modules/browser"
@@ -55,6 +55,13 @@
       "category": "development",
       "version": "0.1.0",
       "source": "./modules/code-review"
+    },
+    {
+      "name": "code-simplifier",
+      "description": "Simplify recently changed code for clarity, consistency and maintainability without changing what it does, following the project's own guideline files.",
+      "category": "development",
+      "version": "0.1.0",
+      "source": "./modules/code-simplifier"
     }
   ]
 }

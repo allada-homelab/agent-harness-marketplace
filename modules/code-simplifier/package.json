@@ -1,0 +1,10 @@
+{
+  "name": "@allada-homelab/code-simplifier",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Simplify recently changed code for clarity, consistency and maintainability without changing what it does, following the project's own guideline files.",
+  "license": "MIT",
+  "pi": { "skills": ["skills/*"] },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}
