@@ -16,25 +16,15 @@ importers:
 
   modules/browser: {}
 
-  modules/claude-transcripts: {}
-
   modules/code-review: {}
 
   modules/dual-agent-pr-review: {}
 
   modules/feature-dev: {}
 
-  modules/get-shit-done: {}
-
-  modules/get-shit-done-claude: {}
-
-  modules/minimalist-code-review: {}
-
   modules/plan-for-dummies: {}
 
   modules/pr-flow: {}
-
-  modules/research: {}
 
 packages:
 

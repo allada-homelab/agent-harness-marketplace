@@ -2237,9 +2237,10 @@ written against dsh `0.1.1-rc.2`/`0.1.2` and describe a narrower delegation surf
   uses it correctly for that, so it is **not** stale. The **native dsh ad-hoc delegation surface** is a
   family of tools: `subagent`, `subagent_fork`, `subagent_codex`, `subagent_claude_code`,
   `send_message`, `interrupt_agent`, `list_agents`, `list_subagent_models`, `workflow`, `ralph`.
-  **`modules/get-shit-done-claude/skills/run/SKILL.md:97`** names `delegate_agent` for an *ad-hoc*
-  implementer/verifier retry — that is the stale one: on dsh the native tool is `subagent` (or
-  `subagent_fork` to seed the child with the parent's completed turns), not the bridge.
+  The one stale usage this audit found — `get-shit-done-claude`'s `run` skill naming
+  `delegate_agent` for an *ad-hoc* implementer/verifier retry — went away with that module
+  (removed 2026-09-16). For ad-hoc delegation on dsh the native tool is `subagent`, or
+  `subagent_fork` to seed the child with the parent's completed turns, not the bridge.
 - **`docs/spikes/dsh-subagent.md`** documents the one-shot `ctx.subagents.start()` path accurately,
   but predates (or omits) the **continuable** path (`startContinuable()`), the **fork** backend,
   **background subagent jobs**, **per-child model selection**, and the **model-facing tool set** —
@@ -2248,8 +2249,8 @@ written against dsh `0.1.1-rc.2`/`0.1.2` and describe a narrower delegation surf
   `ctx.subagents.start()` per-call `persona`/`toolFilter`/`agentOptions`/`maxDepth` — correct for the
   seam, but does not mention continuable children, the control tools, background jobs, or the
   subagent-model-selection session preference, all of which now exist.
-- **`docs/install-dsh.md`** is verified against dsh `0.1.1-rc.2`; the installed harness is
-  `0.1.5-rc.2`. Re-verify install/smoke claims before relying on them.
+- **`docs/install-dsh.md`** was verified against dsh `0.1.1-rc.2`; it was re-verified against
+  `0.1.5-rc.2` on 2026-09-16 and its install/smoke claims now match the installed harness.
 - **`modules/agent-transcripts/*`** model transcripts as `kind: main | subagent`. With continuable
   children and fork-seeded children, the dsh transcript export/query should treat a continuable
   child session as its own addressable session (stable id) and a fork child as a distinct lineage,

@@ -35,6 +35,6 @@ echo "rc=$rc"; echo "$probe"
 fail=0
 check() { if eval "$2"; then echo "  ok   $1"; else echo "  FAIL $1"; fail=1; fi; }
 check "pi exited from the probe (rc 0)" '[ "$rc" = 0 ]'
-check "portable skills loaded" '[[ "$probe" == *"skill:pragmatic-code-review"* && "$probe" == *"skill:get-shit-done"* && "$probe" == *"skill:research"* && "$probe" == *"skill:run"* ]]'
-check "Claude-only modules excluded" '[[ "$probe" != *"claude-transcript"* && "$probe" != *"dual-agent"* ]]'
+check "portable skills loaded" '[[ "$probe" == *"skill:browser"* && "$probe" == *"skill:code-review"* && "$probe" == *"skill:feature-dev"* && "$probe" == *"skill:pr-flow"* ]]'
+check "Claude-only modules excluded" '[[ "$probe" != *"dual-agent"* ]]'
 [ "$fail" = 0 ] || { echo "--- run.log"; tail -30 "$home/run.log"; exit 1; }

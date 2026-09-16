@@ -21,7 +21,7 @@ rather than a prompt that asks the model to delegate and hope.
 
 ```js
 export const meta = {
-  name: 'get-shit-done',
+  name: 'decompose-and-build',
   description: 'Decompose a task, research it, implement each subtask …',
   phases: [{ title: 'Research' }, { title: 'Plan' }, { title: 'Implement' }],
 }
@@ -91,5 +91,6 @@ Name the workflow once and tell the model which tool runs it per harness: the
 Workflow tool with `${CLAUDE_PLUGIN_ROOT}/workflows/<name>.workflow.js` on Claude,
 `run_workflow` with `<module>:<name>` on pi and dsh, and a plain sequential
 fallback when neither exists. A skill that hard-requires the Workflow tool is
-Claude-only and must be scoped `harness: [claude]` — see
-`modules/get-shit-done-claude/skills/run/SKILL.md` for the reference phrasing.
+Claude-only and must be scoped `harness: [claude]`. No module in this repo ships
+a workflow today, so `bin/lint-workflows.py` has no in-tree subject; its
+behaviour is pinned by `tests/test_lint_workflows.py` against fixtures.
