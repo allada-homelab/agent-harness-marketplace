@@ -208,3 +208,64 @@ def test_watch_merge_tolerates_post_merge_read_lag(repo):
     assert r.returncode == 0, r.stderr
     assert last(r).startswith("pr-flow: watch merged")
     assert not wt.exists()
+
+
+def squash_merged_branch(repo, name="sq"):
+    """Start, commit, push; then land the change on origin/main as a NEW commit (what GitHub's
+    squash and rebase merges do) so the branch head is never an ancestor of the base."""
+    root, _ = repo
+    assert run("start", name, cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / f"feat-{name}"
+    (wt / f"{name}.txt").write_text("x\n")
+    git("add", f"{name}.txt", cwd=wt)
+    git("commit", "-q", "-m", name, cwd=wt)
+    git("push", "-q", "-u", "origin", f"feat/{name}", cwd=wt)
+    (root / f"{name}.txt").write_text("x\n")
+    git("add", f"{name}.txt", cwd=root)
+    git("commit", "-q", "-m", f"squash {name}", cwd=root)
+    git("push", "-q", "origin", "main", cwd=root)
+    return root, wt
+
+
+def test_teardown_accepts_squash_merged_pr(repo):
+    root, wt = squash_merged_branch(repo)
+    r = run("teardown", "feat/sq", cwd=root, replay={"merged_branches": ["feat/sq"]})
+    assert r.returncode == 0, r.stderr
+    assert not wt.exists()
+    assert "feat/sq" not in git("branch", "--list", cwd=root)
+
+
+def test_teardown_still_refuses_when_github_says_not_merged(repo):
+    root, wt = squash_merged_branch(repo, "sq2")
+    r = run("teardown", "feat/sq2", cwd=root, replay={"merged_branches": []})
+    assert r.returncode == 2
+    assert "not merged" in r.stderr and wt.exists()
+
+
+def test_gc_sweeps_squash_merged_worktree(repo):
+    root, wt = squash_merged_branch(repo, "sq3")
+    r = run("gc", cwd=root, replay={"merged_branches": ["feat/sq3"]})
+    assert r.returncode == 0, r.stderr
+    assert not wt.exists()
+    assert "swept: feat/sq3" in r.stdout
+
+
+def test_gc_dry_run_names_the_remote_delete(repo):
+    root, wt = merged_branch(repo, "dr")
+    r = run("gc", "--dry-run", cwd=root, replay={"merged_branches": ["feat/dr"]})
+    assert r.returncode == 0, r.stderr
+    assert "origin/feat/dr" in r.stdout and wt.exists()
+
+
+def test_watch_merge_failure_names_the_real_causes(repo):
+    root, _ = repo
+    assert run("start", "mc", cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / "feat-mc"
+    (wt / "mc.txt").write_text("mc\n")
+    git("add", "mc.txt", cwd=wt)
+    git("commit", "-q", "-m", "mc", cwd=wt)
+    git("push", "-q", "-u", "origin", "feat/mc", cwd=wt)
+    head = git("rev-parse", "HEAD", cwd=wt)
+    r = run("watch", "--merge", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head)], "merge_fails": True})
+    assert r.returncode == 2
+    assert "boom" in r.stderr and "merge commits" in r.stderr and "branch-protection" in r.stderr

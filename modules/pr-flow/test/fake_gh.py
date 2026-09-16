@@ -43,7 +43,10 @@ if argv[:2] == ["pr", "view"]:
 elif argv[:2] == ["pr", "create"]:
     print("https://github.com/o/r/pull/7")
 elif argv[:2] == ["repo", "view"]:
-    print("o r")
+    if any("isFork" in a for a in argv):
+        print(replay.get("fork_owner", ""))
+    else:
+        print("o r")
 elif argv[:2] == ["api", "graphql"]:
     n = int(replay.get("threads_unresolved", 0))
     nodes = [{"isResolved": False}] * n + [{"isResolved": True}]
