@@ -16,7 +16,7 @@ prompt. Narrow what loads with the object form of `settings.packages`:
 
 ```json
 { "packages": [ { "source": "git:github.com/allada-homelab/agent-harness-marketplace@v0.1.0",
-                  "skills": ["!modules/get-shit-done/**"] } ] }
+                  "skills": ["!modules/agent-transcripts/**"] } ] }
 ```
 
 Two things to know:
@@ -32,12 +32,12 @@ makes each user-invocable skill available as `/name` beside pi's native
 `hooks/hooks.json`; `Stop` hooks are observe-only on pi (a block becomes a
 follow-up message), see `hook-contract/README.md`.
 
-## Verified 2026-09-06 (pi 0.84.1, throwaway `$HOME`, local-path install)
+## Verified 2026-09-16 (pi 0.84.1, throwaway `$HOME`, local-path install)
 
-Captured before the 2026-09-07 move: `skill-commands-pi` and `hook-runner-pi`
-were sibling modules of this repo at the time, installed alongside it. On the
-current layout, `/research` and the `SessionStart` delivery below come from
-the pi harness-side foundation described above, not from this repo.
+This is `tests/smoke/pi.sh`, which installs the checkout into a throwaway
+`$HOME` and dumps `pi.getCommands()` from a probe extension at
+`before_agent_start`. `/name` commands and hook delivery are harness-side
+foundation and are not exercised from this repo.
 
 ```
 $ pi install /path/to/agent-harness-marketplace
@@ -47,14 +47,17 @@ User packages:
   /path/to/agent-harness-marketplace
 ```
 
-A probe extension dumped `pi.getCommands()` at `before_agent_start`, with a
-temporary sibling module carrying a SessionStart hook:
-
 ```
-PROBE ["extension research","skill skill:research","skill skill:pragmatic-code-review","skill skill:get-shit-done"]
-echo.json: {"session_id": "pi-…", "cwd": "…/work", "hook_event_name": "SessionStart", "source": "startup"}
+PROBE ["extension llama","skill skill:pr-flow","skill skill:plan-for-dummies",
+       "skill skill:feature-dev","skill skill:code-review","skill skill:browser",
+       "skill skill:transcript-sweep","skill skill:transcript-review",
+       "skill skill:transcript-query","skill skill:transcript-ingest",
+       "skill skill:transcript-export-pi","skill skill:transcript-export-dsh",
+       "skill skill:transcript-export-claude"]
+  ok   pi exited from the probe (rc 0)
+  ok   portable skills loaded
+  ok   Claude-only modules excluded
 ```
 
-`/research` registered by skill-commands-pi, the three portable skills loaded,
-the Claude-only modules stayed excluded, and hook-runner-pi delivered the
-SessionStart event to the hook script.
+Every portable skill loaded as `skill:<name>`, and `dual-agent-pr-review` — the
+only module the root `pi` manifest excludes — stayed out.

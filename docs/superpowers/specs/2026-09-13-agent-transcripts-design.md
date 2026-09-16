@@ -2,6 +2,9 @@
 
 Date: 2026-09-13. Status: approved (design reviewed in session before this file was written).
 
+> **Historical record — do not update.** `modules/claude-transcripts/`, referenced below as
+> the predecessor this module supersedes, was removed from the repo on 2026-09-16.
+
 ## Goal
 
 One module, `modules/agent-transcripts/`, that exports chat transcripts from every supported

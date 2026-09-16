@@ -2,6 +2,12 @@
 
 **Date:** 2026-09-06 · **Status:** approved plan, pre-implementation · **Scope:** the technical layer only — what each harness supports, and how to build a public repo that holds `okf-wiki` and future modules natively on Claude Code, pi and dsh. The `okf-wiki` *feature* design is a separate brainstorm; §5 keeps the `llm-wiki` inventory as its pick-list.
 
+> **Historical record — do not update.** This is the 2026-09-06 plan as approved,
+> kept for the reasoning behind the layout. It names modules that were later
+> removed from the repo (`minimalist-code-review`, `get-shit-done`,
+> `get-shit-done-claude`, `research`, `claude-transcripts` — all dropped
+> 2026-09-16); `README.md` and `modules/index.yaml` are the current catalog.
+
 Sources verified in this session: pi 0.84.1 as installed (`~/.nvm/versions/node/v24.15.0/lib/node_modules/@earendil-works/pi-coding-agent/{docs,dist}` — the tarball ships the version-correct docs), dsh as installed (`/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/*`), Claude Code docs at code.claude.com (`skills`, `plugins`, `plugin-marketplaces`, `sub-agents`, `hooks`), `pnpm.io/package-sources`, `GoogleCloudPlatform/open-knowledge-format` (`SPEC.md` v0.2), the installed `llm-wiki` 0.2.0 plugin, and this repo's `agents/README.md` + `docs/superpowers/plans/2026-08-31-fleet-consolidation-analysis.md`.
 
 ---

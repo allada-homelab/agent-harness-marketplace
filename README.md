@@ -24,12 +24,21 @@ applies to, and every skill with its `harness:` / `tags:` selection metadata.
 
 Content modules (skills only, no code):
 
-- **minimalist-code-review** — a pragmatic, anti-over-engineering PR reviewer.
-- **get-shit-done** — the method for decomposing a big task and delegating each
-  piece to the cheapest capable model. `get-shit-done-claude` adds the
-  `/get-shit-done-claude:run` Workflow driver (Claude Code only).
-- **research** — `/research <topic>`: the research-before-acting ladder as a step.
-- **claude-transcripts**, **dual-agent-pr-review** — Claude Code only.
+- **plan-for-dummies** — write an implementation plan a weaker model can execute
+  without the planner present.
+- **agent-transcripts** — export Claude Code, pi and dsh transcripts into one
+  on-device cache and index them in a derived sqlite database.
+- **browser** — drive a browser from any harness: headless, or headed so a human
+  logs in and the agent takes over.
+- **dual-agent-pr-review** — Claude Code only.
+
+Modules that also ship `agents/` or `hooks/`:
+
+- **code-review** — parallel reviewers from five lenses, confidence scoring, one
+  comment posted with `gh`.
+- **feature-dev** — guided seven-phase feature development; a harness-neutral
+  port of Anthropic's plugin whose agents dispatch on all three harnesses.
+- **pr-flow** — branch + worktree, PR, watch CI until green, merge only when told.
 
 The harness-side foundation that content modules need to run on a given
 harness (the dsh skills bridge, the pi and dsh hook runners, and pi's `/name`

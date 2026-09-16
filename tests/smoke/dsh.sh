@@ -12,14 +12,14 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 DSH_HOME=$(mktemp -d); export DSH_HOME; trap 'rm -rf "$DSH_HOME"' EXIT
 profile=smoke
 echo "== dsh plugin add"
-dsh plugin --profile "$profile" add "file:$repo/modules/research" 2>&1 | grep -viE 'progress|^$' | tail -2 || true
+dsh plugin --profile "$profile" add "file:$repo/modules/plan-for-dummies" 2>&1 | grep -viE 'progress|^$' | tail -2 || true
 echo "== dump-config"
 cfg=$(dsh --profile "$profile" --dump-config 2>&1)
 fail=0
 check() { if eval "$2"; then echo "  ok   $1"; else echo "  FAIL $1"; fail=1; fi; }
-check "an empty cordis.patch.yml inserts no loader row for research" '[[ "$cfg" != *"module-skills-research"* ]]'
+check "an empty cordis.patch.yml inserts no loader row for plan-for-dummies" '[[ "$cfg" != *"module-skills-plan-for-dummies"* ]]'
 pdir="$DSH_HOME/profiles/$profile"
-check "research is installed as a bundle dependency" '[ -e "$pdir/node_modules/@allada-homelab/research/package.json" ]'
+check "plan-for-dummies is installed as a bundle dependency" '[ -e "$pdir/node_modules/@allada-homelab/plan-for-dummies/package.json" ]'
 echo "== apply every installed plugin that ships code under a strict ctx"
 node "$repo/tests/smoke/dsh-apply.mjs" "$pdir" || fail=1
 [ "$fail" = 0 ] || { echo "--- dump-config"; echo "$cfg" | tail -40; exit 1; }
