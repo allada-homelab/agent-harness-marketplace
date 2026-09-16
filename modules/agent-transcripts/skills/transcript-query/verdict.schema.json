@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/allada-homelab/agent-harness-marketplace/modules/agent-transcripts/skills/transcript-query/verdict.schema.json",
+  "title": "transcript verdict",
+  "description": "One subagent's judgement on a single transcript session. Use as the `schema` of a workflow/`agent()` call so a fan-out of excerpt readers returns validated, aggregatable verdicts instead of prose that has to be re-parsed.",
+  "type": "object",
+  "required": ["session_id", "verdict", "severity", "summary"],
+  "properties": {
+    "session_id": { "type": "integer", "description": "The sessions.id the excerpt was read from." },
+    "verdict": {
+      "type": "string",
+      "enum": ["ISSUE", "NO_ISSUE", "UNCERTAIN"],
+      "description": "ISSUE: the session hit a concrete problem in the subject area. NO_ISSUE: it only mentioned the subject. UNCERTAIN: the excerpt is too truncated to judge."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["high", "medium", "low", "n/a"],
+      "description": "high = blocker/root-cause failure; medium = error but worked around; low = minor/notice; n/a when verdict is NO_ISSUE."
+    },
+    "summary": { "type": "string", "maxLength": 600, "description": "One-sentence finding, with the concrete evidence (error text, command, symptom)." },
+    "evidence": { "type": "string", "maxLength": 2000, "description": "Optional quote of the specific message/command that supports the verdict." }
+  },
+  "additionalProperties": false
+}

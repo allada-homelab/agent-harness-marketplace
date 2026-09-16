@@ -16,6 +16,17 @@ Because the index holds the user's whole chat history, `transcript-query` is bui
 aggregates: its helper caps every cell and every result set, so answering a question does not
 empty transcript prose into the context asking it.
 
+The query skill ships four scripts. `query.py` runs one arbitrary capped SELECT. `search.py`
+answers "which sessions talk about X" and adds two knobs for a real hunt: `--exclude-injected`
+drops the standing instructions the ingest `annotate` pass flags as `injected`, and `--errors`
+ranks by matches that also carry a failure signal. `excerpt.py` writes bounded per-session
+excerpts (head/tail sampling, truncation flags, a `manifest.json`) into a durable, non-repo
+work dir, with `--next` to pull the messages after the head window. `cluster.py` groups judged
+sessions by shared failure signature, and `verdict.schema.json` validates a fan-out of excerpt
+readers. The ingest `annotate` pass marks a message `injected` when it is a `system` message or
+a non-`tool_result` message repeated across several sessions — the standing-instruction
+signature — so those scripts can filter it out.
+
 ## The sweep
 
 `transcript-sweep` is the deterministic first pass between indexing and analysis: one
