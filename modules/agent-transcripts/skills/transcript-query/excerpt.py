@@ -108,8 +108,23 @@ def session_ids(conn, args) -> list[int]:
     return [row[0] for row in conn.execute(sql, tuple(params))]
 
 
-def matching_rows(conn, sid: int, term: str, args):
+def matching_rows(conn, sid: int, term: str | None, args):
     """All matching (ord, role, ts, text) for a session, ordered, honoring filters."""
+    if term is None:
+        # `--ids` without `--term`: excerpt the session's (filtered) conversation.
+        conds = ["m.session_id = ?"]
+        params: list = [sid]
+        if args.exclude_injected:
+            conds.append("m.injected = 0")
+        if args.roles:
+            r = [x.strip() for x in args.roles.split(",") if x.strip()]
+            conds.append(f"m.role IN ({','.join('?' * len(r))})")
+            params.extend(r)
+        sql = (
+            "SELECT m.ord, m.role, m.ts, m.text FROM messages m"
+            f" WHERE {' AND '.join(conds)} ORDER BY m.ord"
+        )
+        return conn.execute(sql, tuple(params)).fetchall()
     conds = ["messages_fts MATCH ?", "m.session_id = ?"]
     params: list = [quote_term(term), sid]
     if args.exclude_injected:

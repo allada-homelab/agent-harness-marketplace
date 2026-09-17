@@ -199,3 +199,27 @@ def test_cluster_groups_by_signature(tmp_path, capsys):
     assert "18651" in out and "18761" in out
     # session 18723 is unmatched (no known signature)
     assert "unmatched" in out
+
+
+# ------------------------------------------------ regression: CLI bugs (v0.6.1)
+
+
+def test_annotate_subcommand_arg_names(tmp_path, capsys):
+    """`transcripts.py annotate` must parse --exclude-role (not --exclude_roles)."""
+    _seed(tmp_path)
+    rc = ti.main(["annotate", "--dest", str(tmp_path), "--exclude-role", "assistant"])
+    out = capsys.readouterr().out
+    assert "annotate: injected=" in out
+    assert "exclude_roles=assistant" in out
+    assert isinstance(rc, int)
+
+
+def test_excerpt_ids_without_term(tmp_path):
+    """`excerpt.py --ids` (no --term) excerpts the session's whole conversation."""
+    _seed(tmp_path)
+    work = tmp_path / "work"
+    ex.main(["--ids", "10", "--dest", str(tmp_path), "--work", str(work), "--run", "ids"])
+    text = (work / "excerpts" / "10.txt").read_text()
+    assert "# session_id=10" in text
+    assert "devcontainer up failed" in text  # the assistant message is included
+

@@ -1198,7 +1198,7 @@ def cmd_stats(args) -> int:
 
 
 def cmd_annotate(args) -> int:
-    roles = tuple(args.exclude_roles) if args.exclude_roles else ("tool_result",)
+    roles = tuple(args.exclude_role) if args.exclude_role else ("tool_result",)
     return annotate(resolve_dest(args.dest), args.min_sessions, roles)
 
 
