@@ -29,11 +29,17 @@ refusal names gh's message and the other likely causes (merge commits disabled
 — pr-flow only merges with a merge commit — or a branch-protection rule unmet).
 A green head that is behind its base is reported with a hint, since "require
 branches to be up to date" protection refuses such a merge. An empty
-`statusCheckRollup` (no CI configured, or the gap right after `open`'s push
-before GitHub Actions registers its check runs) is polled for up to
-`--no-checks-grace` seconds (default 300, reset whenever the head moves)
-before `watch` treats it as green — a check that shows up during the grace
-window is classified normally, failure included. Every poll also fetches
+`statusCheckRollup` is either no CI for this PR (none configured, or every
+workflow's `paths` filter misses the change) or the gap right after `open`'s
+push before GitHub Actions registers its check runs. `watch` tells them apart
+with `gh api repos/{owner}/{repo}/actions/runs?head_sha=`: a matching workflow
+registers a run within seconds, so zero runs on a head whose
+`mergeStateStatus` is `CLEAN`, held for `--no-runs-confirm` seconds (default
+20), is a verified green that `--merge` acts on. Otherwise the empty rollup is
+polled, at most every `--no-checks-poll` seconds (default 15, no backoff), for
+up to `--no-checks-grace` seconds (default 300, reset whenever the head moves)
+before `watch` treats it as an unverified green — a check that shows up during
+the grace window is classified normally, failure included. Every poll also fetches
 `origin/<branch>` and refuses to classify a snapshot whose `headRefOid` is not
 the commit actually pushed: right after a push GitHub's PR object can still
 report the previous head with its already-green checks, which used to come back

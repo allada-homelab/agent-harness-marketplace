@@ -44,8 +44,13 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
 5. **Watch** — `pr-flow watch`, after every push. It blocks up to one hour; it
    prints `next poll in Ns` to stderr before each wait, and tolerates transient
    `gh` failures (gives up after 10 in a row, exit 2). An empty check list is
-   polled for up to `--no-checks-grace` seconds (default 300) before being
-   treated as green, so a check that lands late still counts, and a snapshot
+   resolved by asking GitHub for Actions runs on the head: zero runs on a PR
+   GitHub already calls mergeable, held for `--no-runs-confirm` seconds
+   (default 20), means no CI applies (a docs-only PR under paths-filtered
+   workflows) and is a verified `green`; otherwise the empty list is polled,
+   at most every `--no-checks-poll` seconds (default 15), for up to
+   `--no-checks-grace` seconds (default 300) before being treated as an
+   unverified green, so a check that lands late still counts, and a snapshot
    whose head is not yet the commit you pushed is waited out the same way
    (`PR head … is not the pushed … yet` on stderr is normal right after a
    push). It returns one verdict:
@@ -72,9 +77,11 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    whose head is behind the base is reported with a hint: under "require
    branches to be up to date" the merge will be refused until you merge
    `origin/<base>` in and push. A `green` reached
-   only because a grace window expired (no checks ever reported, or the PR
-   head never caught up with the push) still exits 0 but `--merge` refuses
-   and says so on stdout: merge by hand once you have evidence.
+   only because a grace window expired (checks never reported but GitHub
+   could not confirm no run exists, or the PR head never caught up with the
+   push) still exits 0 but `--merge` refuses and says so on stdout: merge by
+   hand once you have evidence. A no-CI green (`no CI applies to this PR` on
+   stdout) is verified and `--merge` proceeds.
 6. **Merge only when told.** `pr-flow watch --merge` is allowed only when the
    user said, ahead of time and for this task, that the PR may be merged when
    green. Silence means no. A green PR without that permission ends the turn

@@ -254,3 +254,56 @@ def test_skipped_and_neutral_checks_count_as_passed(repo):
     assert last(r) == "pr-flow: watch green https://github.com/o/r/pull/7"
     calls = [json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()]
     assert sum(1 for c in calls if c[:2] == ["pr", "view"]) == 1
+
+
+def test_no_workflow_runs_and_clean_is_verified_green_and_merges(repo):
+    # Docs-only PR under paths-filtered workflows: GitHub never schedules a run, the rollup
+    # stays empty forever, and the PR is CLEAN within seconds. That is a verified green, not a
+    # grace-window guess, so --merge must proceed.
+    _, wt = opened(repo)
+    r = run("watch", "--merge", "--no-runs-confirm", "0", cwd=wt,
+            replay={"pr_view": [pr(checks=[])], "workflow_runs": 0})
+    assert r.returncode == 0, r.stderr
+    assert "no CI applies" in r.stdout
+    assert "refusing --merge" not in r.stdout
+    # The merge went through and watch tore the worktree (and the fake's log) down with it.
+    assert last(r).startswith("pr-flow: watch merged")
+    assert not wt.exists()
+
+
+def test_no_workflow_runs_but_not_clean_falls_back_to_unverified_grace(repo):
+    _, wt = opened(repo)
+    r = run("watch", "--merge", "--no-runs-confirm", "0", "--no-checks-grace", "0", cwd=wt,
+            replay={"pr_view": [pr(checks=[], mergeStateStatus="UNSTABLE")], "workflow_runs": 0})
+    assert r.returncode == 0, r.stderr
+    assert "no checks reported" in r.stdout and "refusing --merge" in r.stdout
+    calls = [json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()]
+    assert not any(c[0] == "api" and "/actions/runs" in c[1] for c in calls)
+
+
+def test_workflow_runs_exist_keeps_polling_until_check_arrives(repo):
+    _, wt = opened(repo)
+    r = run("watch", "--interval", "0", "--no-runs-confirm", "0", cwd=wt,
+            replay={"pr_view": [pr(checks=[]), pr(checks=[]), pr(checks=[check("SUCCESS")])], "workflow_runs": 1})
+    assert r.returncode == 0, r.stderr
+    assert "no CI applies" not in r.stdout
+    assert last(r) == "pr-flow: watch green https://github.com/o/r/pull/7"
+
+
+def test_runs_lookup_failure_falls_back_to_grace(repo):
+    _, wt = opened(repo)
+    r = run("watch", "--merge", "--no-runs-confirm", "0", "--no-checks-grace", "0", cwd=wt,
+            replay={"pr_view": [pr(checks=[])], "runs_fail": True})
+    assert r.returncode == 0, r.stderr
+    assert "could not list workflow runs" in r.stderr
+    assert "refusing --merge" in r.stdout
+
+
+def test_empty_rollup_caps_poll_interval_instead_of_backing_off(repo):
+    _, wt = opened(repo)
+    replay = {"pr_view": [pr(checks=[]), pr(checks=[]), pr(checks=[]), pr(checks=[check("SUCCESS")])],
+              "workflow_runs": 1}
+    r = run("watch", "--interval", "60", "--interval-max", "300", "--no-checks-poll", "15", cwd=wt, replay=replay)
+    assert r.returncode == 0, r.stderr
+    waits = [line.split("next poll in ")[1].rstrip("s") for line in r.stderr.splitlines() if "next poll in" in line]
+    assert waits == ["15", "15", "15"]

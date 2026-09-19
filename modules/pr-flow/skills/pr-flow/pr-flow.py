@@ -335,6 +335,23 @@ def pushed_head(cwd, branch):
         return None
 
 
+def workflow_runs_for(cwd, sha):
+    """How many GitHub Actions workflow runs exist for `sha`, or None when gh cannot say.
+
+    A push that matches any workflow trigger registers a (queued) run within seconds, well
+    before that run's check-runs reach the PR's statusCheckRollup. Zero runs for a head that
+    GitHub already reports mergeable therefore means no CI applies to this PR at all (the
+    docs-only PR under paths-filtered workflows), not "CI has not registered yet".
+    """
+    try:
+        out = gh("api", f"repos/{{owner}}/{{repo}}/actions/runs?head_sha={sha}&per_page=1",
+                 "--jq", ".total_count", cwd=cwd)
+        return int(out.strip())
+    except (Fail, subprocess.TimeoutExpired, ValueError) as e:
+        warn(f"could not list workflow runs for {str(sha)[:7]} ({e}); falling back to the no-checks grace window")
+        return None
+
+
 def check_outcome(c):
     return (c.get("conclusion") or c.get("state") or "").upper()
 
@@ -544,14 +561,26 @@ def cmd_watch(a):
                 verdict = None
 
             if verdict == "green-no-checks":
-                # Empty statusCheckRollup: could be a repo with no CI, or the gap between the
-                # push and GitHub Actions registering its check runs. Poll through a grace
-                # window (reset whenever the head moves) before trusting it as green.
+                # Empty statusCheckRollup: could be a repo with no CI (or no workflow whose
+                # paths filter matches this PR), or the gap between the push and GitHub Actions
+                # registering its check runs. The two are told apart by asking GitHub for
+                # workflow runs on this head: a matching workflow registers a run within
+                # seconds, so zero runs on a head GitHub already calls mergeable, held for
+                # --no-runs-confirm, is a verified "no CI applies" green that --merge may act
+                # on. Anything less certain polls through the grace window (reset whenever the
+                # head moves) and comes out unverified, as before.
                 now = time.time()
                 if no_checks_since is None:
                     no_checks_since = now
                 elapsed = now - no_checks_since
-                if elapsed >= a.no_checks_grace:
+                runs = None
+                if not grace_expired and pr.get("mergeStateStatus") == "CLEAN":
+                    runs = workflow_runs_for(cwd, pr.get("headRefOid") or "")
+                if runs == 0 and elapsed >= a.no_runs_confirm:
+                    print(f"no workflow run exists for this head after {elapsed:.0f}s and GitHub reports it "
+                          "mergeable; no CI applies to this PR, treating as green")
+                    verdict = "green"
+                elif elapsed >= a.no_checks_grace:
                     print(f"no checks reported for this head after {elapsed:.0f}s; treating as green")
                     verdict = "green"
                     grace_expired = True
@@ -565,6 +594,11 @@ def cmd_watch(a):
         if time.time() >= deadline:
             verdict = "timeout"
             break
+        if no_checks_since is not None:
+            # An empty rollup resolves within seconds either way (a run registers, or none ever
+            # will); backing off toward --interval-max here is what turned a ready PR into a
+            # multi-minute wait.
+            interval = min(interval, a.no_checks_poll)
         warn(f"next poll in {interval:.0f}s")
         time.sleep(min(interval, max(0.0, deadline - time.time())) * SLEEP_SCALE)
         interval = min(interval * 1.5, a.interval_max)
@@ -698,6 +732,11 @@ def main(argv=None):
     w.add_argument("--interval-max", type=float, default=300)
     w.add_argument("--no-checks-grace", type=float, default=300,
                     help="seconds to keep polling an empty statusCheckRollup before treating it as green")
+    w.add_argument("--no-runs-confirm", type=float, default=20,
+                    help="seconds an empty rollup must show zero Actions runs for the head (and a CLEAN merge "
+                         "state) before it counts as a verified no-CI green")
+    w.add_argument("--no-checks-poll", type=float, default=15,
+                    help="poll interval cap while the rollup is empty (no backoff toward --interval-max)")
     w.set_defaults(fn=cmd_watch)
     t = sub.add_parser("teardown", help="remove the worktree and delete the merged branch")
     t.add_argument("branch", nargs="?")
