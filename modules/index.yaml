@@ -94,6 +94,116 @@ modules:
     summary: Sweep the agent-transcripts sqlite index for sessions worth a closer look and record flagged
       tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized
       results or sessions in the findings store beside it.
+- name: best-practices
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  - pi
+  - dsh
+  description: Library of domain best-practices skills with stable, citable rule IDs (containers, uv,
+    Python, FastAPI, Go, gRPC) plus the containers-audit interactive scan-and-fix workflow and the authoring
+    tools for adding rules.
+  skills:
+  - name: containers-audit
+    path: modules/best-practices/skills/containers-audit/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - audit
+    - containers
+    - docker
+    command: true
+    summary: Audit Dockerfile, compose and devcontainer.json files against the containers-best-practices
+      rule set and offer each fix interactively.
+  - name: containers-best-practices
+    path: modules/best-practices/skills/containers-best-practices/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: false
+    summary: Use when working with Dockerfiles, docker-compose/compose.yml, buildx, dev containers (devcontainer.json),
+      or .dockerignore — including Python container builds with uv.
+  - name: fastapi-best-practices
+    path: modules/best-practices/skills/fastapi-best-practices/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: false
+    summary: Use when working with FastAPI apps — building or reviewing APIRouter route modules, Pydantic
+      v2 request/response models, Depends() dependencies, lifespan startup/shutdown, OAuth2/JWT auth,
+      async SQLAlchemy sessions, TestClient/httpx tests, or uvicorn deployment.
+  - name: go-best-practices
+    path: modules/best-practices/skills/go-best-practices/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: false
+    summary: Use when working with Go code — .go files and go.mod/go.sum, go build / go test / go test
+      -race / go vet / gofmt / staticcheck / golangci-lint / govulncheck, module and package layout, error
+      handling (errors.Is / %w), the context package, goroutines and channels, errgroup, stdlib net/http
+      servers and clients, graceful shutdown on SIGINT/SIGTERM, parameterized SQL, or Go security (html/template,
+      crypto/rand).
+  - name: grpc-best-practices
+    path: modules/best-practices/skills/grpc-best-practices/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: false
+    summary: Use when working with gRPC — .proto files and proto3 schema design, enum zero values and
+      _UNSPECIFIED sentinels, well-known types (google.protobuf.Timestamp / Duration / FieldMask), List
+      pagination (page_size / page_token / next_page_token), buf or protoc generation, grpc-go / grpclib
+      / grpcio servers and clients, google.rpc status codes and rich errors, deadlines and cancellation
+      propagation, streaming RPCs (server/client/bidi), interceptors (auth, logging, panic recovery, protovalidate),
+      TLS / mTLS transport credentials and the insecure-credentials footgun, server reflection + grpcurl/grpcui,
+      health checking, message-size limits and connection reuse.
+  - name: meta-best-practices
+    path: modules/best-practices/skills/meta-best-practices/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: false
+    summary: Use when adding, editing, or reviewing rules in the best-practices library — covers the rule-ID
+      format (PREFIX-NNN), severity scale, four-part What/Why/How/When-NOT-to-apply reference structure,
+      SKILL.md shape, third-person description-field rules, and how to use tools/new-skill.sh + tools/new-rule.sh
+      + tools/lint.sh + tools/render-index.sh.
+  - name: python-best-practices
+    path: modules/best-practices/skills/python-best-practices/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: false
+    summary: Use when working with Python projects — `.py` files, `pyproject.toml` (without `[tool.uv]`),
+      `conftest.py`, `mypy.ini`, `pyrightconfig.json`, `.python-version` — or when the user asks about
+      Python project layout, typing, linting, testing, async, logging, packaging, dependency auditing,
+      or profiling.
+  - name: uv-best-practices
+    path: modules/best-practices/skills/uv-best-practices/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: false
+    summary: Use when working with uv (Astral's Python package and project manager) — `uv sync` / `add`
+      / `lock` / `run` / `tool` / `build` / `publish` / `audit` / `export`, `uvx`, a `uv.lock` or `pylock.toml`
+      file, or a `pyproject.toml` with `[tool.uv]` or `[dependency-groups]`.
 - name: browser
   version: 0.1.2
   kinds:

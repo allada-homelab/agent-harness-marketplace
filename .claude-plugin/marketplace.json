@@ -37,7 +37,7 @@
     },
     {
       "name": "browser",
-      "description": "Drive a browser from any harness: headless auto mode, headed hybrid mode where a human logs in and the agent takes over, or attach to a browser the user opened via its debug port — through agent-browser on a persistent per-identity profile.",
+      "description": "Drive a browser from any harness: headless auto mode, headed hybrid mode where a human logs in and the agent takes over, or attach to a browser the user opened via its debug port \u2014 through agent-browser on a persistent per-identity profile.",
       "category": "development",
       "version": "0.1.2",
       "source": "./modules/browser"
@@ -62,6 +62,13 @@
       "category": "development",
       "version": "0.1.0",
       "source": "./modules/code-simplifier"
+    },
+    {
+      "name": "best-practices",
+      "description": "Library of domain best-practices skills with stable, citable rule IDs (containers, uv, Python, FastAPI, Go, gRPC) plus the containers-audit interactive scan-and-fix workflow and the authoring tools for adding rules.",
+      "category": "development",
+      "version": "0.1.0",
+      "source": "./modules/best-practices"
     }
   ]
 }

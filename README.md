@@ -31,6 +31,8 @@ Content modules (skills only, no code):
 - **browser** — drive a browser from any harness: headless, or headed so a human
   logs in and the agent takes over.
 - **dual-agent-pr-review** — Claude Code only.
+- **best-practices** — domain rule libraries with citable rule IDs (containers,
+  uv, Python, FastAPI, Go, gRPC) plus the interactive `containers-audit`.
 
 Modules that also ship `agents/` or `hooks/`:
 
