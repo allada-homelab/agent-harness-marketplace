@@ -22,7 +22,7 @@ is called out. The biggest cross-cuts:
 distroless uv image as a source stage and copy the binary out:
 
 ```dockerfile
-COPY --from=ghcr.io/astral-sh/uv:0.11.16@sha256:240fb85ab0f263ef12f492d8476aa3a2e4e1e333f7d67fbdd923d00a506a516a /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.17@sha256:10787c682e4184e4f290de1171fd4703dc63de99221f10fe1c99002ce7fa9acc /uv /uvx /bin/
 ```
 
 **Why.** Three reasons:
@@ -38,13 +38,24 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.16@sha256:240fb85ab0f263ef12f492d8476aa3a2
 FROM python:3.12-slim@sha256:... AS base
 
 # Astral's uv image is distroless — just the binary
-COPY --from=ghcr.io/astral-sh/uv:0.11.16@sha256:240fb85ab0f263ef12f492d8476aa3a2e4e1e333f7d67fbdd923d00a506a516a /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.17@sha256:10787c682e4184e4f290de1171fd4703dc63de99221f10fe1c99002ce7fa9acc /uv /uvx /bin/
 ```
 
-Pin the literal version (`0.11.16`) and digest as a single pair (SEC-010).
-Bumping `0.11.16` → `0.5.12` without updating the digest will silently
-pull `0.11.16` (the digest wins). Renovate's Dockerfile manager handles
-this lockstep if you configure it.
+Pin the literal version (`0.12.17`) and digest as a single pair (SEC-010).
+Bumping `0.12.17` → `0.12.18` without updating the digest will silently
+pull `0.12.17` (the digest wins). Renovate's Dockerfile manager handles
+this lockstep if you configure it. (The pair above is the multi-arch index
+digest of `ghcr.io/astral-sh/uv:0.12.17`, checked with
+`docker buildx imagetools inspect`; resolve your own pin the same way.)
+
+Verify the image's provenance before trusting a new pin — Astral publishes
+GitHub attestations for its images:
+
+```bash
+gh attestation verify --owner astral-sh oci://ghcr.io/astral-sh/uv:0.12.17
+```
+
+Cite: [uv Docker guide](https://docs.astral.sh/uv/guides/integration/docker/).
 
 **Multi-arch caveat.** Astral publishes per-architecture digests for
 `linux/amd64` and `linux/arm64`. When you build for both architectures
@@ -67,9 +78,12 @@ legitimate, with the copy-from-distroless pattern being preferred when
 you want strict control over the base layer.
 
 **When NOT to apply.** When you can't reach ghcr.io from your build
-runner (air-gapped or restricted CI). Then fall back to the install
-script (`curl -fsSL https://astral.sh/uv/install.sh | sh`) — and pin its
-version explicitly (`UV_VERSION=0.11.16 sh`).
+runner (air-gapped or restricted CI). Then fall back to the standalone
+installer, with the version in the URL path so the script is pinned:
+`curl -LsSf https://astral.sh/uv/0.12.17/install.sh | sh` (the uv Docker
+guide's equivalent is `ADD https://astral.sh/uv/0.12.17/install.sh /uv-installer.sh`
+then `RUN sh /uv-installer.sh`; add `--checksum=` per DOCKER-026).
+Cite: [uv installation — standalone installer](https://docs.astral.sh/uv/getting-started/installation/).
 
 ---
 
@@ -96,6 +110,9 @@ Reinforces DOCKER-001 (layer ordering) for the Python ecosystem.
 FROM python:3.12-slim AS base
 COPY --from=ghcr.io/astral-sh/uv:0.11.16@sha256:... /uv /uvx /bin/
 WORKDIR /app
+# Predefined platform ARGs are global-only; without this line the cache id
+# below always expands to its default (uv-amd64) on every platform.
+ARG TARGETARCH
 
 # Pass 1: external dependencies only.
 # Bind-mounts (not COPY) so the manifest files don't end up in the layer.
@@ -113,6 +130,12 @@ RUN --mount=type=cache,id=uv-${TARGETARCH:-amd64},target=/root/.cache/uv,sharing
 # put the venv on PATH so `python` is the project's interpreter
 ENV PATH="/app/.venv/bin:$PATH"
 ```
+
+Why `ARG TARGETARCH` inside the stage: the predefined platform ARGs
+"are available in the global scope of the Dockerfile, but they aren't
+automatically inherited by build stages" ([build variables](https://docs.docker.com/build/building/variables/#multi-platform-build-arguments)).
+Without the declaration `${TARGETARCH:-amd64}` always takes the fallback, so
+an arm64 build shares the amd64 cache slice (DOCKER-017).
 
 Why `--mount=type=bind` for `pyproject.toml` / `uv.lock` in pass 1: the
 files are needed for the install but should not be copied into the layer
@@ -409,6 +432,8 @@ FROM python:3.12-slim AS base
 COPY --from=ghcr.io/astral-sh/uv:0.11.16@sha256:... /uv /uvx /bin/
 ENV UV_LINK_MODE=copy
 WORKDIR /app
+# Redeclare in the stage, or the cache id is always uv-amd64 (UV-002).
+ARG TARGETARCH
 
 # Pass 1: external deps only. Workspace members not present, so --frozen.
 RUN --mount=type=cache,id=uv-${TARGETARCH:-amd64},target=/root/.cache/uv,sharing=locked \
@@ -439,7 +464,8 @@ no `[tool.uv.workspace]` block) — use UV-002 as written.
 (ruff, mypy, pre-commit, black, mkdocs, ...), set
 `UV_TOOL_BIN_DIR=/usr/local/bin` (or another directory already on
 `PATH`) before running the installs. Otherwise uv places the resulting
-binaries under `~/.local/bin/uv-tools/` — which isn't on `PATH` in
+binaries in its executable directory — `$XDG_BIN_HOME`, else
+`$XDG_DATA_HOME/../bin`, else `~/.local/bin` — which isn't on `PATH` in
 most base images, so the tools install successfully but aren't
 findable.
 
@@ -462,7 +488,7 @@ its deps don't conflict with the project's. uv tracks tool installs in
 a dedicated directory (`uv tool dir`, default `~/.local/share/uv/tools`)
 and symlinks the entry-point binaries into a bin directory.
 
-The default `~/.local/bin/uv-tools/` works on developer laptops where
+The default `~/.local/bin` works on developer laptops where
 the shell adds `~/.local/bin` to `PATH` automatically (or via
 `uv tool update-shell`). Inside a container, three things break:
 
@@ -475,7 +501,8 @@ directory already on the default `PATH`) sidesteps all three: the tool
 binaries land somewhere every user can find them.
 
 Cite: [uv guide — using uv tool install in Docker](https://docs.astral.sh/uv/guides/integration/docker/),
-[uv reference — UV_TOOL_BIN_DIR](https://docs.astral.sh/uv/reference/environment/#uv_tool_bin_dir).
+[uv reference — UV_TOOL_BIN_DIR](https://docs.astral.sh/uv/reference/environment/#uv_tool_bin_dir),
+[uv storage — executable directory](https://docs.astral.sh/uv/reference/storage/#executable-directory).
 
 **How.** Common patterns:
 
@@ -538,8 +565,11 @@ ENTRYPOINT ["ruff", "check"]
 **When NOT to apply.**
 
 - Images that don't use `uv tool install` at all — the env var has no effect.
-- Cases where the default `~/.local/bin/uv-tools/` is genuinely what you want, e.g. you've explicitly added that path to the image's `PATH` and want strong scoping per user. (Rare in containers, common on dev laptops.)
+- Cases where the default `~/.local/bin` is genuinely what you want, e.g. you've explicitly added that path to the image's `PATH` and want strong scoping per user. (Rare in containers, common on dev laptops.)
 - Single-stage dev containers where you `uv tool install` interactively and rely on `uv tool update-shell` having been run — but for *image*-built tool installs, prefer the explicit `UV_TOOL_BIN_DIR` declaration over relying on shell rc state.
+
+---
+
 ## UV-010 — Use `ENV UV_NO_DEV=1` and `UV_NO_INSTALL_*` instead of repeating flags
 
 **What.** Since uv 0.8.7, `UV_NO_DEV=1` is a first-class environment

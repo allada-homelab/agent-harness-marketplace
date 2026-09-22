@@ -88,20 +88,20 @@ Tune per project. Critically, **exclude `.env*` but include `.env.example`**
 
 ## SEC-002 — Use BuildKit
 
-**What.** Build with BuildKit, not the legacy builder. Either:
-
-- `DOCKER_BUILDKIT=1 docker build ...`
-- `docker buildx build ...` (preferred; buildx wraps BuildKit)
-- Add `"features": { "buildkit": true }` in `~/.docker/config.json` to make it the default
+**What.** Build with BuildKit, not the legacy builder: `docker build`
+on Docker Engine ≥23.0 (BuildKit is the default there), or
+`docker buildx build` (buildx always drives BuildKit).
 
 **Why.** BuildKit is required for `RUN --mount=type=cache` (DOCKER-009),
 `--mount=type=secret` (DOCKER-010 / SEC-006), `--mount=type=ssh`,
 `HEREDOC` syntax, named contexts, multi-stage parallelism, and SBOM/provenance
 attestation. The legacy builder supports none of these. BuildKit is
-**the default** on Docker Engine ≥23.0 (Feb 2023) and Docker Desktop
-≥4.19 — `DOCKER_BUILDKIT=1` is no longer needed and is harmless. The
-legacy builder is **deprecated** and tracking for removal; new projects
-should not rely on it.
+**the default** builder since Docker Engine 23.0, so the old
+`DOCKER_BUILDKIT=1` toggle is unnecessary on any current engine. The
+legacy builder is **deprecated**; new projects should not rely on it.
+
+Cite: [BuildKit](https://docs.docker.com/build/buildkit/),
+[legacy builder deprecation](https://docs.docker.com/engine/deprecated/#legacy-builder-for-linux-images).
 
 **How.** First line of any Dockerfile that uses BuildKit features:
 
@@ -122,7 +122,7 @@ security patches.
 For CI: enable buildx in the runner:
 
 ```yaml
-- uses: docker/setup-buildx-action@v3
+- uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 ```
 
 **When NOT to apply.** Two real cases:
@@ -152,10 +152,12 @@ It's *not necessary* when:
 - All your deployment targets are x86_64.
 - You only build for local dev on one architecture.
 
-The build runs each platform's stages in parallel via QEMU emulation,
-which can be 5–10× slower than native. Native multi-arch runners (or one
-runner per arch and `docker manifest`) avoid the emulation tax but add CI
-complexity.
+On a single-node builder, the non-native platform's stages run under
+QEMU emulation, which is much slower for CPU-bound steps. Native
+multi-arch runners (or one runner per arch, combined with
+`docker buildx imagetools create` — `docker manifest` is still an
+experimental command) avoid the emulation tax but add CI complexity
+(BUILDX-006).
 
 **How.**
 
@@ -235,7 +237,9 @@ registry token, SSH key for a private git dep), pass it via
 `RUN --mount=type=secret` or `--mount=type=ssh`, not `ARG` or `ENV`.
 
 **Why.** `ARG NPM_TOKEN=...` bakes the token into the image's history and
-metadata. Anyone with pull access to the image can recover it. The secret
+metadata, and build arguments are also recorded in the build's
+provenance attestation (with `mode=max` their values too — BUILDX-008).
+Anyone with pull access to the image can recover it. The secret
 mount makes the credential available only inside that specific `RUN` step,
 in a tmpfs that disappears after the step completes — nothing persists
 into the resulting layer.
@@ -264,6 +268,18 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
 ```bash
 docker buildx build --secret id=npmrc,src=$HOME/.npmrc .
 ```
+
+A tool that reads the credential from an environment variable gets it
+with `env=` (Dockerfile ≥1.10) — scoped to that one `RUN`, never written
+to a layer, and no `$(cat /run/secrets/...)` shell plumbing:
+
+```dockerfile
+RUN --mount=type=secret,id=gh_token,env=GH_TOKEN \
+    gh release download v1.2.3 --repo myorg/tool
+```
+
+Cite: [build secrets](https://docs.docker.com/build/building/secrets/),
+[build variables — build args in provenance](https://docs.docker.com/build/building/variables/).
 
 For runtime secrets (DB passwords, API keys), use orchestrator-native
 secret mechanisms (Kubernetes Secrets, Docker secrets, Vault sidecar) — not
@@ -353,8 +369,13 @@ all of which are easy to forget:
 
 File-mounted secrets bypass all three: they don't appear in `docker
 inspect`, they're not in `/proc/<pid>/environ`, and they don't get
-trivially logged. The file itself is a tmpfs read-only mount, owned by
-root (or the container user), readable only by that UID.
+trivially logged. They are **not** access-controlled inside the
+container, though: a `file:`-sourced secret is a bind mount of the host
+file, mounted with the default mode `0444` — readable by every user in
+the container — and Compose **silently ignores** `uid`, `gid` and `mode`
+for `file:` sources (they are only implemented for `environment:`
+sources). Treat the secret as readable by any process in the container,
+and keep the host file itself `0600`/`0400`.
 
 **How.**
 
@@ -404,9 +425,11 @@ def settings_customise_sources(cls, settings_cls, init_settings, env_settings, d
 
 The `secrets:` block also accepts:
 
-- `environment: VAR` — pull from compose's env at parse time (least secure of the three; OK for dev).
-- `file: ./path` — read from a host file.
+- `environment: VAR` — pull from compose's env at parse time (least secure of the three; OK for dev). The only source where the long-syntax `uid` / `gid` / `mode` take effect.
+- `file: ./path` — read from a host file; bind-mounted, `0444`, `uid`/`gid`/`mode` ignored.
 - `external: true` — reference a Docker / Swarm secret managed outside compose (best for prod).
+
+Cite: [compose reference — services secrets](https://docs.docker.com/reference/compose-file/services/#secrets).
 
 **When NOT to apply.** Genuinely non-secret config (log level, feature
 flags, base URLs) — env vars are fine for those. The cost of the
@@ -448,7 +471,7 @@ FROM python:3.12-slim@sha256:740d94a19218c8dd584b92f804b1158f85b0d241e5215ea26ed
 Same rule for `COPY --from` references to non-final stages:
 
 ```dockerfile
-COPY --from=ghcr.io/astral-sh/uv:0.5.11@sha256:240fb85ab0f263ef12f492d8476aa3a2e4e1e333f7d67fbdd923d00a506a516a /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.17@sha256:10787c682e4184e4f290de1171fd4703dc63de99221f10fe1c99002ce7fa9acc /uv /uvx /bin/
 ```
 
 For Renovate to keep these updated, configure a `regexManager` or use the
@@ -460,10 +483,37 @@ A short comment makes the pair obvious to humans too:
 FROM python:3.12-slim@sha256:740d94a19218c8dd584b92f804b1158f85b0d241e5215ea26ed2dcade2b9d138 AS base
 ```
 
-In Jinja/copier templates: leave the entire `FROM` line literal (don't
-template the version at all), or template the *whole line* — version,
-tag suffix, digest — as one unit that the template author updates as a
-pair.
+**Template recipe (Jinja/copier).** Keep the reference literal in the
+template source so the template repo's own Renovate/Dependabot run bumps
+it:
+
+```dockerfile
+# Dockerfile.jinja — no Jinja inside the image reference
+FROM python:3.13-slim@sha256:<digest> AS base
+```
+
+If the version genuinely is a template question, make each choice a
+**complete literal** `image:tag@sha256:...` string, and have a Renovate
+[`customManagers`](https://docs.renovatebot.com/modules/manager/regex/)
+regex (capturing `currentValue` and `currentDigest`) keep every choice
+current:
+
+```yaml
+# copier.yml
+python_image:
+  type: str
+  choices:
+    "3.13": "python:3.13-slim@sha256:<digest-3.13>"
+    "3.12": "python:3.12-slim@sha256:<digest-3.12>"
+```
+
+```dockerfile
+FROM {{ python_image }} AS base
+```
+
+Never template the tag and the digest as separate variables
+(`python:{{ ver }}-slim@sha256:{{ digest }}`) — nothing keeps them in
+lockstep.
 
 **When NOT to apply.** Throwaway local builds where you genuinely want
 "newest matching tag" and don't care about reproducibility — drop the
@@ -672,7 +722,10 @@ match common secret-indicating patterns:
 
 If any of these appear, the credential is being injected the wrong way.
 Both `ARG` and `ENV` bake the value into image metadata visible via
-`docker inspect` and `docker history`.
+`docker inspect` and `docker history`, and build arguments are also
+recorded in the provenance attestation (values included under
+`mode=max`). The build check `SecretsUsedInArgOrEnv` (DOCKER-029) flags
+the same names mechanically.
 
 **Why.** This is the dual to SEC-006 (use secret mounts for build-time
 credentials) and SEC-009 (use file-mounted secrets for runtime). The
@@ -704,9 +757,9 @@ ARG PRIVATE_KEY_PATH        # path is OK but the name pattern reads as secret-sh
 Build-time secret → use a BuildKit secret mount (SEC-006):
 
 ```dockerfile
-# good
-RUN --mount=type=secret,id=npm_token \
-    NPM_TOKEN=$(cat /run/secrets/npm_token) npm ci
+# good — env= needs Dockerfile syntax >= 1.10
+RUN --mount=type=secret,id=npm_token,env=NPM_TOKEN \
+    npm ci
 ```
 
 ```bash
@@ -890,22 +943,22 @@ real safety boundary is `.dockerignore`, not the COPY syntax.
 
 ---
 
-## SEC-017 — Prefer `COPY` over `ADD`; avoid `ADD <url>` and `ADD foo.tar.gz`
+## SEC-017 — Prefer `COPY` over `ADD`; flag un-checksummed `ADD <url>` and local tar auto-extract
 
-**What.** Use `COPY` for files into the image. Reserve `ADD` only for
-the two cases where its special behavior is actually desired, and even
-then prefer the explicit alternatives.
+**What.** Use `COPY` for local files. Flag exactly two `ADD` patterns:
+`ADD <url>` **without** `--checksum=`, and `ADD` of a local tar archive
+that relies on implicit auto-extraction. `ADD --checksum=... <url>` is
+the recommended way to fetch a remote artifact, not a violation.
 
 `ADD` has two side effects `COPY` doesn't:
 
 1. **Auto-extract local tar archives.** `ADD foo.tar.gz /app/` extracts the tarball — surprising, and almost never what the reader of the Dockerfile expects.
-2. **Fetch remote URLs.** `ADD https://example.com/file.tar.gz /tmp/` downloads the URL during build. No checksum verification, no caching beyond URL-level caching, no `--mount=type=cache` benefit.
+2. **Fetch remote URLs.** `ADD https://example.com/file.tar.gz /tmp/` downloads the URL during build — without `--checksum=` nothing verifies what came back.
 
 **Why.** Both behaviors cause real bugs:
 
 - **Tar auto-extraction is invisible.** Someone reading the Dockerfile sees `ADD foo.tar.gz /app/` and assumes a single file lands at `/app/foo.tar.gz`. Instead the tarball's contents explode into `/app/`, potentially overwriting files. The behavior depends on the file extension (`.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tar.xz` are all auto-extracted; `.zip` is not).
-- **Remote `ADD` skips verification.** `ADD https://example.com/installer.sh /tmp/` produces no checksum check, no signature validation, and gives the network endpoint silent write access into your image at build time. If `example.com` is ever compromised or the URL ever serves a different file, the build silently picks up the change.
-- **Remote `ADD` is the only "fetch" mechanism that doesn't show up in `RUN` output.** A `curl ... | sh` is at least visible in build logs; `ADD <url>` runs silently with no visible verification step.
+- **Remote `ADD` without `--checksum` skips verification.** `ADD https://example.com/installer.sh /tmp/` produces no checksum check, no signature validation, and gives the network endpoint silent write access into your image at build time. If `example.com` is ever compromised or the URL ever serves a different file, the build silently picks up the change.
 
 **How.** Replace the patterns:
 
@@ -923,24 +976,26 @@ RUN tar -xzf /tmp/release.tar.gz -C /opt/ \
 # bad — no checksum, silent supply chain
 ADD https://example.com/tool-v1.2.tar.gz /tmp/tool.tar.gz
 
-# good — explicit fetch + checksum + cache mount
-RUN --mount=type=cache,target=/var/cache/downloads \
-    curl -fsSL -o /tmp/tool.tar.gz https://example.com/tool-v1.2.tar.gz \
- && echo "abc123...  /tmp/tool.tar.gz" | sha256sum -c - \
- && tar -xzf /tmp/tool.tar.gz -C /opt/ \
- && rm /tmp/tool.tar.gz
+# good — the build fails if the download doesn't match (Dockerfile >= 1.6)
+ADD --checksum=sha256:<sha256-of-the-file> \
+    https://example.com/tool-v1.2.tar.gz /tmp/tool.tar.gz
+
+# good — extract a remote archive explicitly (Dockerfile >= 1.17)
+ADD --checksum=sha256:<sha256-of-the-file> --unpack=true \
+    https://example.com/tool-v1.2.tar.gz /opt/tool/
 ```
 
-For remote files that change rarely and have a stable URL, BuildKit's
-[Git context](https://docs.docker.com/build/concepts/context/#git-repositories)
-or `--mount=type=bind` from an OCI ref are more auditable than `ADD <url>`.
+A Git source takes the commit SHA as its checksum:
+`ADD --checksum=<full-commit-sha> https://github.com/org/repo.git#v1.2.3 /src`.
 
-**When NOT to apply.** Genuinely rare:
+Cite: [best practices — ADD or COPY](https://docs.docker.com/build/building/best-practices/#add-or-copy),
+[Dockerfile reference — ADD](https://docs.docker.com/reference/dockerfile/#add).
 
-- `ADD --checksum=sha256:abc... https://...` (BuildKit ≥ 0.10) does enforce a checksum and is acceptable — it's the un-checksummed `ADD <url>` that's the problem.
+**When NOT to apply.**
+
+- `ADD --checksum=... <url>` — this is the recommended form, not a finding.
 - `ADD --keep-git-dir=true <git-url>` for git-context builds where you want the `.git` directory preserved.
-
-Otherwise default to `COPY` + explicit `RUN`.
+- An explicit `ADD --unpack=true` on a local archive — the extraction is visible, which is the whole point of the rule.
 
 ---
 
@@ -1117,6 +1172,29 @@ RUN --mount=type=ssh,id=github \
     git clone git@github.com:myorg/private-npm-pkg.git
 ```
 
+**Remote Git sources without a `RUN`.** `ADD` fetches a private repo over
+SSH directly, using the same forwarded agent:
+
+```dockerfile
+# syntax=docker/dockerfile:1
+ADD git@github.com:myorg/private-lib.git#v1.4.0 /src/private-lib
+```
+
+```bash
+docker buildx build --ssh default .
+```
+
+For HTTPS Git sources, pass a token as the `GIT_AUTH_TOKEN` build secret,
+scoped to one host with the `.<host>` suffix so it is never sent anywhere
+else:
+
+```bash
+docker buildx build --secret id=GIT_AUTH_TOKEN.github.com,env=GITHUB_TOKEN .
+```
+
+Cite: [Dockerfile reference — ADD](https://docs.docker.com/reference/dockerfile/#add),
+[build secrets — Git authentication](https://docs.docker.com/build/building/secrets/#git-authentication-for-remote-contexts).
+
 **GitHub Actions caveat.** GHA has its own SSH-agent action
 ([webfactory/ssh-agent](https://github.com/webfactory/ssh-agent)) that
 loads a deploy key into the runner's agent, after which `--ssh default`
@@ -1130,6 +1208,8 @@ addresses.
 - Build-time **token** auth (private package registry, deploy token) — use `--mount=type=secret` (SEC-006) instead. Tokens aren't SSH identities.
 - Air-gapped / offline builds where no agent forwarding is possible. Vendor the private dependency into the build context instead, accepting the maintenance cost.
 
+---
+
 ## SEC-021 — Pin third-party scanner/tool images by digest and CI Actions by commit SHA
 
 **What.** Pin every third-party security scanner or build tool you pull
@@ -1137,11 +1217,14 @@ addresses.
 and pin every GitHub Action by a full commit SHA — not a floating
 `@v0` / `:latest` tag.
 
-**Why.** In the 2026 Trivy supply-chain compromise, attackers hijacked
-floating tags — `aquasecurity/trivy-action@v0`, `setup-trivy`, and the
-`trivy:0.69.4`/`0.69.5`/`0.69.6` images — to ship an infostealer to
-anyone tracking the moving tag. The last clean release was 0.69.3 and the
-current clean line is v0.71.x. A mutable tag means an upstream compromise
+**Why.** In the March 2026 Trivy supply-chain compromise
+([CVE-2026-33634 / GHSA-69fq-xp46-6x23](https://github.com/advisories/GHSA-69fq-xp46-6x23),
+critical), attackers force-pushed 76 of 77 `aquasecurity/trivy-action`
+tags and every `setup-trivy` tag to a credential stealer, and published
+malicious `trivy` 0.69.4 binaries/images plus `aquasec/trivy:0.69.5`/`0.69.6`
+images — anyone tracking a moving tag ran it. Fixed: `trivy-action`
+≥0.35.0, `setup-trivy` ≥0.2.6; the last clean `trivy` before the
+incident was 0.69.3. A mutable tag means an upstream compromise
 runs *your* CI with *your* registry and cloud credentials in scope.
 Pinning a digest/SHA makes the artifact immutable and the supply chain
 auditable.
@@ -1150,7 +1233,7 @@ auditable.
 
 ```yaml
 # pin the action by commit SHA, not @v0
-- uses: aquasecurity/trivy-action@<full-commit-sha>   # 0.71.x
+- uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
 # pin scanner images by digest
   with:
     image-ref: 'myapp@sha256:...'
@@ -1216,11 +1299,16 @@ dozens of libraries you never call — each a CVE to triage and a tool an
 attacker can use post-breach. Hardened bases minimize that surface and
 ship the attestations (SLSA provenance, signed SBOMs) that CRA/FedRAMP-
 style audits expect, collapsing CVE-triage toil. DHI became free and
-Apache-2.0-licensed in late 2025; they are **not distroless** — they're
-minimal *hardened Debian/Alpine* images, non-root by default, with SLSA
-L3 provenance and signed SBOMs. (Google's `distroless` and Chainguard are
+Apache-2.0-licensed in late 2025: minimal hardened Debian/Alpine-based
+images, non-root by default, with SLSA provenance and signed SBOMs. Their
+runtime variants are distroless (no shell or package manager); the `-dev`
+variants add those for build stages — so build `FROM` a `-dev` tag and
+run on the runtime tag. (Google's `distroless` and Chainguard are
 separate options with similar goals.) Complements DOCKER-005 (non-root)
 and DOCKER-011 (minimize the final image).
+
+Cite: [Docker Hardened Images](https://docs.docker.com/dhi/),
+[use a DHI](https://docs.docker.com/dhi/how-to/use/).
 
 **How.**
 
@@ -1240,5 +1328,52 @@ manager at runtime (debugging sidecars, some init containers) — a
 distroless/hardened base makes those harder. Dev and CI images also
 typically want the full toolchain; this rule is about *production
 runtime* images.
+
+---
+
+## SEC-024 — Run the daemon rootless (or with userns-remap) on hosts that run untrusted workloads
+
+**What.** On a host that runs containers you don't fully trust — CI
+runners for outside contributors, multi-tenant build hosts, anything
+executing third-party images or agent-generated code — run Docker in
+[rootless mode](https://docs.docker.com/engine/security/rootless/), or
+at least enable [user-namespace remapping](https://docs.docker.com/engine/security/userns-remap/)
+(`"userns-remap": "default"` in `daemon.json`).
+
+**Why.** By default a container's root is the host's root, held back
+only by capabilities, seccomp and namespaces; a container-escape bug or a
+misconfiguration (a privileged flag, a sensitive bind mount) turns into
+host root. Rootless mode runs the daemon and containers "as a non-root
+user to mitigate potential vulnerabilities in the daemon and the
+container runtime." With userns-remap, container root maps to an
+unprivileged high UID, so an escaped process "is running as an
+unprivileged high-number UID on the host, which does not even map to a
+real user."
+
+**How.**
+
+```bash
+# rootless: per-user daemon, no root required after install
+dockerd-rootless-setuptool.sh install
+export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock
+```
+
+Or keep the rootful daemon and remap container root — in
+`/etc/docker/daemon.json`:
+
+```json
+{ "userns-remap": "default" }
+```
+
+Neither replaces DOCKER-005: the image should still run as a non-root
+user, so that an app compromise doesn't even get container root.
+
+**When NOT to apply.** Hosts that only run your own trusted images, where
+the rootless limitations (no privileged ports below 1024 without setup,
+some storage drivers and `--net=host` behaviors differ, bind-mounted
+files owned by remapped UIDs) cost more than they protect. Dev
+containers and tools that assume the rootful daemon's socket and UID
+mapping break under a rootless daemon — keep those on the default
+daemon deliberately rather than by accident.
 
 ---
