@@ -620,7 +620,8 @@ COPY .env /app/
 COPY .env.production /app/.env
 COPY *.env /app/
 COPY .env.* /app/
-COPY . .                # only a problem if .dockerignore doesn't exclude .env* (see SEC-001, SEC-015)
+# only a problem if .dockerignore doesn't exclude .env* (see SEC-001, SEC-015)
+COPY . .
 ```
 
 What to do instead — read secrets at runtime, not build time:
@@ -751,7 +752,8 @@ ARG DATABASE_PASSWORD=hunter2
 ENV API_KEY=sk-abc123
 ENV AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
 ENV JWT_SECRET
-ARG PRIVATE_KEY_PATH        # path is OK but the name pattern reads as secret-shaped — verify
+# path is OK but the name pattern reads as secret-shaped — verify
+ARG PRIVATE_KEY_PATH
 ```
 
 Build-time secret → use a BuildKit secret mount (SEC-006):
@@ -1317,7 +1319,8 @@ Cite: [Docker Hardened Images](https://docs.docker.com/dhi/),
 FROM python:3.13-trixie AS build
 # ... build the venv ...
 
-FROM <hardened-base>      # e.g. a DHI, Chainguard, or distroless runtime
+# e.g. a DHI, Chainguard, or distroless runtime
+FROM <hardened-base>
 COPY --from=build /app/.venv /app/.venv
 USER nonroot
 ENTRYPOINT ["/app/.venv/bin/python", "-m", "app"]

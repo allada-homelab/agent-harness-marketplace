@@ -525,7 +525,8 @@ Or change the default shell once for the whole Dockerfile:
 
 ```dockerfile
 SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
-RUN curl -fsSL https://example.com/installer.sh | sh   # pipefail now applies
+# pipefail now applies
+RUN curl -fsSL https://example.com/installer.sh | sh
 ```
 
 Reference: [Docker — Using pipes in RUN](https://docs.docker.com/build/building/best-practices/#using-pipes).
@@ -576,7 +577,8 @@ FROM python:3.12-slim AS app
 WORKDIR /app
 RUN useradd --system --uid 10001 app
 COPY --link pyproject.toml uv.lock ./
-COPY --chown=10001:10001 src/ ./src/   # depends on the user from RUN; --link wouldn't help
+# depends on the user from RUN; --link wouldn't help
+COPY --chown=10001:10001 src/ ./src/
 ```
 
 The key rule: **don't use `--link` when the copy needs to see filesystem
@@ -1413,7 +1415,8 @@ to it:
 # check=skip=JSONArgsRecommended
 
 FROM alpine
-ENTRYPOINT /entrypoint.sh    # intentional shell form; documented exception
+# intentional shell form; documented exception
+ENTRYPOINT /entrypoint.sh
 ```
 
 Experimental checks are off by default; enable them with
@@ -1554,7 +1557,8 @@ package layout. The workarounds are a `COPY` per directory or post-copy
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-COPY --parents src/pkg/*.py /app/      # preserves src/pkg/ under /app/
+# preserves src/pkg/ under /app/
+COPY --parents src/pkg/*.py /app/
 ```
 
 Pairs with `--exclude` (DOCKER-028) to copy a structured subtree minus a

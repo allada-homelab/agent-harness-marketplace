@@ -194,7 +194,8 @@ ENV UV_PYTHON_DOWNLOADS=never
 COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev          # uses the base image's Python; no download attempt
+# uses the base image's Python; no download attempt
+RUN uv sync --frozen --no-dev
 ```
 
 Pair with `[[tool.uv.index]]` if your CI also can't reach PyPI:

@@ -1546,6 +1546,8 @@ that the Model Runner understands.
 - Compose <2.38, or hosts without Model Runner installed (on Linux it is a separate Docker Engine plugin). Model dependencies don't resolve without it.
 - Models large enough that disk pressure becomes a real constraint — multiple devs each pulling 40GB of weights can saturate a build farm fast. For shared-runner CI, prefer pointing at a hosted model API.
 
+---
+
 ## COMPOSE-027 — Use `post_start` / `pre_stop` lifecycle hooks for privileged setup/teardown
 
 **What.** Compose ≥2.30 supports per-service `post_start` and `pre_stop`
