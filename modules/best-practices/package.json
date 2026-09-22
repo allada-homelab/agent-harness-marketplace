@@ -1,6 +1,6 @@
 {
   "name": "@allada-homelab/best-practices",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Library of domain best-practices skills with stable, citable rule IDs (containers, uv, Python, FastAPI, Go, gRPC) plus the containers-audit interactive scan-and-fix workflow and the authoring tools for adding rules.",

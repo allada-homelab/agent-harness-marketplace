@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "best-practices",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Library of domain best-practices skills with stable, citable rule IDs (containers, uv, Python, FastAPI, Go, gRPC) plus the containers-audit interactive scan-and-fix workflow and the authoring tools for adding rules.",
   "author": {
     "name": "David Allada",
