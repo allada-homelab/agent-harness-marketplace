@@ -646,7 +646,7 @@ worth keeping so volumes don't collide with other projects.
 
 ---
 
-## DEVC-014 — Mount `.venv` (and other heavy build dirs) as a named volume on macOS
+## DEVC-014 — Mount `.venv` (and other heavy build dirs) as a named volume on macOS, and on Linux when host and container both run uv
 
 **What.** On macOS, Docker Desktop's file-sharing layer (VirtioFS / osxfs
 / gRPC-FUSE) adds substantial latency to every `stat`, `open`, and `read`
@@ -694,9 +694,19 @@ Two caveats:
    metadata, so the venv is bound to the workspace path it was created
    for. Use `${devcontainerId}` to keep one volume per worktree.
 
-**When NOT to apply.** Linux hosts (no file-sharing overhead — bind
-mounts are direct kernel-level). Throwaway containers where the cold-sync
-cost of recreating the venv each time is acceptable.
+**Linux hosts need the volume too when both sides run uv.** There is no
+file-sharing overhead on Linux, but a bind-mounted `.venv` is shared
+between host and container, and its `bin/python` symlinks (and
+`pyvenv.cfg` `home`) the interpreter of whichever side created it — a
+path that does not exist on the other side. `uv sync` then reports
+"Removed virtual environment" and rebuilds it, so host and container
+delete each other's venv on every alternation. A per-worktree named
+volume gives the container its own `.venv` and leaves the host's alone.
+
+**When NOT to apply.** Linux hosts where only the container ever runs uv
+against the workspace (no file-sharing overhead, and no second side to
+fight over the venv). Throwaway containers where the cold-sync cost of
+recreating the venv each time is acceptable.
 
 ---
 

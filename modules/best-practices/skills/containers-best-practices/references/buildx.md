@@ -25,10 +25,10 @@ backend types. The right choice depends on where the build runs:
 
 | Backend | Best for | Driver requirement |
 |---|---|---|
-| `type=inline` | Image-exporter builds where you push to a registry anyway | All drivers |
-| `type=registry` | Cross-CI portability; biggest fit when you push to a registry | `docker-container` / `kubernetes` (or `docker` with containerd image store) |
-| `type=gha` | GitHub Actions specifically — built-in cache backend with action support | `docker-container` / `kubernetes` |
-| `type=local` | Single-machine builds with a persistent cache dir | All drivers |
+| `type=inline` | Image-exporter builds where you push to a registry anyway | Any; `docker` driver only with the containerd image store |
+| `type=registry` | Cross-CI portability; biggest fit when you push to a registry | Any; `docker` driver only with the containerd image store |
+| `type=gha` | GitHub Actions specifically — built-in cache backend with action support | Any; `docker` driver only with the containerd image store |
+| `type=local` | Single-machine builds with a persistent cache dir | Any; `docker` driver only with the containerd image store |
 | `type=s3` | AWS-native CI (still flagged unreleased; preview only) | `docker-container` / `kubernetes` |
 | `type=azblob` | Azure-native CI (also still preview) | `docker-container` / `kubernetes` |
 
@@ -38,10 +38,13 @@ because nothing persists between runs. Picking the right backend for
 your CI platform makes the difference between 30-second cache hits and
 5-minute cold builds.
 
-The **default `docker` driver** has limited cache export — without
-enabling the containerd image store, it only supports `inline` and a
-narrow form of `gha`. If you want full cache backends, switch builder
-drivers (BUILDX-005).
+The **default `docker` driver** "supports the `inline`, `local`,
+`registry`, and `gha` cache backends, but only if you have enabled the
+containerd image store" (the default image store on Docker Engine 29+ and
+Docker Desktop). With the classic image store, or for the other backends,
+switch builder drivers (BUILDX-005).
+
+Cite: [Cache storage backends](https://docs.docker.com/build/cache/backends/).
 
 **How.** Decision tree:
 
@@ -84,7 +87,7 @@ The `mode=` parameter controls how much is cached:
 **How.** GitHub Actions, `type=gha`:
 
 ```yaml
-- uses: docker/build-push-action@v6
+- uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
   with:
     context: .
     push: true
@@ -133,15 +136,19 @@ mutually exclusive:
 
 | Flag | What it does | When to use |
 |---|---|---|
-| `--load` | Loads the built image into the local Docker daemon (so `docker images` / `docker run` see it). | Local dev, single-arch only. |
+| `--load` | Loads the built image into the local Docker daemon (so `docker images` / `docker run` see it). | Local dev; single-arch unless the daemon uses the containerd image store. |
 | `--push` | Pushes the built image directly to a registry without ever touching the local daemon. | CI builds, multi-arch. |
 | `--output type=<exporter>,...` | The general form. Includes `--load` and `--push` as shortcuts; also supports `oci`, `tar`, `local`, `image,...`, etc. | When you want OCI archives, tarballs, or non-default exporters. |
 
 **Why.** This is the most common "why isn't my multi-arch image working
 locally" failure: `docker buildx build --platform linux/amd64,linux/arm64
 --load .` **fails** with "docker exporter does not currently support
-exporting manifest lists." The local daemon can only hold one
-architecture per image, so `--load` is single-arch only.
+exporting manifest lists" when the daemon uses the classic image store,
+which holds one architecture per image. The containerd image store
+(default on Docker Engine 29+ and Docker Desktop) stores multi-platform
+images, and there multi-platform `--load` works.
+
+Cite: [Multi-platform builds — prerequisites](https://docs.docker.com/build/building/multi-platform/#prerequisites).
 
 Default behavior with the `docker-container` driver and no output flag:
 the build runs but the result is **discarded**. Nothing happens. People
@@ -255,18 +262,20 @@ features are available:
 
 | Driver | Default? | Multi-arch | Full cache export | Notes |
 |---|---|---|---|---|
-| `docker` | Yes | ❌ | Limited | Uses BuildKit baked into the Docker daemon. Simplest; least flexible. Auto-loads images. |
+| `docker` | Yes | Only with the containerd image store | With the containerd image store (`inline`/`local`/`registry`/`gha`) | Uses BuildKit baked into the Docker daemon. Simplest; least flexible. Auto-loads images. |
 | `docker-container` | No | ✅ | ✅ | Spawns a BuildKit container. The "normal upgrade" — full feature set. |
 | `kubernetes` | No | ✅ | ✅ | Spawns BuildKit pods in a K8s cluster. For build farms / large orgs. |
 | `remote` | No | ✅ | ✅ | Connects to a pre-managed BuildKit daemon you run elsewhere. |
 
-**Why.** Default `docker` driver hits walls fast:
+**Why.** On a daemon with the classic image store, the default `docker`
+driver hits walls fast:
 
 - `docker buildx build --platform linux/amd64,linux/arm64 --push .` → fails ("docker exporter does not currently support exporting manifest lists").
-- `--cache-to type=registry,...` → may fail or silently degrade depending on engine config.
-- `--output type=oci` → not supported.
+- `--cache-to type=registry,...` → fails: the `docker` driver exports caches only with the containerd image store.
+- `--output type=oci` / tarball output → not supported by the `docker` driver on any image store.
 
-Each of these works the moment you switch to `docker-container`.
+The containerd image store (default on Docker Engine 29+ and Docker
+Desktop) removes the first two; every one works on `docker-container`.
 
 **How.** Create and use a `docker-container` builder:
 
@@ -293,7 +302,8 @@ docker buildx create --append --name multi --node node-arm64 ssh://user@arm-host
 docker buildx use multi
 ```
 
-Cite: [Buildx drivers](https://docs.docker.com/build/builders/drivers/).
+Cite: [Buildx drivers](https://docs.docker.com/build/builders/drivers/),
+[Cache storage backends](https://docs.docker.com/build/cache/backends/).
 
 **When NOT to apply.** Local single-arch dev where `--load` and "just
 works" matter more than feature completeness — the default `docker`
@@ -305,15 +315,15 @@ driver is fine there.
 
 **What.** `docker buildx build --platform linux/amd64,linux/arm64`
 under a single-node builder uses QEMU to emulate the non-native
-architecture. This is *slow* — typically 3–10× slower than native
-execution for CPU-heavy builds. For non-trivial builds, set up a
+architecture. This is *slow* for CPU-heavy builds — often many times
+slower than native. For non-trivial builds, set up a
 multi-node builder with one native node per architecture, or use
 per-arch CI runners that combine into a manifest list.
 
 **Why.** QEMU emulation tax is real:
 
-- Compilation: 3–10× slower (gcc, rustc, golang under emulation grind).
-- Native dependency builds (npm `node-gyp`, Python C extensions, Rust crates): often 5–10× slower; sometimes hit bugs unique to emulation.
+- Compilation (gcc, rustc, golang) grinds under emulation.
+- Native dependency builds (npm `node-gyp`, Python C extensions, Rust crates) are slowest and sometimes hit bugs unique to emulation.
 - Time savings disappear after multiple cache misses.
 
 For small images (single `apt-get install` + scripts), QEMU is fine —
@@ -342,7 +352,7 @@ jobs:
   build-amd64:
     runs-on: ubuntu-latest
     steps:
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           platforms: linux/amd64
           tags: ghcr.io/myorg/api:${{ github.sha }}-amd64
@@ -351,7 +361,7 @@ jobs:
   build-arm64:
     runs-on: ubuntu-24.04-arm   # native ARM runner
     steps:
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           platforms: linux/arm64
           tags: ghcr.io/myorg/api:${{ github.sha }}-arm64
@@ -384,11 +394,12 @@ at all (SEC-004).
 
 ## BUILDX-007 — Use `docker buildx debug build` for interactive step-through of failing builds
 
-**What.** `docker buildx debug build` (GA since buildx v0.33.0; earlier
-it was experimental) runs the build under an interactive debugger. For
-editor-integrated debugging there's also `docker buildx dap build`,
-which speaks the Debug Adapter Protocol so VS Code and other DAP clients
-can drive the step-through. When a step fails, you get a shell
+**What.** `docker buildx debug build` runs the build under an
+interactive debugger; it is still an **experimental** command (enable
+with `BUILDX_EXPERIMENTAL=1`). For editor-integrated debugging,
+`docker buildx dap build` — no longer behind the experimental flag since
+buildx v0.33.0 — speaks the Debug Adapter Protocol so VS Code and other
+DAP clients can drive the step-through. When a step fails, you get a shell
 *inside the failing step's environment* — same filesystem, same env
 vars, same uid — so you can poke at the state that caused the failure
 without rebuilding from scratch.
@@ -397,7 +408,9 @@ without rebuilding from scratch.
 docker buildx debug --invoke /bin/sh build .
 ```
 
-Cite: [docker buildx debug build reference](https://docs.docker.com/reference/cli/docker/buildx/debug/build/).
+Cite: [docker buildx debug reference](https://docs.docker.com/reference/cli/docker/buildx/debug/),
+[docker buildx dap build reference](https://docs.docker.com/reference/cli/docker/buildx/dap/build/),
+[buildx v0.33.0 release](https://github.com/docker/buildx/releases/tag/v0.33.0).
 
 **Why.** Before buildx debug, the canonical "I need to see what's
 inside a failing build" hack was:
@@ -491,6 +504,12 @@ or succeeds but subsequent `docker pull` fails with "manifest unknown"
 or "unsupported media type." It's misdiagnosed as a build problem when
 it's actually a registry-compatibility problem.
 
+Note that *every* `buildx build` that pushes already carries an
+attestation: buildx adds a **min-mode provenance attestation by default**,
+and it is stored the same way — as an extra manifest in an image
+**index**, even for a single-platform image. So `mode=min` is not a
+compatibility fallback; only turning attestations off avoids the index.
+
 The fix has two paths depending on what your registry supports:
 
 1. **Force the OCI media types and `image-manifest=true` index.**
@@ -505,23 +524,32 @@ The fix has two paths depending on what your registry supports:
      .
    ```
 
-2. **Fall back to `mode=min`.** `--provenance=mode=min` embeds a
-   smaller provenance attestation in the image manifest itself (no
-   separate attestation manifest, no index complications). Less
-   information than `mode=max` (omits build args, env, and source ref)
-   but works on every registry that handles single-arch images:
+2. **Turn attestations off for that registry.** `--provenance=false`
+   (and no `--sbom`), or `BUILDX_NO_DEFAULT_ATTESTATIONS=1` in the
+   environment, pushes a plain image manifest with no index. Sign the
+   image out-of-band with cosign (SEC-022) if you still need a
+   supply-chain record:
 
    ```bash
    docker buildx build \
-     --provenance=mode=min \
+     --provenance=false \
      --output type=image,name=oldregistry.example.com/myapp:${TAG},push=true \
      .
    ```
 
+**`mode=max` records build-arg values.** Max-mode provenance includes
+the values of every build argument, and build arguments are visible in
+image history too — never pass a secret as `--build-arg` (DOCKER-010,
+SEC-006), least of all under `mode=max`.
+
+Cite: [Build attestations](https://docs.docker.com/build/metadata/attestations/),
+[SLSA provenance — max](https://docs.docker.com/build/metadata/attestations/slsa-provenance/#max),
+[build variables — BUILDX_NO_DEFAULT_ATTESTATIONS](https://docs.docker.com/build/building/variables/#buildx_no_default_attestations).
+
 **How.** Decision: do you control the registry?
 
 - **ghcr.io / Docker Hub / Quay / GitLab Container Registry / modern Harbor / modern ECR** → `mode=max` + `oci-mediatypes=true,image-manifest=true` and you get full attestations.
-- **Older Harbor (<2.10), ECR before late 2024, custom in-house registries you don't control** → start with `mode=min` and check whether the registry round-trips it; upgrade the registry before you upgrade attestations.
+- **Older Harbor (<2.10), ECR before late 2024, custom in-house registries you don't control** → push with `--provenance=false` (or `BUILDX_NO_DEFAULT_ATTESTATIONS=1`) and check the registry round-trips it; upgrade the registry before you upgrade attestations.
 - **Unsure** → push to a staging tag first, then `docker buildx imagetools inspect <ref>` to see whether the attestation manifests survived the push:
 
   ```bash
@@ -540,9 +568,9 @@ syft, sigstore keyless), reach for the dedicated tooling docs.
 
 **When NOT to apply.**
 
-- Projects with no supply-chain threat model — `mode=max` produces large attestations that nobody reads. Default to no attestations until there's a reason.
+- Projects with no supply-chain threat model — `mode=max` produces large attestations that nobody reads; the default min-mode provenance is enough until there's a reason.
 - Single-arch builds being loaded into the local daemon (`--load`) instead of pushed — the daemon's image store handles attestations differently, and you mostly don't care about attestations for local-only images.
-- Registries that genuinely refuse attestations entirely (some air-gapped self-hosted setups) — keep `mode=min` and sign the image out-of-band with cosign instead. The cosign signature lands in a separate ref, sidestepping the manifest-index issue.
+- Registries that genuinely refuse attestations entirely (some air-gapped self-hosted setups) — disable them (`--provenance=false`) and sign the image out-of-band with cosign instead. The cosign signature lands in a separate ref, sidestepping the manifest-index issue.
 
 ## BUILDX-009 — Use `bake` matrix targets + composable attributes for multi-variant builds
 
@@ -597,8 +625,8 @@ the pin doubles as a floor.
 **How.**
 
 ```yaml
-- uses: docker/setup-buildx-action@<full-sha>   # v4.x
-- uses: docker/build-push-action@<full-sha>     # v7.x
+- uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+- uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
 ```
 
 Resolve the SHA with

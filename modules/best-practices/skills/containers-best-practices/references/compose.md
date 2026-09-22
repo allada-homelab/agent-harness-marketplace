@@ -59,6 +59,27 @@ Available conditions: `service_started` (default short-form behavior),
 `service_healthy` (preferred), `service_completed_successfully` (for one-shot
 init containers).
 
+Two more long-syntax keys:
+
+- `restart: true` (Compose ≥2.17) — Compose restarts this service after it
+  updates the dependency (e.g. the API restarts when `postgres` is recreated),
+  so a stale connection pool does not outlive its database.
+- `required: false` (Compose ≥2.20) — Compose only warns when the dependency
+  isn't started or available, instead of failing; use it for a dependency that
+  lives in an optional profile (COMPOSE-004).
+
+```yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+      otel-collector:
+        condition: service_started
+        required: false
+```
+
+Cite: [compose reference — depends_on](https://docs.docker.com/reference/compose-file/services/#depends_on).
+
 **When NOT to apply.** When the service can genuinely tolerate the
 dependency being unavailable (and has retry/backoff). Even then, the
 healthcheck-aware form makes startup faster and more predictable.
@@ -330,9 +351,17 @@ not unset) for services that should survive container exits.
 **Why.** Restart-policy tradeoffs:
 
 - `no` (default) — container stays exited after a crash. Bad for long-lived dev services.
-- `always` — restarts even after `docker compose stop`. Surprises devs who deliberately stopped a service.
+- `always` — restarts whenever the container exits. A manual stop is honored until the Docker daemon restarts; then the container comes back.
 - `on-failure` — restarts only on non-zero exit. Misses cases where the process exits cleanly but shouldn't have.
-- `unless-stopped` — restarts on crash *and* on Docker daemon restart, but honors explicit stop. Best default for "I want this running."
+- `unless-stopped` — identical to `always` except after a manual stop: the container stays stopped even across a daemon restart. Best default for "I want this running, but my `docker compose stop` should stick."
+
+The *only* difference between `always` and `unless-stopped` is that
+daemon-restart case — both honor a manual stop while the daemon keeps
+running. `always` fits a service that must come back after a host reboot
+even if someone stopped it by hand.
+
+Cite: [Start containers automatically](https://docs.docker.com/engine/containers/start-containers-automatically/),
+[compose reference — restart](https://docs.docker.com/reference/compose-file/services/#restart).
 
 **How.**
 
@@ -492,22 +521,19 @@ services:
         condition: service_completed_successfully   # waits for migrate to exit 0
 ```
 
-**How re-runs actually work.** A common misconception is that
-`service_completed_successfully` re-runs the init container on every
-`compose up`. It doesn't. Compose only recreates a container when:
-
-- its image or config changed,
-- `--force-recreate` was passed,
-- the container was removed (e.g. after `compose down`).
-
-A no-op `compose up` against an `Exited (0)` init container leaves it
-alone and the depending services proceed immediately. This means the
-pattern works fine for fast-but-non-idempotent ops (like running a
-seed script) too — though making the operation idempotent is still
-better defensive practice in case someone *does* `compose down && up`.
+**The init container re-runs on every `up` — make it idempotent.**
+Compose only *recreates* a container when its config changed,
+`--force-recreate` was passed, or it was removed — but a plain
+`docker compose up` still *starts* an existing `Exited (0)` one-shot
+container again, so the migration or seed script executes on every run
+(observed with Compose v5.5.1: two consecutive no-op `up -d` runs logged
+the one-shot command twice). `restart: "no"` only stops the daemon from
+restarting it after it exits; it does not stop `up` from starting it.
+The operation must therefore be idempotent: `alembic upgrade head`
+is; a seed script must use upserts or check for existing rows.
 
 Cite: [compose reference — depends_on](https://docs.docker.com/reference/compose-file/services/#depends_on),
-[compose up — recreate semantics](https://docs.docker.com/reference/cli/docker/compose/up/).
+[compose up](https://docs.docker.com/reference/cli/docker/compose/up/).
 
 **When NOT to apply.** Services that *do* run long enough to have a
 meaningful healthy state — use `service_healthy` (COMPOSE-001) for those.
@@ -515,21 +541,28 @@ Truly background sidecars use `service_started`.
 
 ---
 
-## COMPOSE-013 — Postgres: put `PGDATA` in a subdirectory of the mount
+## COMPOSE-013 — Postgres: mount the data volume at the path for your major version
 
-**What.** Set `PGDATA=/var/lib/postgresql/data/pgdata` (not the bare mount
-path) and mount the volume at `/var/lib/postgresql/data`. The actual
-data lives one level deeper.
+**What.** The official `postgres` image changed its data layout in 18:
 
-**Why.** The official `postgres` image's entrypoint runs `initdb` on
-first boot. If the volume is mounted *directly* at
-`/var/lib/postgresql/data`, the mount root is often owned by `root:root`
-(Docker Engine defaults), and `initdb` — running as the `postgres` user
-— fails with a permissions error. The fix is to keep the data in a
-*subdirectory* of the mount: the mount point can be root-owned, but
-Postgres creates the subdirectory itself with the correct ownership.
+- **Postgres ≤17** — `PGDATA` is `/var/lib/postgresql/data` and the image
+  declares `VOLUME /var/lib/postgresql/data`. Mount the volume **there**,
+  not at `/var/lib/postgresql`.
+- **Postgres 18+** — `PGDATA` is version-qualified
+  (`/var/lib/postgresql/18/docker`) and the `VOLUME` moved to
+  `/var/lib/postgresql`. Mount the volume at `/var/lib/postgresql`.
 
-**How.**
+**Why.** Mounting at the wrong level loses data silently. On ≤17, a
+volume at `/var/lib/postgresql` leaves the image's `VOLUME` path
+unmounted, so the runtime creates an *anonymous* volume there, the data
+is written to it, and it is not reused when the container is re-created —
+the image docs: mounts at the parent path "WILL NOT PERSIST database data
+when the container is re-created." On 18+, a volume at the old
+`/var/lib/postgresql/data` path misses the new `PGDATA` the same way. The
+18+ layout also keeps one major version per subdirectory, so `pg_upgrade
+--link` works across majors on the same volume.
+
+**How.** Postgres ≤17:
 
 ```yaml
 services:
@@ -537,9 +570,8 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-      PGDATA: /var/lib/postgresql/data/pgdata     # ← subdirectory of the mount
     volumes:
-      - app-db-data:/var/lib/postgresql/data       # ← mount one level up
+      - app-db-data:/var/lib/postgresql/data       # ≤17: the image's VOLUME path
     secrets:
       - postgres_password
     healthcheck:
@@ -555,18 +587,7 @@ secrets:
     environment: POSTGRES_PASSWORD
 ```
 
-This is documented in the [postgres image README](https://hub.docker.com/_/postgres)
-under the "Arbitrary --user Notes" section. A second motivation (often
-the bigger one in practice): the official image declares a `VOLUME` at
-`/var/lib/postgresql/data`, so mounting your named volume *directly*
-at that path can cause persistence quirks on recreation — the
-subdirectory pattern sidesteps both issues.
-
-**Postgres 18+ changed the layout.** Starting with Postgres 18 the
-official image's default `PGDATA` moved to a **version-qualified path**:
-`/var/lib/postgresql/18/docker`, with the recommendation to mount at
-`/var/lib/postgresql` (one level above the version dir). If you're on
-Postgres 18 or newer, adjust accordingly:
+Postgres 18+:
 
 ```yaml
 postgres:
@@ -576,9 +597,20 @@ postgres:
     - app-db-data:/var/lib/postgresql       # mount one level above the version dir
 ```
 
-**When NOT to apply.** Other databases — MySQL, MariaDB, MongoDB don't
-have this specific entrypoint behavior. (Though they have their own
-volume-permissions quirks worth checking.)
+A `PGDATA` *subdirectory* of the mount (e.g. `.../data/pgdata`) is only
+needed when the mount point itself is unusable as a data directory — a
+filesystem root containing `lost+found`, or a host path whose ownership
+the `postgres` user can't take — because `initdb` refuses a non-empty or
+foreign-owned directory. A fresh named volume needs no subdirectory.
+
+Upgrading 17 → 18 on an existing volume is a data migration, not a tag
+bump: move the files into the `<major>/docker` layout (or `pg_upgrade`)
+first, as the image docs describe.
+
+Cite: [postgres image docs — PGDATA](https://github.com/docker-library/docs/blob/master/postgres/content.md#pgdata).
+
+**When NOT to apply.** Other databases — MySQL, MariaDB, MongoDB have
+their own `VOLUME` paths; check the image's docs for the equivalent.
 
 ---
 
@@ -676,7 +708,7 @@ Then make sure the proxy's restart behavior won't make things worse.
 
 **What.** Compose ≥ 2.22 ships a [`develop.watch`](https://docs.docker.com/compose/how-tos/file-watch/)
 mechanism that watches host files and, on change, performs an action
-(`sync`, `rebuild`, or `sync+restart`) inside the container. Use it for
+(`sync`, `rebuild`, `restart`, `sync+restart`, or `sync+exec`) inside the container. Use it for
 hot-reload during `docker compose watch` instead of bind-mounting the
 entire workspace.
 
@@ -722,11 +754,28 @@ docker compose watch
 
 Cite: [compose file-watch how-to](https://docs.docker.com/compose/how-tos/file-watch/).
 
-The three actions:
+The actions:
 
 - **`sync`** — copy file changes into the running container. No restart. Use for source files when the app handles its own hot-reload (uvicorn `--reload`, vite, nodemon).
 - **`rebuild`** — full image rebuild + container recreate. Use for manifests / Dockerfile changes.
-- **`sync+restart`** — sync the file, then restart the container. Use when the app *doesn't* hot-reload and a config change requires a clean restart.
+- **`restart`** (Compose ≥2.32) — restart the container without syncing; for a bind-mounted or image-baked file whose change needs a process restart.
+- **`sync+restart`** (Compose ≥2.23) — sync the file, then restart the container. Use when the app *doesn't* hot-reload and a config change requires a clean restart.
+- **`sync+exec`** (Compose ≥2.32) — sync, then run the rule's `exec.command` inside the container (e.g. send the app a reload signal or regenerate an asset) without restarting it.
+
+`initial_sync: true` on a `sync+*` rule syncs the path when the watch
+session starts, so files changed while watch was stopped are not stale in
+the container.
+
+```yaml
+        - action: sync+exec
+          path: ./templates
+          target: /app/templates
+          initial_sync: true
+          exec:
+            command: ["kill", "-HUP", "1"]
+```
+
+Cite: [compose-file develop — watch](https://docs.docker.com/reference/compose-file/develop/#watch).
 
 **When NOT to apply.** When the app has no hot-reload mode and rebuild
 times are short — a plain `docker compose up --build` may be simpler.
@@ -812,7 +861,7 @@ explicitly when defaults bite you.
 
 **Why.** Two real failure modes from leaving it at default:
 
-1. **Stale tag** — you push a new `myimage:latest` to the registry, but a dev machine already has `myimage:latest` cached locally. `compose up` doesn't pull; the dev runs old code and reports phantom bugs.
+1. **Stale tag** — you push a new `myimage:1.4` (or `:dev`, `:main`) to the registry, but a dev machine already has that tag cached locally. `compose up` doesn't pull; the dev runs old code and reports phantom bugs. (`latest` is the one tag Compose re-pulls even under `missing`.)
 2. **Build vs pull confusion** — a service with both `image:` and `build:` defaults to pulling first, then falling back to build on failure. This isn't always what you want.
 
 **How.**
@@ -843,10 +892,11 @@ Valid values:
 | Value | Behavior |
 |---|---|
 | `always` | Pull every `compose up`. Slowest but most up-to-date. Best for prod with mutable tags. |
-| `missing` (default) | Pull only if not present locally. |
+| `missing` (default) | Pull only if not present locally — except the `latest` tag, which is always pulled even under `missing`. |
 | `never` | Never pull. Build-only or strictly-local. |
 | `build` | Always build (ignores existing local image, forces rebuild). Useful for dev. |
 | `if_not_present` | Synonym for `missing`. |
+| `daily`, `weekly`, `every_<duration>` | Pull if the last pull is older than the period (e.g. `every_12h`). A middle ground between `always` and `missing` for mutable non-`latest` tags. |
 
 **When NOT to apply.** When you've pinned every service by digest
 (SEC-010) — pulling is then a content-addressed no-op for cached
@@ -1040,7 +1090,22 @@ an unrelated container failing to start because the daemon can't write
 its own state. Setting `logging:` explicitly is the cheapest possible
 fix.
 
-**How.** Reasonable defaults for most services — 10MB × 3 files =
+**How.** Docker [recommends the `local` driver](https://docs.docker.com/engine/logging/configure/)
+over `json-file`: it rotates by default and uses a more compact format
+(`json-file` stays the default only for backwards compatibility). Prefer
+it unless a tool reads the JSON log files directly:
+
+```yaml
+services:
+  api:
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+If you stay on `json-file`, bound it explicitly — 10MB × 3 files =
 30MB max per container, with the most recent 10MB always immediately
 available:
 
@@ -1115,10 +1180,12 @@ services:
         tag: "myapp.{{.Name}}"
 ```
 
-When using a non-`json-file` driver, `docker logs <container>` stops
-working for that container (only `json-file` and `journald` support
-it). Make sure the central aggregator is set up before switching, or
-operators will lose log access during incidents.
+With a remote driver, `docker logs` keeps working on Docker Engine ≥20.10
+through [dual logging](https://docs.docker.com/engine/logging/dual-logging/):
+the daemon keeps a local-driver cache of recent output for every
+container regardless of the configured driver (unless disabled with
+`cache-disabled`). The cache is bounded, so it is not a substitute for
+the aggregator during incidents.
 
 **When NOT to apply.** Two genuine exceptions:
 
@@ -1179,13 +1246,18 @@ sub-application; it can be developed and tested independently
 larger project with one line. It's the right primitive for the
 "shared infra block reused across several apps" pattern.
 
+**Remote sources.** Compose ≥2.34 can also resolve a Compose
+application published as an OCI artifact — `include: - oci://registry/org/app:tag`
+in a file, or `docker compose -f oci://registry/org/app:tag up` on the CLI
+(and Git sources the same way).
+
 **Security note.** [CVE-2025-62725](https://github.com/docker/compose/security/advisories/GHSA-gv8h-7v7w-r22q)
-(October 2025) was a path-traversal issue in `include:` that allowed
-malicious OCI-artifact compose files to escape their working
-directory. It affected only the **OCI-artifact** form of `include:`
-(`include: - oci-artifact: oci://...`), **not** the file-path form
-shown above. Fixed in Compose v2.40.2 — but the practical guidance for
-most teams is "stick to `path:` includes, which were never affected."
+(October 2025) was a path traversal in the resolution of **any** remote
+OCI compose artifact — `include: oci://`, `-f oci://`, or anything else that
+pulls one: attacker-controlled layer annotations let the artifact write
+files outside Compose's cache directory. Local `path:` includes were never
+affected. Fixed in Compose v2.40.2 — see COMPOSE-028 before using a remote
+source.
 
 **How.** Simple project structure:
 
@@ -1366,9 +1438,10 @@ the host toolkit isn't installed, not a compose issue.
 
 ## COMPOSE-021 — Use the top-level `models:` block for AI model dependencies
 
-**What.** Docker Desktop ≥4.40 / Compose ≥2.35 ships a [Model
-Runner](https://docs.docker.com/desktop/features/model-runner/)
-integration: a top-level `models:` block declares language-model
+**What.** Compose ≥2.38 ships a [Docker Model
+Runner](https://docs.docker.com/ai/model-runner/)
+integration (Model Runner runs on Docker Engine on Linux as well as
+Docker Desktop): a top-level `models:` block declares language-model
 dependencies the way `secrets:` and `configs:` declare other resources.
 Services reference models, and Compose injects connection URLs as env
 vars at start time.
@@ -1380,7 +1453,7 @@ services:
     models:
       - llm_small
       - llm_large
-    # AI_LLM_SMALL_URL and AI_LLM_LARGE_URL are set in the container's env
+    # LLM_SMALL_URL / LLM_SMALL_MODEL and LLM_LARGE_URL / LLM_LARGE_MODEL are set in the container's env
 
 models:
   llm_small:
@@ -1390,7 +1463,8 @@ models:
 ```
 
 Cite: [compose-file/models](https://docs.docker.com/reference/compose-file/models/),
-[Docker Model Runner](https://docs.docker.com/desktop/features/model-runner/).
+[Use AI models in Compose](https://docs.docker.com/ai/compose/models-and-compose/),
+[Docker Model Runner](https://docs.docker.com/ai/model-runner/).
 
 **Why.** Before `models:`, hooking a Compose app up to a local LLM
 meant running an inference server (ollama, llama.cpp, vLLM) as a
@@ -1402,17 +1476,17 @@ into the app. Three things go wrong:
 3. **No connection-URL convention.** Each project invents its own env var name. `OLLAMA_HOST`, `LLM_URL`, `OPENAI_API_BASE`, etc. — confusing across projects.
 
 The `models:` block makes the model a first-class dependency: Compose
-owns model lifecycle (downloads on demand, caches across projects in
-Docker Desktop), and the connection URL is injected via a
-predictable env var name pattern (`<SERVICE-PREFIX>_<MODEL-NAME>_URL`,
-e.g. `AI_LLM_SMALL_URL`).
+owns model lifecycle (downloads on demand, caches across projects), and
+the connection details are injected via a predictable env var name
+pattern derived from the model key — `<KEY>_URL` and `<KEY>_MODEL`
+(`llm_small` → `LLM_SMALL_URL`, `LLM_SMALL_MODEL`), no prefix.
 
 The Model Runner backend is OpenAI-compatible, so the app side can use
 any OpenAI client by pointing it at the injected URL:
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url=os.environ["AI_LLM_SMALL_URL"], api_key="not-needed")
+client = OpenAI(base_url=os.environ["LLM_SMALL_URL"], api_key="not-needed")
 ```
 
 **How.** Minimal "summarizer with two models" example:
@@ -1422,8 +1496,8 @@ services:
   summarizer:
     build: .
     models:
-      - small        # AI_SMALL_URL, AI_SMALL_MODEL
-      - large        # AI_LARGE_URL, AI_LARGE_MODEL
+      - small        # SMALL_URL, SMALL_MODEL
+      - large        # LARGE_URL, LARGE_MODEL
     ports: ["8000:8000"]
 
 models:
@@ -1468,8 +1542,8 @@ that the Model Runner understands.
 
 **When NOT to apply.**
 
-- Production deployments — Model Runner is currently a Docker Desktop / single-host feature. Production model serving belongs on a real inference platform (vLLM, TGI, managed model API). Use `models:` for local dev / dev containers; use a proper inference service in production.
-- Compose <2.35 or environments without Docker Desktop's Model Runner backend (most Linux servers without Docker Desktop installed). The directive parses but no provider is available, so model dependencies don't resolve.
+- Production deployments — Model Runner is a single-host feature. Production model serving belongs on a real inference platform (vLLM, TGI, managed model API). Use `models:` for local dev / dev containers; use a proper inference service in production.
+- Compose <2.38, or hosts without Model Runner installed (on Linux it is a separate Docker Engine plugin). Model dependencies don't resolve without it.
 - Models large enough that disk pressure becomes a real constraint — multiple devs each pulling 40GB of weights can saturate a build farm fast. For shared-runner CI, prefer pointing at a hosted model API.
 
 ## COMPOSE-027 — Use `post_start` / `pre_stop` lifecycle hooks for privileged setup/teardown
@@ -1509,14 +1583,19 @@ On Compose older than 2.30 the keys are ignored; gate on the version.
 
 **What.** Pin a Compose version of at least 2.40.2 (every v5 release
 postdates the fix) before using the `include:` directive (COMPOSE-019)
-with OCI-artifact or remote sources.
+with OCI-artifact sources, or running a remote application with
+`docker compose -f oci://...`.
 
 **Why.** CVE-2025-62725 (CVSS 8.9): a path-traversal via the **layer
-annotations** of an OCI artifact referenced by `include:` let a malicious
+annotations** of *any* remote OCI compose artifact Compose resolves —
+`include: oci://`, `-f oci://`, or an artifact that itself extends
+another — let a malicious
 remote compose model write files outside the project directory — e.g.
 overwrite `~/.ssh/authorized_keys` — and it triggered even on a read-only
 command like `docker compose ps` or `config`. Pulling a poisoned shared
 compose module was enough; no `up` required. Fixed in Compose v2.40.2.
+
+Cite: [GHSA-gv8h-7v7w-r22q](https://github.com/docker/compose/security/advisories/GHSA-gv8h-7v7w-r22q).
 
 **How.**
 
@@ -1532,5 +1611,40 @@ images (SEC-010, SEC-021).
 not exposed to this specific vector — but the fix is free and the version
 floor is worth adopting regardless, since `ps`/`config` were enough to
 trigger it.
+
+---
+
+## COMPOSE-029 — Set `init: true` on services whose image has no init process
+
+**What.** When a long-lived service's image runs the app directly as
+PID 1 — no `tini`/`dumb-init` `ENTRYPOINT` (DOCKER-006) — set
+`init: true` on the service. Compose then runs Docker's init (the same
+binary as `docker run --init`) as PID 1, which forwards signals to the
+app and reaps zombie processes.
+
+**Why.** A process running as PID 1 gets no default signal handlers: a
+`SIGTERM` the app doesn't explicitly handle is ignored, so `docker compose
+stop`/`down` waits out the 10-second grace period and then `SIGKILL`s it —
+no graceful shutdown, dropped in-flight requests, unflushed buffers. PID 1
+also inherits every orphaned child; an app that spawns subprocesses (shell
+wrappers, headless browsers, `git`) without reaping them accumulates
+zombies until the PID limit is hit. You often can't rebuild a third-party
+image to add an init; `init: true` fixes it from the compose file.
+
+**How.**
+
+```yaml
+services:
+  worker:
+    image: ghcr.io/vendor/worker:2.3.1@sha256:...   # runs its binary as PID 1
+    init: true
+```
+
+Cite: [compose reference — init](https://docs.docker.com/reference/compose-file/services/#init).
+
+**When NOT to apply.** Images that already ship an init as their
+`ENTRYPOINT` (DOCKER-006 applied) — a second init adds nothing. It does
+not replace DOCKER-006 for images you build: bake the init into the image
+so it behaves the same under `docker run`, Kubernetes and Compose.
 
 ---

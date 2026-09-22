@@ -293,23 +293,29 @@ it. (Though many CI providers persist BuildKit caches with the right config.)
 inject credentials at build time without persisting them in any layer.
 
 **Why.** `ARG` and `ENV` values are visible in `docker history`, in image
-layer metadata, and to anyone with pull access to the registry. Build-time
-secrets baked this way leak. Real failure mode: NPM tokens, AWS keys, and
-private package registry creds showing up in public registries.
+layer metadata, and to anyone with pull access to the registry. Build
+arguments also land in the build's provenance attestation (`mode=max`
+records their values — BUILDX-008), so even an `ARG` that never reaches
+a layer leaks through the attestation. Real failure mode: NPM tokens, AWS
+keys, and private package registry creds showing up in public registries.
 
-**How.**
+**How.** Expose the secret as an environment variable for one `RUN` only
+(`env=` needs Dockerfile syntax ≥1.10):
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-RUN --mount=type=secret,id=npm_token \
-    NPM_TOKEN=$(cat /run/secrets/npm_token) npm ci
+RUN --mount=type=secret,id=npm_token,env=NPM_TOKEN \
+    npm ci
 ```
 
 ```bash
-DOCKER_BUILDKIT=1 docker build \
+docker buildx build \
   --secret id=npm_token,src=$HOME/.npmrc-token \
   -t myimage .
 ```
+
+Cite: [Dockerfile reference — RUN --mount=type=secret](https://docs.docker.com/reference/dockerfile/#run---mounttypesecret),
+[build secrets](https://docs.docker.com/build/building/secrets/).
 
 For runtime secrets, use orchestrator-native mechanisms (Kubernetes Secrets,
 Docker secrets, Vault sidecar) — not env vars baked into the image.
@@ -604,6 +610,8 @@ amd64 cache and segfault at install time on the next amd64 build.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
+FROM python:3.12-slim AS build
+# declare inside the stage — predefined platform ARGs are not inherited from the global scope
 ARG TARGETARCH
 
 # good — cache scoped per arch
@@ -916,6 +924,7 @@ labels:
 ```dockerfile
 ARG GIT_SHA
 ARG VERSION
+# commit time (the SOURCE_DATE_EPOCH value), not the wall clock
 ARG BUILD_DATE
 
 LABEL org.opencontainers.image.source="https://github.com/myorg/myapp"
@@ -931,19 +940,29 @@ LABEL org.opencontainers.image.description="The myapp service — HTTP API for X
 docker build \
   --build-arg GIT_SHA=$(git rev-parse HEAD) \
   --build-arg VERSION=$(git describe --tags --always) \
-  --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+  --build-arg BUILD_DATE=$(date -u -d "@$(git log -1 --pretty=%ct)" +%Y-%m-%dT%H:%M:%SZ) \
   -t ghcr.io/myorg/myapp:$(git describe --tags --always) .
 ```
 
+Take `created` from the commit timestamp — the same value as
+`SOURCE_DATE_EPOCH` (DOCKER-030) — not the wall clock: a wall-clock
+`created` changes on every rebuild of the same commit, so the image
+config, and therefore its digest, is never reproducible.
+
 In GitHub Actions, `docker/metadata-action` populates these
-automatically from the workflow context:
+automatically from the workflow context — but it sets `created` from the
+time the action runs, so override that one label with the commit time:
 
 ```yaml
-- uses: docker/metadata-action@v5
+- name: Commit time for the created label
+  run: echo "COMMIT_TIME=$(git log -1 --format=%cI)" >> "$GITHUB_ENV"
+- uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
   id: meta
   with:
     images: ghcr.io/myorg/myapp
-- uses: docker/build-push-action@v6
+    labels: |
+      org.opencontainers.image.created=${{ env.COMMIT_TIME }}
+- uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
   with:
     labels: ${{ steps.meta.outputs.labels }}
 ```
@@ -951,6 +970,8 @@ automatically from the workflow context:
 `docker/metadata-action` is the path of least resistance — it emits
 all the common OCI labels from the workflow's git context without
 hand-managed build args.
+
+Cite: [reproducible builds — git commit timestamps](https://docs.docker.com/build/ci/github-actions/reproducible-builds/#git-commit-timestamps).
 
 **When NOT to apply.** Throwaway local images, scratch tests, dev
 container *base* images that no one consumes from a registry. Anything
@@ -1123,6 +1144,23 @@ RUN set -eux \
  && rm /tmp/install.sh
 ```
 
+For a single remote file, `ADD --checksum` (Dockerfile syntax ≥1.6) does
+the fetch-and-verify in one instruction and is what Docker's
+[best practices](https://docs.docker.com/build/building/best-practices/#add-or-copy)
+now recommend for remote artifacts — the build fails if the digest
+doesn't match:
+
+```dockerfile
+# syntax=docker/dockerfile:1
+ADD --checksum=sha256:<sha256-of-the-file> \
+    https://github.com/example/tool/releases/download/v1.2.3/tool-linux-amd64.tar.gz /tmp/tool.tar.gz
+```
+
+A Git source takes the commit SHA as its checksum
+(`ADD --checksum=<commit-sha> https://github.com/org/repo.git#v1.2.3 /src`),
+and `ADD --unpack=true` (syntax ≥1.17) extracts a remote archive
+explicitly. See SEC-017.
+
 Even better — fetch the *binary* directly and skip the install script:
 
 ```dockerfile
@@ -1139,11 +1177,15 @@ For tools published as OCI images, the cleanest pattern is
 `COPY --from=`:
 
 ```dockerfile
-COPY --from=ghcr.io/astral-sh/uv:0.5.11@sha256:240fb85... /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.17@sha256:10787c682e4184e4f290de1171fd4703dc63de99221f10fe1c99002ce7fa9acc /uv /usr/local/bin/uv
 ```
 
 That's auditable, pinned, and bypasses the install-script question
-entirely. UV-001 shows the pattern in detail.
+entirely. Where the publisher attests its images, verify the pin once
+(`gh attestation verify --owner astral-sh oci://ghcr.io/astral-sh/uv:0.12.17`).
+UV-001 shows the pattern in detail.
+
+Cite: [Dockerfile reference — ADD --checksum](https://docs.docker.com/reference/dockerfile/#add---checksum).
 
 **When NOT to apply.** Genuinely interactive *human* use (a dev
 container `postCreateCommand` running an installer for an end-user
@@ -1164,9 +1206,8 @@ directive:
 
 This pins the BuildKit *frontend* parser — independent of the Docker
 engine version — to the current stable v1 release of the Dockerfile
-language. For built-in lint (`docker build --check`, DOCKER-029) the
-minimum useful frontend is `docker/dockerfile:1.8`; older pins quietly
-skip the check directive.
+language. Build checks (`docker build --check`, DOCKER-029) need
+Dockerfile frontend ≥1.8, which `:1` already tracks.
 
 **Why.** Without the directive, BuildKit falls back to whatever frontend
 the engine ships with — which on older hosts is years behind. The
@@ -1175,8 +1216,9 @@ features that *silently* degrade or stop working:
 - `RUN --mount=type=cache` / `--mount=type=secret` / `--mount=type=ssh` (DOCKER-009, DOCKER-010, SEC-006, SEC-020).
 - `RUN <<EOF` heredoc syntax (DOCKER-014).
 - `COPY --link` / `ADD --link` (DOCKER-016).
-- `COPY --exclude=` (DOCKER-028) — requires ≥1.7.
-- `ADD --checksum=` (SEC-017 exception).
+- `COPY --exclude=` / `ADD --exclude=` (DOCKER-028) — stable since 1.19; `COPY --parents` (DOCKER-031) — stable since 1.20.
+- `ADD --checksum=` (≥1.6, SEC-017) and `ADD --unpack=` (≥1.17).
+- `RUN --mount=type=secret,env=` (≥1.10, DOCKER-010).
 - `# check=...` directives and `--check` lint pragmas (DOCKER-029) — require ≥1.8.
 
 The failure mode is usually a confusing parse error ("unknown flag:
@@ -1195,14 +1237,11 @@ file targets a known frontend version.
 FROM python:3.12-slim@sha256:...
 ```
 
-Pin a specific minor only when you need a reproducibility guarantee or
-when you're targeting a feature that landed in a known release and want
-the build to fail loudly on older frontends rather than silently
-degrade:
-
-```dockerfile
-# syntax=docker/dockerfile:1.8     # requires the --check / # check= machinery
-```
+Don't pin a minor to "require" a feature: `:1` always resolves to the
+newest stable 1.x, so `:1.8` is a *downgrade* that freezes you out of
+every later flag (`--exclude`, `--parents`, `env=` secrets) and security
+fix. Pin a full version (or digest) only for a hard reproducibility
+requirement, and bump it deliberately.
 
 Docker's [frontend docs](https://docs.docker.com/build/buildkit/dockerfile-frontend/)
 say: "We recommend using `docker/dockerfile:1`, which always points to
@@ -1221,8 +1260,8 @@ compatibility downside.
 ## DOCKER-028 — Use `COPY --exclude` to filter unwanted files from multi-file copies
 
 **What.** BuildKit's [`COPY --exclude=<pattern>`](https://docs.docker.com/reference/dockerfile/#copy---exclude)
-(stable in the `docker/dockerfile:1` frontend — it graduated out of the
-`-labs` channel) lets a single `COPY` instruction exclude
+(stable since Dockerfile syntax 1.19, which `docker/dockerfile:1`
+includes — earlier it was `-labs` only) lets a single `COPY` instruction exclude
 matching files. Repeat the flag to exclude multiple patterns. Replaces
 awkward "copy then `rm`" or "split into many narrow COPYs" workarounds.
 
@@ -1286,7 +1325,7 @@ appropriate (SEC-017 covers when it isn't).
 
 **When NOT to apply.**
 
-- Very old frontends from before `--exclude` graduated out of the `-labs` channel — the flag is unknown and the build fails. Pin a current `# syntax=docker/dockerfile:1` (DOCKER-027) or fall back to `.dockerignore` + narrow copies.
+- Frontends older than 1.19 (a pinned `# syntax=docker/dockerfile:1.18` or earlier) — the flag is unknown and the build fails. Pin a current `# syntax=docker/dockerfile:1` (DOCKER-027) or fall back to `.dockerignore` + narrow copies.
 - When the exclusion is *project-wide* (build-context level) — that's `.dockerignore`'s job. Use `--exclude` for instruction-local filtering, not global rules.
 - When the set of excluded files is large and unstable — at some threshold, an explicit allow-list (`COPY src/main.py src/cli.py /app/`) is clearer than a long exclude list.
 
@@ -1294,7 +1333,7 @@ appropriate (SEC-017 covers when it isn't).
 
 ## DOCKER-029 — Run `docker build --check` as a Dockerfile lint step in CI
 
-**What.** BuildKit ≥0.15 ships a built-in linter that audits a
+**What.** Build checks (Buildx ≥0.15, Dockerfile frontend ≥1.8) are a built-in linter that audits a
 Dockerfile against a curated rule set (best-practices, deprecations,
 security smells) without actually executing the build. Run it on every
 PR:
@@ -1305,13 +1344,17 @@ docker buildx build --check .
 docker build --check .
 ```
 
-In CI, fail the build on any finding:
+`--check` exits non-zero when it finds a violation, so it gates CI on its
+own. To make an ordinary *build* (no `--check`) fail on violations too,
+set `# check=error=true` in the Dockerfile, or pass it as a build
+argument — it is a build-arg, not an environment variable:
 
 ```bash
-BUILDKIT_DOCKERFILE_CHECK=error=true docker buildx build --check .
+docker buildx build --build-arg BUILDKIT_DOCKERFILE_CHECK=error=true .
 ```
 
-Cite: [Build checks reference](https://docs.docker.com/reference/build-checks/).
+Cite: [Build checks](https://docs.docker.com/build/checks/),
+[Build checks reference](https://docs.docker.com/reference/build-checks/).
 
 **Why.** Several rules already in this skill are *automatically*
 caught by `--check`:
@@ -1335,8 +1378,8 @@ issues until they bite at runtime; wiring it as a required check
 catches them at review time alongside the rest of the linters.
 
 The frontend evolves: new rules land in `docker/dockerfile` minor
-releases, so pin a recent minor (DOCKER-027) if you want the latest
-ruleset. Older frontends silently support fewer checks.
+releases, and `# syntax=docker/dockerfile:1` (DOCKER-027) already tracks
+the latest. Pinning an older minor silently runs fewer checks.
 
 **How.** Local dev — run before pushing:
 
@@ -1344,41 +1387,38 @@ ruleset. Older frontends silently support fewer checks.
 docker buildx build --check .
 ```
 
-GitHub Actions — fail the workflow on any finding:
+GitHub Actions — fail the workflow on any finding (`--check` exits
+non-zero on violations):
 
 ```yaml
-- uses: docker/setup-buildx-action@v3
+- uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 - name: Dockerfile lint
-  run: |
-    docker buildx build --check .
-  env:
-    BUILDKIT_DOCKERFILE_CHECK: error=true
+  run: docker buildx build --check .
 ```
 
-The `BUILDKIT_DOCKERFILE_CHECK=error=true` env var converts warnings
-to errors. Without it, `--check` exits 0 even when it found issues —
-fine for local feedback, useless as a gate.
-
-To skip a specific check on a specific instruction, use the inline
-`# check=skip=<RuleName>` pragma (frontend ≥1.8):
+To fail regular builds as well, put the directive at the top of the
+Dockerfile:
 
 ```dockerfile
-# syntax=docker/dockerfile:1.8
+# syntax=docker/dockerfile:1
+# check=error=true
+```
+
+`# check=skip=<RuleName>[,<RuleName>...]` disables checks for the **whole
+file** — there is no per-instruction form — so document the reason next
+to it:
+
+```dockerfile
+# syntax=docker/dockerfile:1
 # check=skip=JSONArgsRecommended
 
 FROM alpine
 ENTRYPOINT /entrypoint.sh    # intentional shell form; documented exception
 ```
 
-Repo-wide skips go in the same `# check=` directive form. Don't blanket
-disable rules without a comment explaining *why*.
-
-To enable checks that aren't on by default — and to require a minimum
-frontend version that knows them all — pair `--check` with a minor pin:
-
-```dockerfile
-# syntax=docker/dockerfile:1.8
-```
+Experimental checks are off by default; enable them with
+`# check=experimental=all` (or the same value in the build-arg). Combine
+parameters with `;`: `# check=skip=JSONArgsRecommended;error=true`.
 
 **When NOT to apply.**
 
@@ -1447,14 +1487,14 @@ versioned tags and digests alone can't answer.
 to buildx:
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
   with:
     fetch-depth: 0   # so git log can find the commit
 - name: Set SOURCE_DATE_EPOCH
   run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
 
-- uses: docker/setup-buildx-action@v3
-- uses: docker/build-push-action@v6
+- uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+- uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
   with:
     context: .
     push: true
@@ -1500,8 +1540,8 @@ Caveats worth knowing:
 
 ## DOCKER-031 — Use `COPY --parents` to preserve source directory structure
 
-**What.** `COPY --parents <src> <dest>` (stable in `docker/dockerfile:1`,
-graduated from the `-labs` channel) keeps the source path structure
+**What.** `COPY --parents <src> <dest>` (stable since Dockerfile syntax
+1.20, which `docker/dockerfile:1` includes — earlier `-labs` only) keeps the source path structure
 relative to the build context instead of flattening it into the
 destination.
 
@@ -1521,8 +1561,10 @@ Pairs with `--exclude` (DOCKER-028) to copy a structured subtree minus a
 few files.
 
 **When NOT to apply.** When you actually want a flat destination (copying
-a handful of files into one dir) — plain `COPY` is simpler. And on very
-old frontends predating `--parents`, fall back to per-directory copies.
+a handful of files into one dir) — plain `COPY` is simpler. And on
+frontends older than 1.20, fall back to per-directory copies.
+
+Cite: [Dockerfile reference — COPY --parents](https://docs.docker.com/reference/dockerfile/#copy---parents).
 
 ---
 
