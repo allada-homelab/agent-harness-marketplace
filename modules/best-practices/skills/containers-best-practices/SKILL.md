@@ -27,7 +27,7 @@ Topics the rule index below covers, for matching against the task at hand:
 - **Dockerfile authoring** — multi-stage builds, layer ordering, non-root users, signal handling / PID 1, healthchecks, `# syntax=docker/dockerfile:1` pin, HereDoc + `pipefail`, `COPY --exclude` / `--parents` / `--link`, `WORKDIR`, exec-form `ENTRYPOINT`/`CMD`.
 - **BuildKit & buildx** — `RUN --mount=type=cache|secret|ssh`, cache backends (gha / registry / inline / local), `--load` vs `--push`, `docker buildx bake`, builder drivers, `docker buildx debug build`, `docker buildx build --check` lint, reproducible builds (`SOURCE_DATE_EPOCH` + `rewrite-timestamp`), SBOM + provenance attestations and their registry-compatibility caveats.
 - **Compose** — service dependencies, `secrets:`, `develop.watch`, `configs:`, `include:`, `gpus:`, `models:` (Docker Model Runner).
-- **Dev containers** — lifecycle hook choice, named-volume strategy, agentic CLI tool state (Claude / Codex / `gh`) in per-worktree volumes rather than host bind mounts, `runArgs` / capabilities / `init`, declarative `secrets` property, `devcontainer-lock.json`, `hostRequirements.gpu`.
+- **Dev containers** — lifecycle hook choice, named-volume strategy, agentic CLI tool state (Claude / Codex / `gh`) in per-worktree volumes rather than host bind mounts, `runArgs` / capabilities / `init`, declarative `secrets` property, `devcontainer-lock.json`, `hostRequirements.gpu`, SSH agent + known_hosts + git credentials, `containerEnv` vs `remoteEnv`, editor-vs-CLI parity, Docker socket risk, base-image tag pinning.
 - **Python in containers (uv)** — two-pass sync, `--locked` vs `--frozen`, `UV_COMPILE_BYTECODE`, `UV_TOOL_BIN_DIR` for tool installs.
 - **Package managers** — `apt-get update`+`install` pairing, `--no-install-recommends`, `pip --no-cache-dir`, APT cache mount caveats.
 - **Security & hygiene** — secret-shaped `ARG`/`ENV` detection, `COPY .env` / `COPY .git` bans, `ADD <url>` checksum requirement, `curl | sh` checksum verification, `chmod 777` detection, `no-new-privileges`, image pinning by digest, `.dockerignore` existence *and* coverage, `.gitignore` checks for `.env`, OCI image labels, `MAINTAINER` deprecation, `EXPOSE`/`CMD` port agreement, json-file log rotation.
@@ -79,27 +79,32 @@ See [`references/dockerfile.md`](./references/dockerfile.md).
 
 See [`references/devcontainer.md`](./references/devcontainer.md).
 
-- **DEVC-001** — Map host UID/GID to avoid file-ownership pain on bind mounts.
+- **DEVC-001** — Map host UID/GID to avoid file-ownership pain on bind mounts (`updateRemoteUserUID`; it skips taken UIDs, is off on macOS, and only re-owns `$HOME`).
 - **DEVC-002** — Put long-running installs in the **image**, not `postCreateCommand`.
-- **DEVC-003** — Use official `features` for common tooling instead of hand-rolling.
+- **DEVC-003** — Use official `features` for common tooling instead of hand-rolling; `:1` pins the feature major, the `version` option is the tool version.
 - **DEVC-004** — Pick the right lifecycle hook: `onCreateCommand` vs `updateContentCommand` vs `postCreateCommand` vs `postStartCommand` vs `postAttachCommand`.
 - **DEVC-005** — Mount cache volumes for language package managers (uv, pnpm, go module cache, cargo, pip).
-- **DEVC-006** — Be deliberate about `mounts` and `workspaceFolder` — bind-mount caveats.
-- **DEVC-007** — Choose `remoteUser` vs `containerUser` consciously; don't leave both unset.
+- **DEVC-006** — Be deliberate about `mounts` and `workspaceFolder` — never mount key files or credential dirs; SSH goes through the agent (DEVC-019).
+- **DEVC-007** — Choose `remoteUser` vs `containerUser` consciously; on images that supply a non-root user (mcr devcontainers images do it via their metadata label) set neither.
 - **DEVC-008** — Don't commit secrets in `devcontainer.json`; use `${localEnv:...}` or a mounted env file.
 - **DEVC-009** — Declare required `customizations.vscode.extensions` and settings the project assumes.
 - **DEVC-010** — Lifecycle scripts must be idempotent (they re-run on rebuild).
 - **DEVC-011** — Prefer `image` or `build` + a pinned base; avoid bare `Dockerfile` references that resolve ambiguously.
-- **DEVC-012** — Cross-platform host mount paths use `${localEnv:HOME}${localEnv:USERPROFILE}` (one is set on each OS).
+- **DEVC-012** — Cross-platform host mount paths use `${localEnv:HOME}${localEnv:USERPROFILE}`; an empty or missing bind source is a hard mount error, and `${localEnv:VAR:default}` covers only an unset variable.
 - **DEVC-013** — Two-tier named volume naming: `<repo>-<tool>` for shared caches, `<repo>-<purpose>-${devcontainerId}` for per-worktree state (`.venv`, history, tool auth).
 - **DEVC-014** — On macOS, mount `.venv` (and other heavy tool-generated dirs) as a named volume — bind-mounted Python venvs are dramatically slower through VirtioFS.
 - **DEVC-015** — Persist agentic CLI tool state (the home-directory `.claude`, `.codex`, `.config/gh` dirs, etc.) in per-worktree named volumes. Don't bind-mount these from the host — leaks tokens and conversation history both directions. Don't omit the mount — every rebuild wipes login state.
-- **DEVC-016** — Use `forwardPorts` + `portsAttributes` for editor-aware port forwarding; use `runArgs` only for `docker run` flags the spec doesn't model.
-- **DEVC-017** — Add capabilities (`--cap-add=SYS_PTRACE`) deliberately via `runArgs`; never default to `--privileged`.
+- **DEVC-016** — Use `forwardPorts` + `portsAttributes` for editor port forwarding, but the devcontainer CLI ignores them — use `appPort` (published on `127.0.0.1`) for headless use; `runArgs` only for flags the spec doesn't model.
+- **DEVC-017** — Add capabilities deliberately via the first-class `capAdd` / `securityOpt` properties (they also reach compose, unlike `runArgs`); never default to `privileged`.
 - **DEVC-018** — Set `"init": true` at the devcontainer.json level (or `services.<x>.init: true` in compose) so signals + zombie reaping work — same DOCKER-006 rationale, but at the dev-container layer.
-- **DEVC-020** — Use the top-level `secrets` property to declare required secret names; tools (Codespaces, devcontainer CLI ≥#493) source values from credential managers without storing them in the file.
+- **DEVC-019** — SSH and git credentials: bind the host ssh-agent socket (the CLI never forwards it), never key files or the host SSH dir; pin known_hosts; strip credential helpers and host pagers from a copied gitconfig.
+- **DEVC-020** — Use the top-level `secrets` property to declare *recommended* secret names (Codespaces offers an optional prompt; the devcontainer CLI ignores it); `--secrets-file` feeds lifecycle commands only.
 - **DEVC-021** — Commit `devcontainer-lock.json` (stable, generated by default in CLI ≥0.87.0) for reproducible feature versions; use `--frozen-lockfile` in CI.
-- **DEVC-022** — Declare `hostRequirements.gpu` for GPU dev containers so tooling schedules appropriately.
+- **DEVC-022** — Declare `hostRequirements.gpu` for GPU dev containers; don't hard-code `runArgs --gpus all` (the CLI adds it when it detects a GPU).
+- **DEVC-023** — `containerEnv` reaches every process (`docker exec`, agents); `remoteEnv` only tool-spawned ones; `${containerEnv:VAR}` is valid only in `remoteEnv`.
+- **DEVC-024** — Configs started headless (CLI, CI, agents) must do what VS Code does for you: agent forwarding, gitconfig, known_hosts, port forwarding, GPG.
+- **DEVC-025** — A Docker socket (docker-outside-of-docker) is root on the host — every credential boundary is moot with it, especially with auto-approve agents; make it an explicit, documented choice.
+- **DEVC-026** — Pin mcr dev container images to `<image-major>-<lang>-<os>` (e.g. `python:3-3.14-trixie`) or a digest; short tags float across image majors and OS releases, which breaks features.
 
 ## Rules — docker-compose
 

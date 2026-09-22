@@ -22,25 +22,41 @@ is `root` (UID 0) ends up with files owned by root on the host after every
 `git status` or editor save fails. macOS/Windows hide this via the file
 sharing layer, but Linux dev container users hit it constantly.
 
-**How.** On most setups you don't need to do anything extra: the dev
-container CLI / VS Code honors **`updateRemoteUserUID`** (default `true`)
-and automatically maps the container's `remoteUser` UID/GID to the host
-user's on Linux when the image already ships a `vscode` (or similar)
-non-root user. The official `mcr.microsoft.com/devcontainers/*` images
-do exactly this — for those, **just set `remoteUser` and let the
-automatic mapping handle the rest**.
+**How.** Host matching is done by **`updateRemoteUserUID`** (default
+`true`): on Linux, when `remoteUser` or `containerUser` is set (directly or
+through the image's `devcontainer.metadata` label), the tool rewrites that
+user's UID/GID to the host user's before the container starts. The
+official `mcr.microsoft.com/devcontainers/*` images ship a non-root user
+for this — **set (or inherit) `remoteUser` and let the remap run**.
 
 ```jsonc
 {
-  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "image": "mcr.microsoft.com/devcontainers/python:3-3.14-trixie",
   "remoteUser": "vscode"
   // updateRemoteUserUID defaults to true — no feature needed on this image
 }
 ```
 
+Know its three limits (devcontainers CLI source):
+
+1. **Skipped when the host UID is already taken** by another user in the
+   image — the build logs `User with UID exists (<name>=<uid>).` and leaves
+   the remote user unchanged.
+2. **Off on macOS** — the CLI only runs it on Linux hosts.
+3. **Only `$HOME` is re-owned** (`chown -R` of the user's home folder).
+   Anything the image baked elsewhere as UID 1000 — a venv under `/opt`,
+   a `/data` dir, a tool cache — stays owned by 1000 and breaks with
+   `EACCES` when the host UID differs. Re-own those paths in
+   `onCreateCommand`:
+
+```jsonc
+"onCreateCommand": "sudo chown -R \"$(id -u):$(id -g)\" /opt/venv /data"
+```
+
 For custom base images that don't already have a non-root user, use the
-official `common-utils` feature. Note the option keys are
-**`userUid` / `userGid`** (not `uid` / `gid`):
+official `common-utils` feature (option keys are **`userUid` /
+`userGid`**, not `uid` / `gid`) and let `updateRemoteUserUID` do the host
+matching:
 
 ```jsonc
 {
@@ -56,35 +72,27 @@ official `common-utils` feature. Note the option keys are
 }
 ```
 
-The literal string `"automatic"` is special-cased by the feature to mean
-"detect host UID/GID at create time." Don't combine this feature with an
-image that already has a UID-1000 `vscode` user — `common-utils` will
-error out trying to create one that already exists.
+`"automatic"` does **not** mean "detect the host UID": for a new user it
+omits `--uid`/`--gid` so `useradd` picks the next free ID, and for an
+existing user it keeps the current ID. If the user already exists,
+`common-utils` does not error — it `usermod`s/`groupmod`s it to any
+explicit `userUid`/`userGid` you pass.
 
-Cite: [common-utils feature schema](https://github.com/devcontainers/features/blob/main/src/common-utils/devcontainer-feature.json),
-[updateRemoteUserUID in spec](https://containers.dev/implementors/json_reference/).
+Don't pass the host UID as a build arg via `${localEnv:UID}`: `UID` is a
+shell variable in bash/zsh, not an exported environment variable, so the
+tool sees it as empty. If you must bake the UID (e.g. `updateRemoteUserUID`
+is skipped because the UID is taken), have `initializeCommand` write
+`id -u` into a file the build reads, or free the conflicting UID in the
+Dockerfile.
 
-Or, in a custom Dockerfile, accept build args and create the user with the
-host's UID:
-
-```dockerfile
-ARG USER_UID=1000
-ARG USER_GID=${USER_UID}
-RUN groupadd --gid ${USER_GID} dev \
- && useradd --uid ${USER_UID} --gid ${USER_GID} --create-home --shell /bin/bash dev
-USER dev
-```
-
-```jsonc
-"build": {
-  "dockerfile": "Dockerfile",
-  "args": { "USER_UID": "${localEnv:UID}" }
-}
-```
+Cite: [json_reference — updateRemoteUserUID](https://containers.dev/implementors/json_reference/#general-properties),
+[CLI updateUID.Dockerfile L20, L31 (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/scripts/updateUID.Dockerfile#L20-L31),
+[CLI containerFeatures.ts L425 — Linux-only gate](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/containerFeatures.ts#L425),
+[common-utils main.sh — existing user / automatic](https://github.com/devcontainers/features/blob/47406487f9b4965e4f9865f20b86805b1e2d5c0f/src/common-utils/main.sh#L447-L470).
 
 **When NOT to apply.** macOS/Windows-only dev — the host file-sharing layer
-abstracts UID mapping for you. Still worth doing for portability across
-contributors.
+abstracts UID mapping for you (and the CLI skips the remap there anyway).
+Still worth doing for portability across contributors.
 
 ---
 
@@ -137,8 +145,9 @@ for common tooling (git, docker-outside-of-docker, node, python, terraform,
 aws-cli, etc.) instead of hand-rolling install commands in the Dockerfile.
 
 **Why.** Features are versioned, tested across base images, support arm64
-and amd64, and integrate cleanly with the dev container lifecycle. They
-also auto-skip if the tool is already present.
+and amd64, and integrate cleanly with the dev container lifecycle. Some
+also skip the install if the requested version is already present (e.g.
+the `python` feature).
 
 **How.**
 
@@ -153,9 +162,13 @@ also auto-skip if the tool is already present.
 }
 ```
 
-Pin versions on features (e.g. `python:1` for the feature itself, plus
-`"version": "3.12"` for the language) — the feature's "version" is the
-*feature* version, not the language version.
+Pin both: the `:1` in the feature reference pins the *feature's* major
+version, and the `"version"` option is the *tool/language* version the
+feature installs (the `python` feature's default is `os-provided`).
+`devcontainer-lock.json` (DEVC-021) pins the exact feature digest.
+
+Cite: [python feature options](https://github.com/devcontainers/features/blob/47406487f9b4965e4f9865f20b86805b1e2d5c0f/src/python/devcontainer-feature.json#L4-L21),
+[skip-if-present in python install.sh](https://github.com/devcontainers/features/blob/47406487f9b4965e4f9865f20b86805b1e2d5c0f/src/python/install.sh#L488-L492).
 
 **When NOT to apply.** Tooling not covered by an existing feature, or when
 you need an unusual configuration that a feature doesn't expose. Then bake
@@ -172,7 +185,7 @@ spec defines (in order of execution within a single create/start cycle):
 |---|---|---|---|
 | `initializeCommand` | Every time the tool starts/resumes the dev container (not just first create) | Host | Fetch credentials, generate compose `.env`, decrypt local secrets |
 | `onCreateCommand` | Once per container *create* (re-runs on "Rebuild Container") | Container | Heavy one-time setup that depends on container state but not repo state (rare — usually goes in image) |
-| `updateContentCommand` | After content is in place during create, *and* on subsequent content updates | Container | Idempotent steps that should re-run when repo content changes (uncommon) |
+| `updateContentCommand` | After `onCreateCommand` during create. Locally that is once per create; only cloud services / prebuilds re-run it to refresh a cached container | Container | Idempotent steps a prebuild should refresh when repo content changes (uncommon) |
 | `postCreateCommand` | Once per create, after content is in place | Container | Install repo deps from lockfile, wire git hooks |
 | `postStartCommand` | Inside container, every start (including restart and resume) | Container | Refresh transient state, start dev services |
 | `postAttachCommand` | When the editor attaches | Container | Print welcome message, open a default file |
@@ -180,11 +193,21 @@ spec defines (in order of execution within a single create/start cycle):
 A separate top-level **`waitFor`** field controls which hook the editor
 *blocks on* before attaching (default `updateContentCommand`). If you put
 critical setup in `postCreateCommand`, set `"waitFor": "postCreateCommand"`
-so the editor doesn't attach to a half-set-up container. Otherwise
-`postCreateCommand` runs in the background and a fast typer can hit a
-"command not found" error before `uv sync` finishes.
+so the editor doesn't attach to a half-set-up container. Otherwise, in
+VS Code, `postCreateCommand` runs in the background and a fast typer can
+hit a "command not found" error before `uv sync` finishes.
 
-Cite: [containers.dev — Lifecycle scripts](https://containers.dev/implementors/json_reference/#lifecycle-scripts).
+That background behavior is editor-side. The devcontainer CLI's `up`
+runs every hook synchronously, in order, and returns only after
+`postAttachCommand`. There `waitFor` matters only with
+`--skip-non-blocking-commands`, where it marks the hook to stop after.
+Under the CLI, `onCreateCommand`, `updateContentCommand` and
+`postCreateCommand` run once per container create (`updateContentCommand`
+re-runs only with `--prebuild`), `postStartCommand` on every start, and
+`postAttachCommand` on every `up`.
+
+Cite: [containers.dev — Lifecycle scripts](https://containers.dev/implementors/json_reference/#lifecycle-scripts),
+[CLI injectHeadless.ts — hook order and markers (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-common/injectHeadless.ts#L367-L446).
 
 **Why.** Mixing these up causes subtle bugs: heavy work in `postStartCommand`
 slows every editor restart; repo-dependent work in `onCreateCommand` runs
@@ -255,22 +278,24 @@ any process running in the container, including ones triggered by malicious
 dev dependencies. Same for `~/.aws/credentials` (AWS keys), `~/.docker/config.json`
 (registry tokens), `~/.netrc` (npm/git credentials).
 
-**How.** Mount only what's needed, read-only when possible:
+**How.** Mount only what's needed, read-only when possible, and never
+private key files:
 
 ```jsonc
 "mounts": [
-  // ssh: prefer ssh-agent forwarding (set in VS Code settings) over mounting keys
-  // if you must mount, mount the specific key and make it read-only
-  "source=${localEnv:HOME}/.ssh/id_ed25519,target=/home/vscode/.ssh/id_ed25519,type=bind,readonly",
+  // ssh: the host's agent socket, never ~/.ssh or a key file — see DEVC-019
+  "source=${localEnv:SSH_AUTH_SOCK:/dev/null},target=/ssh-agent.sock,type=bind",
 
-  // docker socket: gives root-equivalent on the host — only mount if you need it
-  // and prefer docker-outside-of-docker feature for safer abstraction
-  "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+  // a single non-secret config file, read-only
+  "source=${localEnv:HOME}${localEnv:USERPROFILE}/.config/myapp/config.toml,target=/home/vscode/.config/myapp/config.toml,type=bind,readonly"
 ]
 ```
 
-Better: use the official features (`ssh-keys`, `aws-cli` with profile mounts)
-that handle this with appropriate care.
+For SSH, use the agent (DEVC-019): VS Code forwards it automatically when
+a host agent is running; the devcontainer CLI does not, so bind the
+socket yourself. There is no official "ssh-keys" feature — the official
+features list has only `sshd` (an SSH *server*). The Docker socket is not
+a credential mount you can scope: it is root on the host (DEVC-025).
 
 **When NOT to apply.** Trusted, isolated dev container with no external
 dependencies — but assume otherwise unless you've audited.
@@ -281,19 +306,22 @@ dependencies — but assume otherwise unless you've audited.
 
 **What.** Two related but distinct settings:
 
-- `containerUser` — the user the container's *processes* run as. Equivalent to Dockerfile `USER`. **Defaults to the image's final `USER` directive** (often `root`, but for `mcr.microsoft.com/devcontainers/*` images it's already `vscode`).
-- `remoteUser` — the user the editor's *remote server* (`vscode-server`) runs as. **Defaults to `containerUser`** when unset.
+- `containerUser` — the user the container's *processes* run as. Equivalent to Dockerfile `USER`. **Defaults to the image's final `USER` directive.** For `mcr.microsoft.com/devcontainers/*` images that is `root`.
+- `remoteUser` — the user the editor's *remote server* (`vscode-server`) and lifecycle commands run as. **Defaults to `containerUser`** when unset. The `mcr.microsoft.com/devcontainers/*` images set `remoteUser` (`vscode` for python, `node` for javascript-node) in their `devcontainer.metadata` image label, which the tooling merges in. That label, not the image `USER`, is why you land as `vscode`.
 
 **Why.** The framing isn't "if you don't set these, you get root" — it's
 "these override the image's defaults, and a wrong override is worse than
-no override." When the base image already sets a sensible non-root
-`USER`, the safest action is to set **neither** and let defaults flow
+no override." When the base image already supplies a sensible non-root
+user — via its final `USER` or a `remoteUser` in its `devcontainer.metadata`
+label — the safest action is to set **neither** and let defaults flow
 through. Setting `containerUser` overrides the image's `USER`, which can
 break feature-installed users that expected the original UID.
 
-A common mistake is forcing `containerUser: vscode` on an image whose
-last `USER` was already `vscode` — usually harmless, but if a feature
-later installed something owned by a different UID it can break.
+A common mistake is forcing `containerUser: vscode` on an mcr
+devcontainers image: the image's `USER` is `root` by design (features and
+entrypoints run as root), and the label already makes `vscode` the
+remote user. Forcing it runs the container's entrypoint and features'
+entrypoint scripts as `vscode`, which can break the ones that need root.
 
 A separate setting, **`userEnvProbe`** (default `loginInteractiveShell`),
 controls how the editor probes the user's shell environment. On slow
@@ -301,7 +329,9 @@ shells (heavy `.bashrc`/`.zshrc` setups) this is often the culprit for
 slow editor attach — set it to `loginShell` or `interactiveShell` if you
 notice startup delays.
 
-Cite: [containers.dev — remoteUser, containerUser, userEnvProbe](https://containers.dev/implementors/json_reference/).
+Cite: [containers.dev — remoteUser, containerUser, userEnvProbe](https://containers.dev/implementors/json_reference/),
+[devcontainers/images python — remoteUser via metadata](https://github.com/devcontainers/images/blob/c04ecb19a95e23cf7a4275993cdb3119e9f97c60/src/python/.devcontainer/devcontainer.json#L28-L29)
+(image config `User` is `root`: `docker buildx imagetools inspect mcr.microsoft.com/devcontainers/python:3-3.14-trixie`).
 
 **How.**
 
@@ -317,8 +347,8 @@ Cite: [containers.dev — remoteUser, containerUser, userEnvProbe](https://conta
 ```jsonc
 // official devcontainer image — let the image's defaults flow through
 {
-  "image": "mcr.microsoft.com/devcontainers/python:3.12"
-  // neither set; remoteUser defaults to containerUser, which defaults to image USER ("vscode")
+  "image": "mcr.microsoft.com/devcontainers/python:3-3.14-trixie"
+  // neither set; image USER is root, remoteUser "vscode" comes from the image's metadata label
 }
 ```
 
@@ -492,15 +522,25 @@ the compose file's image references.
 
 **What.** When you need to bind-mount a path from the host home directory
 (SSH keys, AWS credentials, dotfiles), construct the source path by
-concatenating both `HOME` and `USERPROFILE` env vars. Exactly one is set
-on any given OS, so the concatenation produces a valid path on every
-platform.
+concatenating both `HOME` and `USERPROFILE` env vars. Normally one is
+set per OS, so the concatenation produces a valid path on each platform
+(see the Git Bash caveat below).
 
-**Why.** Linux/macOS use `HOME`; Windows uses `USERPROFILE`. Plain
-`${localEnv:HOME}` is empty on Windows — and an empty source in a bind
-mount silently means the *root* of the host filesystem, which is a
-disaster (slow, exposes everything, fails confusingly). Plain
-`${localEnv:USERPROFILE}` has the symmetric problem on Linux/macOS.
+**Why.** Linux/macOS use `HOME`; Windows uses `USERPROFILE`. An unset
+`${localEnv:VAR}` substitutes as the empty string, so plain
+`${localEnv:HOME}` on Windows turns `source=${localEnv:HOME}/.aws` into
+`source=/.aws` — a nonexistent path, and the container fails to start
+(`bind source path does not exist`). A variable that makes the *whole*
+source empty (`source=${localEnv:SSH_AUTH_SOCK}` with the var unset) is a
+hard `docker run` error: `invalid value for 'source': value is empty`.
+Either way the container never comes up. Plain `${localEnv:USERPROFILE}`
+has the symmetric problem on Linux/macOS.
+
+For a variable that may be unset, give a default with
+`${localEnv:VAR:default}`. The default applies only when the variable is
+**unset**; a variable set to the empty string still substitutes as empty
+(devcontainers CLI `variableSubstitution.ts`). So a fail-loud check in
+`initializeCommand` is still worth having for set-but-empty values.
 
 **How.**
 
@@ -515,14 +555,24 @@ disaster (slow, exposes everything, fails confusingly). Plain
 ```
 
 ```jsonc
-// bad — empty source on Windows ⇒ binds host filesystem root
+// bad — HOME unset on Windows ⇒ source=/.ssh/known_hosts ⇒ container fails to start
 "source=${localEnv:HOME}/.ssh/known_hosts,target=/home/vscode/.ssh/known_hosts,type=bind,readonly"
 ```
 
+```jsonc
+// may-be-unset variable: default to a harmless path instead of an empty source
+"source=${localEnv:SSH_AUTH_SOCK:/dev/null},target=/ssh-agent.sock,type=bind"
+```
+
+A bind source must exist, so create it on the host in `initializeCommand`
+(e.g. `touch` the file) when it may be missing.
+
 This pattern appears verbatim in the
-[spec's json_reference example](https://containers.dev/implementors/json_reference/)
+[spec's json_reference example](https://containers.dev/implementors/json_reference/#variables-in-devcontainerjson)
 (under "Variables in devcontainer.json"), so it's documented — but it's
-a **workaround**, not a clean primitive. Spec issue
+a **workaround**, not a clean primitive. Cite for the default syntax:
+[json_reference — `${localEnv:VARIABLE_NAME:default_value}`](https://containers.dev/implementors/json_reference/#variables-in-devcontainerjson),
+[CLI variableSubstitution.ts L142-L154 (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-common/variableSubstitution.ts#L142-L154). Spec issue
 [devcontainers/spec#335](https://github.com/devcontainers/spec/issues/335)
 tracks adding a proper `${localEnv:HOME_OR_USERPROFILE}` variable.
 
@@ -534,8 +584,8 @@ HOME=/c/Users/jdoe          # MSYS-style path
 USERPROFILE=C:\Users\jdoe   # Native Windows path
 ```
 
-The concatenation becomes `/c/Users/jdoeC:\Users\jdoe` — invalid, and
-the bind mount will fail or silently target the wrong path. If your
+The concatenation becomes `/c/Users/jdoeC:\Users\jdoe` — an invalid
+path, so the mount fails. If your
 team uses Git Bash on Windows, prefer an explicit branching strategy in
 host-side setup scripts, or wait for the spec primitive to land.
 
@@ -583,8 +633,12 @@ across worktrees regardless).
 ```
 
 Pair with an `onCreateCommand` that `chown`s the mount targets to the
-non-root container user (named volumes mount root-owned by default — see
-DEVC-007 / DEVC-010).
+non-root container user. A new, empty named volume takes the content
+*and ownership* of the target directory if it already exists in the
+image. If the target path does not exist in the image (a `.venv` under
+the workspace, `/commandhistory`), Docker creates the mountpoint
+root-owned. See DEVC-007 / DEVC-010, and
+[Docker — populate a volume using a container](https://docs.docker.com/engine/storage/volumes/#populate-a-volume-using-a-container).
 
 **When NOT to apply.** Single-worktree workflows where you only ever
 develop on one branch at a time. Even there, the `<repo>-` prefix is
@@ -630,9 +684,12 @@ Apply the same pattern to other large generated directories:
 
 Two caveats:
 
-1. **Ownership.** Named volumes mount root-owned by default. Add an
-   `onCreateCommand` to chown them to the non-root user (DEVC-010 covers
-   the broader idempotency need).
+1. **Ownership.** A named volume whose target doesn't exist in the image
+   (the usual case for a workspace `.venv`) mounts root-owned. A target
+   that exists in the image is copied into the empty volume, content and
+   ownership included. Add an `onCreateCommand` to chown the root-owned
+   ones to the non-root user (DEVC-010 covers the broader idempotency
+   need).
 2. **Per-worktree.** uv (and most tools) write absolute paths into venv
    metadata, so the venv is bound to the workspace path it was created
    for. Use `${devcontainerId}` to keep one volume per worktree.
@@ -691,7 +748,7 @@ leaking between branches.
     "source=myrepo-commandhistory-${devcontainerId},target=/commandhistory,type=volume"
   ],
 
-  // Named volumes mount root-owned; chown to the non-root user on create
+  // Targets that don't exist in the image mount root-owned; chown to the non-root user on create
   "onCreateCommand": "sudo mkdir -p /home/vscode/.claude /home/vscode/.codex /home/vscode/.aider /home/vscode/.config/gh /commandhistory && sudo chown -R vscode:vscode /home/vscode/.claude /home/vscode/.codex /home/vscode/.aider /home/vscode/.config /commandhistory"
 }
 ```
@@ -729,22 +786,29 @@ the container runs:
 
 | Field | Purpose |
 |---|---|
-| `appPort` | Legacy. Maps a container port to the same host port. Prefer `forwardPorts`. |
-| `forwardPorts` | List of container ports to surface as forwards. VS Code makes them clickable in the UI. |
-| `portsAttributes` | Per-port metadata: label, `onAutoForward` ("notify" / "openBrowser" / "silent"), protocol. |
-| `runArgs` | Raw `docker run` flags appended at container start. Use for things the spec doesn't model directly (capabilities, devices, sysctls). |
+| `appPort` | Editor-agnostic: *published* with Docker `-p` when the container is created, so it works under any tool, including the devcontainer CLI. A number `P` is published as `-p 127.0.0.1:P:P` (loopback only); a string is passed to `-p` verbatim. |
+| `forwardPorts` | List of container ports the *editor* forwards to the local machine. VS Code makes them clickable in the Ports panel. |
+| `portsAttributes` | Per-port metadata for editor forwards: label, `onAutoForward` ("notify" / "openBrowser" / "silent"), protocol. |
+| `runArgs` | Raw `docker run` flags appended at container start (image / Dockerfile configs only — not applied to Docker Compose). Use for things the spec doesn't model directly (ulimits, devices, sysctls). |
 
-**Why.** `forwardPorts` + `portsAttributes` is the spec-blessed,
-editor-aware way to expose ports — VS Code/JetBrains show them in the
-"Ports" panel, auto-forwards them on `localhost`, and remembers them
-across sessions. `appPort` is older and less flexible. `runArgs` is the
-escape hatch for everything else.
+**Why.** `forwardPorts` + `portsAttributes` is the spec-recommended,
+editor-aware way to expose ports — VS Code shows them in the "Ports"
+panel, forwards them on `localhost`, and remembers them across
+sessions. But it is implemented by the editor: the devcontainer CLI parses
+`forwardPorts`/`portsAttributes` and never acts on them. A config that is
+also started headless (`devcontainer up`, CI, coding agents) gets no
+ports from `forwardPorts`. `appPort` is the working option there. The
+spec's own advice to prefer `forwardPorts` assumes an editor is attached.
+`runArgs` is the escape hatch for everything else. Capabilities, security
+options, privileged mode and init have first-class properties
+(DEVC-017, DEVC-018) — use those instead.
 
 **How.**
 
 ```jsonc
 {
   "image": "myimage",
+  // editor sessions
   "forwardPorts": [3000, 5432, 8080],
   "portsAttributes": {
     "3000": { "label": "frontend", "onAutoForward": "openBrowser" },
@@ -752,18 +816,28 @@ escape hatch for everything else.
     "8080": { "label": "api", "onAutoForward": "notify" }
   },
   "runArgs": [
-    "--init",                              // proper PID 1 (see DOCKER-006)
-    "--ulimit", "nofile=65536:65536",      // raise fd limit for high-concurrency tooling
-    "--cap-add", "SYS_PTRACE"              // for native debuggers
+    "--ulimit", "nofile=65536:65536"       // raise fd limit for high-concurrency tooling
   ]
 }
 ```
 
-Cite: [containers.dev — forwardPorts, portsAttributes, runArgs](https://containers.dev/implementors/json_reference/).
+```jsonc
+{
+  "image": "myimage",
+  // started by the devcontainer CLI: published on host loopback as 127.0.0.1:3000
+  "appPort": [3000]
+}
+```
+
+Cite: [containers.dev — forwardPorts, portsAttributes, appPort](https://containers.dev/implementors/json_reference/#general-properties),
+[runArgs is image/Dockerfile-specific](https://containers.dev/implementors/json_reference/#image-or-dockerfile-specific-properties),
+[CLI singleContainer.ts L346-L348 — appPort publishing (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/singleContainer.ts#L346-L348),
+[CLI imageMetadata.ts — forwardPorts only merged, never used (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/imageMetadata.ts#L192-L209).
 
 **When NOT to apply.** When the container doesn't expose any services
 (`forwardPorts` unnecessary). When the defaults are fine for `runArgs`
-— don't sprinkle flags you don't need.
+— don't sprinkle flags you don't need. `appPort` is unnecessary for a
+config only ever opened in an editor.
 
 ---
 
@@ -771,8 +845,12 @@ Cite: [containers.dev — forwardPorts, portsAttributes, runArgs](https://contai
 
 **What.** Linux capabilities, AppArmor/SELinux profiles, and seccomp
 profiles control what privileged operations the container can perform.
-The spec exposes these via `runArgs` (the most general) and a few
-shortcut fields, plus container-level config in `dockerComposeFile` mode.
+The spec has first-class, cross-orchestrator properties for them —
+`capAdd`, `securityOpt`, `privileged` (and `init`, DEVC-018). Prefer
+these over the equivalent `runArgs` flags: `runArgs` applies only to
+image/Dockerfile configs, while these properties also reach Docker
+Compose configs (the CLI writes them into its generated compose
+override), and they merge with values from features and image metadata.
 
 **Why.** A common mistake is `--privileged` (or `"privileged": true`)
 when the actual need is one or two specific capabilities. `--privileged`
@@ -795,28 +873,31 @@ Seccomp/AppArmor:
 
 ```jsonc
 {
-  "runArgs": [
-    // good — add only what you need
-    "--cap-add=SYS_PTRACE",
-    "--security-opt=seccomp=unconfined"
-  ]
+  // good — add only what you need, as first-class properties
+  "capAdd": ["SYS_PTRACE"],
+  "securityOpt": ["seccomp=unconfined"]
 }
 ```
 
 ```jsonc
-// bad — sledgehammer
+// bad — sledgehammer (and runArgs is silently ignored under Docker Compose)
 "runArgs": ["--privileged"]
 ```
 
-For Docker-in-Docker / Docker-outside-of-Docker, prefer the
-[`docker-outside-of-docker` feature](https://github.com/devcontainers/features/tree/main/src/docker-outside-of-docker)
-over `--privileged`. It mounts the host Docker socket (which has its
-own security implications — equivalent to host-root, but at least scoped
-to Docker).
+The [`docker-outside-of-docker` feature](https://github.com/devcontainers/features/tree/main/src/docker-outside-of-docker)
+avoids `--privileged` but is **not** a safer, scoped alternative. It
+bind-mounts the host's Docker socket (`/var/run/docker.sock` →
+`/var/run/docker-host.sock`), and access to a rootful Docker daemon is
+root on the host: any process in the container can
+`docker run -v /:/host …`. See DEVC-025.
 
-**When NOT to apply.** When you genuinely need `--privileged` for an
+Cite: [json_reference — capAdd, securityOpt, privileged, init](https://containers.dev/implementors/json_reference/#general-properties),
+[CLI singleContainer.ts L359-L373 / dockerCompose.ts L520-L565 (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/dockerCompose.ts#L520-L565).
+
+**When NOT to apply.** When you genuinely need `privileged` for an
 isolated test environment that's never exposed to untrusted input (rare).
-Document the reason inline.
+Document the reason inline. `runArgs` is still right for flags with no
+property (`--ulimit`, `--device`, `--sysctl`) in image/Dockerfile configs.
 
 ---
 
@@ -872,130 +953,250 @@ works. Setting `init: true` on top is harmless but redundant.
 
 ---
 
-## DEVC-020 — Use the `secrets` property to declare required secret names
+## DEVC-019 — SSH and git credentials: forward the agent, never key files
 
-**What.** The dev container spec defines a top-level `secrets` field
-that names the **secret variable names** the container needs, plus
-optional metadata (description, documentation URL). It does **not**
-store secret values — those come from the host's credential manager
-(Codespaces secrets, devcontainer CLI's `--secrets-file`, future
-tooling integrations).
+**What.** Give the container the host's **ssh-agent socket**, never
+private key files, the host's `~/.ssh` directory or its `~/.ssh/config`.
+Verify host keys against **pinned** known_hosts entries, not trust on
+first use. If a host gitconfig is copied in, strip anything that names a
+host binary.
+
+**Why.**
+
+- **Key files are copyable; an agent is not.** A bind of the host `~/.ssh`
+  (even read-only) exposes every private key to every process in the
+  container — dependency install scripts, test code, a coding agent in
+  auto-approve mode. With only the agent socket, those processes can sign
+  while the container runs, but cannot copy the key out.
+- **A host `~/.ssh/config` rarely works in the container.** Its
+  `IdentityFile`, `Include`, `ControlPath` and `ProxyCommand` lines name
+  host paths and host binaries, and a config that is a symlink into a
+  dotfiles checkout dangles. It fails silently: ssh just ignores it.
+- **The editor and the CLI differ.** VS Code forwards the host agent
+  automatically when one is running (no setting), but only into processes
+  it starts. The devcontainer CLI never forwards it — maintainer:
+  "The ssh-agent forwarding is part of the Dev Containers extension and
+  not part of the Dev Containers CLI. You could mount the ssh-agent's
+  socket and then point SSH_AUTH_SOCK at it"
+  ([devcontainers/cli#441](https://github.com/devcontainers/cli/issues/441)).
+  `devcontainer exec`, `docker exec` and agents started that way see no
+  agent unless you mount it (DEVC-024).
+- **Socket-mount failure modes.** `${localEnv:SSH_AUTH_SOCK}` with the var
+  unset or empty is a hard `docker run` error ("invalid value for
+  'source': value is empty"). With a stale value (the agent restarted at a
+  new path), the source path is missing. Docker re-resolves a bind source
+  on every container *start*. A host agent at a stable path (e.g. a
+  systemd user agent at `$XDG_RUNTIME_DIR/ssh-agent.socket`) therefore
+  heals with a stop/start, while a per-login random path (`ssh-agent -s`
+  under `/tmp/ssh-XXXX/`) needs a container recreate every time.
+- **Read-only known_hosts alone breaks.** With the default
+  `StrictHostKeyChecking ask`, a host missing from a read-only file fails
+  non-interactively with "Host key verification failed". Switching to
+  `accept-new` on a file that can never be written makes every connection
+  a fresh trust-on-first-use.
+- **Copied gitconfig pitfalls.** `credential.helper` values name host
+  binaries (or are the blank `helper =` reset some tools write, which
+  wipes the helper the editor injects). `core.pager`, `pager.*` and
+  `interactive.diffFilter` (e.g. `delta`) name host binaries, so
+  `git log` / `git add -p` break in the container.
+
+**How.**
 
 ```jsonc
 {
-  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "mounts": [
+    // the host's agent, never its key files; unset on the host → /dev/null (no agent)
+    "source=${localEnv:SSH_AUTH_SOCK:/dev/null},target=/ssh-agent.sock,type=bind",
+    // container-owned ~/.ssh so known_hosts is writable and survives rebuilds
+    "source=myrepo-ssh-${devcontainerId},target=/home/vscode/.ssh,type=volume",
+    // hosts the host already trusts, read-only, as a second trust file
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh/known_hosts,target=/home/vscode/.ssh/known_hosts.host,type=bind,readonly",
+    // pinned keys committed to the repo (e.g. GitHub's published host keys)
+    "source=${localWorkspaceFolder}/.devcontainer/ssh_known_hosts,target=/etc/ssh/ssh_known_hosts,type=bind,readonly"
+  ],
+  // containerEnv, not remoteEnv: docker exec / agent processes must see it (DEVC-023)
+  "containerEnv": { "SSH_AUTH_SOCK": "/ssh-agent.sock" },
+  "initializeCommand": ".devcontainer/initialize",
+  "onCreateCommand": "sudo chown vscode:vscode /home/vscode/.ssh",
+  "postCreateCommand": ".devcontainer/post-create.sh",
+  "postStartCommand": ".devcontainer/post-start.sh"
+}
+```
+
+`.devcontainer/ssh_known_hosts` — generate from the provider's API and
+check it against the fingerprints it publishes. Refresh it when the
+provider rotates keys:
+
+```bash
+# source: https://api.github.com/meta (ssh_keys) — verify against GitHub's published fingerprints
+curl -fsSL https://api.github.com/meta | jq -r '.ssh_keys[] | "github.com " + .' > .devcontainer/ssh_known_hosts
+ssh-keygen -lf .devcontainer/ssh_known_hosts   # ed25519 must read SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU
+```
+
+`.devcontainer/initialize` (host, POSIX) — make the bind sources exist
+and fail loudly on a broken agent variable:
+
+```sh
+#!/bin/sh
+set -eu
+[ -d "$HOME/.ssh" ] || mkdir -m 700 "$HOME/.ssh"
+[ -d "$HOME/.ssh/known_hosts" ] && { echo "$HOME/.ssh/known_hosts is a directory" >&2; exit 1; }
+[ -f "$HOME/.ssh/known_hosts" ] || : > "$HOME/.ssh/known_hosts"
+if [ "${SSH_AUTH_SOCK+set}" = set ]; then
+  [ -n "$SSH_AUTH_SOCK" ] || { echo "SSH_AUTH_SOCK is set but empty — docker rejects an empty bind source; unset it or start an agent" >&2; exit 1; }
+  [ -S "$SSH_AUTH_SOCK" ] || { echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK is not a live socket (stale agent env?)" >&2; exit 1; }
+else
+  echo "initialize: warning: no SSH agent on the host; ssh in the container will have no key" >&2
+fi
+```
+
+`post-create.sh` (container, once) and `post-start.sh` (container, every
+start) — warn, never fail:
+
+```sh
+# post-create.sh
+chmod 700 ~/.ssh
+if [ ! -e ~/.ssh/config ]; then   # written once; the volume keeps later hand edits
+  printf 'UserKnownHostsFile ~/.ssh/known_hosts ~/.ssh/known_hosts.host\n' > ~/.ssh/config
+  chmod 600 ~/.ssh/config
+fi
+[ -S /ssh-agent.sock ] || echo "post-create: WARNING no host SSH agent mounted" >&2
+
+# post-start.sh
+if [ -S "$SSH_AUTH_SOCK" ]; then
+  rc=0; ssh-add -l >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    2) echo "post-start: agent socket is dead (host agent restarted) — stop and start the container" >&2 ;;
+    1) echo "post-start: host agent has no keys loaded — run ssh-add on the host" >&2 ;;
+  esac
+fi
+```
+
+`/etc/ssh/ssh_known_hosts` is in the default `GlobalKnownHostsFile`, so
+the pinned keys verify even with `StrictHostKeyChecking yes`. Test it:
+`ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -T git@github.com`.
+
+**Commit signing** works through the same agent with no host paths:
+`git config gpg.format ssh` plus
+`git config user.signingKey "key::ssh-ed25519 AAAA… comment"` (the
+public key, `key::`-prefixed; the private half stays in the agent).
+
+**Copying a host gitconfig in** (only if you must, e.g. for identity):
+flatten it with `git config --global --includes --list` captured into a
+variable (fail if git exits non-zero). Drop `credential.helper`,
+`credential.*.helper`, `core.pager`, `pager.*` and
+`interactive.difffilter` — git prints section and key names lowercased.
+Write valueless boolean entries (a bare `section.key` line) as `true`.
+Guards like "set only if unset" must read with
+`git config --global --includes --get <key>`, or they miss values that
+come through `include.path`.
+
+**Platform notes.**
+
+- **Windows:** the OpenSSH agent is the named pipe
+  `\\.\pipe\openssh-ssh-agent`, which cannot be bind-mounted into a Linux
+  container. Only VS Code bridges it. `SSH_AUTH_SOCK` is normally unset
+  there, so the `:/dev/null` default applies.
+- **Docker Desktop (Mac/Linux):** the host agent is exposed to containers
+  at `/run/host-services/ssh-auth.sock`. Bind that path instead of
+  `${localEnv:SSH_AUTH_SOCK}`.
+
+Cite: [VS Code — sharing git credentials](https://code.visualstudio.com/remote/advancedcontainers/sharing-git-credentials),
+[devcontainers/cli#441](https://github.com/devcontainers/cli/issues/441),
+[ssh_config(5) — StrictHostKeyChecking, UserKnownHostsFile, GlobalKnownHostsFile](https://man.openbsd.org/ssh_config),
+[GitHub's SSH key fingerprints](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints),
+[git-config — gpg.format, user.signingKey](https://git-scm.com/docs/git-config#Documentation/git-config.txt-usersigningKey),
+[Docker Desktop — SSH agent forwarding](https://docs.docker.com/desktop/features/networking/networking-how-tos/),
+[Win32-OpenSSH agent pipe](https://github.com/PowerShell/openssh-portable/blob/9a43b12c3d1dcb9b742d6b65e5f23d8022017a62/contrib/win32/win32compat/ssh-agent/agent.c#L50).
+
+**When NOT to apply.** Containers that never talk to a git remote or SSH
+host (CI builds that clone before the container starts). Codespaces,
+which injects its own git credentials. The agent-socket rule itself has
+no exception worth taking: if a container truly needs a key (a
+deploy-only machine key), inject that one key as a secret for that job —
+never the developer's host keys. Note that a mounted Docker socket makes
+all of this moot (DEVC-025).
+
+---
+
+## DEVC-020 — Use the `secrets` property to declare recommended secret names
+
+**What.** The top-level `secrets` property ("Recommended secrets for this
+dev container" in the spec schema) names the environment variables a
+contributor should supply, with optional `description` and
+`documentationUrl`. It stores no values, it is a recommendation rather
+than a requirement, and only some tools act on it:
+
+| Tool | What it does with `secrets` |
+|---|---|
+| **GitHub Codespaces** | Lists the names on the "New with options" create page with an input box for any the user hasn't stored; entering a value is optional. Stored Codespaces secrets are injected as env vars. |
+| **devcontainer CLI** | Ignores the property entirely — it never reads `secrets` and never fails for a missing one. |
+| **Other consumers** | Informational: onboarding docs, editor tooltips. |
+
+**Why.** It is the documented, discoverable place to say "this project
+needs `OPENAI_API_KEY`", distinct from the plumbing (DEVC-008). Don't
+rely on it for enforcement: no tool refuses to start the container when a
+listed secret is missing, so a missing value still surfaces deep inside
+the app unless your own script checks for it.
+
+The CLI's separate secrets mechanism is `--secrets-file <json>`
+(accepted by `devcontainer up` and `devcontainer run-user-commands`). It
+injects the file's key/value pairs into the environment of **lifecycle
+commands** (`onCreateCommand` … `postAttachCommand`) and the dotfiles
+install, and masks the values in its log output. It does **not** set
+them in `containerEnv`, so they are absent from `devcontainer exec`,
+`docker exec` and the editor's terminals.
+
+**How.**
+
+```jsonc
+{
+  "image": "mcr.microsoft.com/devcontainers/python:3-3.14-trixie",
   "secrets": {
     "OPENAI_API_KEY": {
       "description": "OpenAI API key for the inference module",
       "documentationUrl": "https://platform.openai.com/api-keys"
     },
     "GITHUB_TOKEN": {
-      "description": "GitHub PAT with repo + read:packages scopes"
-    }
-  }
-}
-```
-
-Cite: [containers.dev json_reference — secrets](https://containers.dev/implementors/json_reference/),
-[CLI support — devcontainers/cli#493](https://github.com/devcontainers/cli/pull/493).
-
-**Why.** This is the *contract* form of secret declaration, distinct
-from `${localEnv:...}` (DEVC-008). DEVC-008 says "pull a value from
-the host env at create time" — but if the env var isn't set, the
-container silently starts with an empty value and the failure surfaces
-deep inside the app. `secrets` is the declarative version: "this
-container needs these names; tool, please ensure they're set."
-
-What different tools do with `secrets`:
-
-- **Codespaces** — reads `secrets` to know which of the user's stored
-  Codespace secrets to inject. If a required secret has no stored
-  value, Codespaces prompts the user before starting the container.
-- **devcontainer CLI** — reads `secrets` against a host-supplied
-  secrets file (`--secrets-file`). Missing values fail container
-  creation with a clear error.
-- **Other consumers** — informational, but the `description` and
-  `documentationUrl` show up in onboarding docs and editor tooltips.
-
-`${localEnv:...}` is still the right mechanism for *plumbing* the
-secret through to the container — the two work together:
-
-```jsonc
-{
-  "secrets": {
-    "OPENAI_API_KEY": {
-      "description": "OpenAI API key — get one at https://platform.openai.com/api-keys"
-    }
-  },
-  "containerEnv": {
-    // declarative contract above; here's how the value flows in
-    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}"
-  }
-}
-```
-
-For Codespaces, the `containerEnv` line isn't needed — Codespaces
-injects the value directly based on `secrets`. For the local CLI, both
-the `secrets` declaration *and* the `containerEnv` plumbing are
-required (the CLI doesn't inject env vars automatically based on the
-`secrets` field — it only validates that the names are populated).
-
-**How.** Full example for a project that needs three secrets:
-
-```jsonc
-{
-  "name": "myapp-dev",
-  "image": "mcr.microsoft.com/devcontainers/python:3.12",
-  "secrets": {
-    "OPENAI_API_KEY": {
-      "description": "OpenAI API key for the LLM module",
-      "documentationUrl": "https://platform.openai.com/api-keys"
-    },
-    "GITHUB_TOKEN": {
       "description": "GitHub PAT with repo + read:packages — needed for private deps"
-    },
-    "DATABASE_URL": {
-      "description": "Postgres connection string for the shared dev DB"
     }
   },
+  // local plumbing (DEVC-008): the value the running container sees
   "containerEnv": {
-    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}",
-    "GITHUB_TOKEN":   "${localEnv:GITHUB_TOKEN}",
-    "DATABASE_URL":   "${localEnv:DATABASE_URL}"
-  }
+    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}"
+  },
+  // fail loudly yourself — no tool enforces the declaration
+  "postCreateCommand": "test -n \"$OPENAI_API_KEY\" || { echo 'OPENAI_API_KEY is not set on the host' >&2; exit 1; }"
 }
 ```
 
-Local CLI invocation with a secrets file:
+Secrets needed only during setup (e.g. a token for `uv sync` against a
+private index) can come from a gitignored file via the CLI:
 
 ```bash
-# .secrets.json (gitignored)
-# { "OPENAI_API_KEY": "sk-...", "GITHUB_TOKEN": "ghp_...", "DATABASE_URL": "postgres://..." }
-
+# .secrets.json (gitignored): { "GITHUB_TOKEN": "..." }
 devcontainer up --workspace-folder . --secrets-file .secrets.json
 ```
 
-The CLI verifies every name in `secrets` has a value in the file
-(falling back to host env for unspecified names). Missing required
-secrets fail with `Error: required secret <NAME> not provided`.
+Cite: [spec schema — secrets](https://github.com/devcontainers/spec/blob/main/schemas/devContainer.base.schema.json),
+[GitHub — specifying recommended secrets](https://docs.github.com/en/codespaces/setting-up-your-project-for-codespaces/configuring-dev-containers/specifying-recommended-secrets-for-a-repository),
+[CLI `--secrets-file` options (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/devContainersSpecCLI.ts#L172),
+[lifecycle env injection](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-common/injectHeadless.ts#L518),
+[log masking](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/devContainers.ts#L302-L307).
 
 **Distinction from DEVC-008.**
 
-| Field | What it does | When to use |
+| Mechanism | What it does | Reaches |
 |---|---|---|
-| `secrets` (top-level) | Declarative contract — names + metadata. No values. | Document required secrets; let tools validate they're set. |
-| `containerEnv` + `${localEnv:...}` | Imperative plumbing — pull host env into container env. | Actually deliver the value to the running container (local CLI). |
-| `mounts` of credential files | File-mounted secret material at a fixed path. | When the secret is a file (SSH key, GCP service account JSON), not an env var. |
-
-The best dev containers use **`secrets` + `containerEnv:
-${localEnv:...}`** together: the first declares the contract, the
-second wires the value through.
+| `secrets` (top-level) | Declares recommended names + metadata. No values. | Codespaces create page; nothing locally |
+| `containerEnv` + `${localEnv:...}` | Copies a host env var into the container at create time. | Every process in the container |
+| `--secrets-file` (CLI) | Supplies values for setup only. | Lifecycle commands + dotfiles install |
+| `mounts` of credential files | File-mounted secret material at a fixed path. | Anything that can read the path |
 
 **When NOT to apply.**
 
-- Single-developer projects where the secret-handling story is "I set the env var in `~/.zshrc` and never think about it." `${localEnv:...}` alone is fine.
-- When the dev container CLI version in use predates [devcontainers/cli#493](https://github.com/devcontainers/cli/pull/493) — the `secrets` field is silently ignored. The declaration still has documentation value, but no enforcement.
-- For *non-secret* config (log levels, feature flags). Use `containerEnv` with literal values or `${localEnv:...}` without the `secrets` declaration — the `secrets` field is reserved for things actually sensitive.
+- Single-developer projects where the secret-handling story is "I set the env var in my shell profile." `${localEnv:...}` alone is fine.
+- For *non-secret* config (log levels, feature flags). Use `containerEnv` with literal values or `${localEnv:...}` — `secrets` is for things actually sensitive.
 
 ## DEVC-021 — Commit `devcontainer-lock.json` for reproducible feature versions
 
@@ -1050,13 +1251,226 @@ about what the project needs.
 **How.**
 
 ```jsonc
-"hostRequirements": { "gpu": "optional" },   // "optional" = use if present, don't block
-"runArgs": ["--gpus", "all"]
+"hostRequirements": { "gpu": "optional" }   // "optional" = use if present, don't block
 ```
+
+Don't add `"runArgs": ["--gpus", "all"]` next to it. The devcontainer
+CLI's `--gpu-availability` defaults to `detect`: when `hostRequirements.gpu`
+is `true` or `"optional"`, it checks `docker info` for an nvidia runtime
+and adds `--gpus all` itself. A hard-coded `--gpus all` makes the
+container fail to start on GPU-less hosts, which defeats `"optional"`.
+Force the flag from the command line when detection is wrong:
+`devcontainer up --gpu-availability all` (or `none`).
+
+Cite: [json_reference — hostRequirements](https://containers.dev/implementors/json_reference/#host-requirements),
+[CLI `--gpu-availability` (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/devContainersSpecCLI.ts#L140),
+[CLI singleContainer.ts L329-L336 — adds `--gpus all`](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/singleContainer.ts#L329-L336).
 
 **When NOT to apply.** Containers with no GPU workload. Note runtime GPU
 passthrough is still host/OS-dependent (native Linux, or WSL on Windows),
 so the declaration documents intent but doesn't guarantee a GPU appears —
 say so in the project's setup notes.
+
+---
+
+## DEVC-023 — `containerEnv` for anything non-editor processes need; `remoteEnv` only for editor/tool sessions
+
+**What.** `containerEnv` is set on the Docker container itself, so
+**every** process sees it: `docker exec`, `devcontainer exec`, coding
+agents, services started by entrypoints. `remoteEnv` is applied only to
+processes the dev container tool spawns (the editor's server and
+terminals, lifecycle commands, `devcontainer exec`). Put variables in
+`containerEnv` unless they must be computed from the running container's
+environment. `${containerEnv:VAR}` is valid **only** in `remoteEnv`.
+
+**Why.**
+
+- An agent or script started with plain `docker exec` never sees
+  `remoteEnv`. `SSH_AUTH_SOCK`, `UV_PYTHON_PREFERENCE` or a `PATH` addition
+  set there works in the editor terminal and silently doesn't in the
+  agent's shell.
+- `${containerEnv:VAR}` is resolved after the container is running,
+  and only for `remoteEnv`. Inside `containerEnv` it is not substituted,
+  so `"PATH": "${containerEnv:PATH}:/opt/tool/bin"` in `containerEnv`
+  sets a broken `PATH` on the container (no `/usr/bin`) and
+  every process loses its tools.
+- The spec itself says: "We recommend using containerEnv (over remoteEnv)
+  as much as possible since it allows all processes to see the variable
+  and isn't client-specific." The trade-off: `containerEnv` is static for
+  the life of the container — changing it needs a rebuild.
+
+**How.**
+
+```jsonc
+{
+  "containerEnv": {
+    "SSH_AUTH_SOCK": "/ssh-agent.sock",     // seen by docker exec / agents too
+    "UV_LINK_MODE": "copy"
+  },
+  "remoteEnv": {
+    // needs the container's own PATH — only valid here
+    "PATH": "${containerEnv:PATH}:/home/vscode/.local/bin"
+  }
+}
+```
+
+If non-editor processes also need a `PATH` addition, set it in the image
+(`ENV PATH=/opt/tool/bin:$PATH`) instead, where the base `PATH` is known.
+
+Cite: [json_reference — containerEnv / remoteEnv](https://containers.dev/implementors/json_reference/#general-properties),
+[json_reference — `${containerEnv:VAR}` is a remoteEnv-only variable](https://containers.dev/implementors/json_reference/#variables-in-devcontainerjson),
+[CLI — containerEnv substituted from host env only (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/devContainersSpecCLI.ts#L525),
+[`${containerEnv:…}` resolved for remoteEnv after start](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-common/injectHeadless.ts#L345-L347).
+
+**When NOT to apply.** Values that are deliberately editor-only, or that
+change often enough that a rebuild per change is unacceptable — those
+belong in `remoteEnv`, with the understanding that `docker exec` won't
+see them.
+
+---
+
+## DEVC-024 — Headless configs must do what the editor does for you
+
+**What.** VS Code's Dev Containers extension performs several setup steps
+that are **not** part of the spec and that the devcontainer CLI does not
+do. A config that is ever started without the editor — `devcontainer up`
+from a script, CI, coding agents via `devcontainer exec` / `docker exec`
+— must implement them itself.
+
+| Behavior | VS Code | devcontainer CLI | What the config must do |
+|---|---|---|---|
+| SSH agent forwarding | automatic when a host agent runs, for its own processes | never | bind the agent socket + `containerEnv.SSH_AUTH_SOCK` (DEVC-019) |
+| Copy host `.gitconfig` | automatic on startup | never | copy / flatten it in `initializeCommand` + mount, or set identity in `postCreateCommand` (DEVC-019 lists what to strip) |
+| known_hosts | not handled | not handled | pin keys in `/etc/ssh/ssh_known_hosts` (DEVC-019) |
+| GPG agent forwarding | automatic when configured on the host | never | prefer SSH signing through the agent (DEVC-019) |
+| `forwardPorts` / `portsAttributes` | forwards on localhost | ignored | `appPort` (published as `127.0.0.1:P:P`) (DEVC-016) |
+| `waitFor` background hooks | attaches after `waitFor`, rest in background | runs all hooks synchronously | nothing — but don't assume background timing (DEVC-004) |
+
+**Why.** The editor makes a config look complete: git identity, pushes
+and ports all work in its terminal. The same container driven by the CLI
+or an agent has no git identity, no agent, and no ports, and fails with
+unrelated-looking errors ("Please tell me who you are", "Permission
+denied (publickey)", connection refused). Maintainer on the CLI: "The
+ssh-agent forwarding is part of the Dev Containers extension and not
+part of the Dev Containers CLI."
+
+**How.** Test the config the way it runs headless:
+
+```bash
+devcontainer up --workspace-folder . --remove-existing-container
+devcontainer exec --workspace-folder . sh -c 'git config user.email && ssh-add -l && echo "$SSH_AUTH_SOCK"'
+docker exec -u vscode "$(docker ps -q --filter label=devcontainer.local_folder="$PWD")" env | grep SSH_AUTH_SOCK
+```
+
+Each step VS Code would have done needs an explicit mount, variable or
+lifecycle command. Since the editor adds its own on top, these don't
+conflict.
+
+Cite: [VS Code — sharing git credentials](https://code.visualstudio.com/remote/advancedcontainers/sharing-git-credentials),
+[devcontainers/cli#441](https://github.com/devcontainers/cli/issues/441),
+[CLI — no gitconfig / known_hosts / GPG handling; forwardPorts only merged (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/imageMetadata.ts#L192-L209).
+
+**When NOT to apply.** Configs only ever opened in VS Code by a human.
+Codespaces, which provides its own credential plumbing.
+
+---
+
+## DEVC-025 — A Docker socket in the container is root on the host — make it an explicit choice
+
+**What.** Mounting the host's Docker socket — directly or through the
+`docker-outside-of-docker` feature, which binds `/var/run/docker.sock` to
+`/var/run/docker-host.sock` — gives every process in the container
+root-equivalent control of the host when the daemon is rootful. Treat it
+as a documented, accepted risk, or don't mount it.
+
+**Why.** Docker's own docs: "The `docker` group grants root-level
+privileges to the user." Through the socket any process can run
+`docker run --rm -v /:/host …` and read or write any host file, including
+the SSH keys and tokens you carefully kept out of the container
+(DEVC-006, DEVC-019). A coding agent in an auto-approve / bypass-
+permissions mode runs arbitrary commands without review. With the socket
+present, every other credential boundary in the config is moot: the
+agent is one command away from host root. DooD is not "scoped to
+Docker": for a rootful daemon, Docker access *is* host root.
+
+**How.**
+
+1. Don't add the socket by default. Most dev loops need it only for
+   `docker build` or testcontainers.
+2. When needed, prefer a boundary that isn't host root:
+   - a **rootless** Docker daemon on the host (the socket then maps to an
+     unprivileged host user),
+   - a **remote builder** (`docker buildx create --driver remote`, a CI
+     builder, or a VM) for image builds,
+   - Docker-in-Docker (`docker-in-docker` feature) when isolation matters
+     more than speed. It needs `privileged`, so it isolates the *host
+     daemon* but not the kernel.
+3. If you keep DooD on a rootful daemon, say so where contributors will
+   see it:
+
+```jsonc
+{
+  "features": {
+    // ACCEPTED RISK: host Docker socket = root on the host. Any process in this
+    // container (including agents in bypass mode) can `docker run -v /:/host`.
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": { "moby": false }
+  }
+}
+```
+
+Cite: [Docker — manage Docker as a non-root user](https://docs.docker.com/engine/install/linux-postinstall/),
+[docker-outside-of-docker mounts](https://github.com/devcontainers/features/blob/47406487f9b4965e4f9865f20b86805b1e2d5c0f/src/docker-outside-of-docker/devcontainer-feature.json#L67-L73),
+[Docker — rootless mode](https://docs.docker.com/engine/security/rootless/).
+
+**When NOT to apply.** Single-user machines where the container user is
+already trusted with host root (it's your laptop, you're in the `docker`
+group anyway) and no autonomous agent runs inside. Even then, write the
+comment: the next contributor or agent config may not share that
+assumption.
+
+---
+
+## DEVC-026 — Pin dev container base images to image-major + language + OS, or a digest
+
+**What.** The `mcr.microsoft.com/devcontainers/*` images publish compound
+tags `<image-major>-<language-version>-<os>` (e.g. `python:3-3.14-trixie`,
+`javascript-node:5-24-trixie`) alongside short tags (`python:3.14`,
+`javascript-node:24`). Use the compound tag, or a digest, not the short
+tag.
+
+**Why.** Short tags float across **image major versions** (breaking
+changes to the image's tooling and users) **and OS releases**. The python
+image's 1.x releases shipped only bookworm/bullseye variants, while
+2.x+ make trixie the default. The same `python:3.14`-style tag silently
+moved Debian release underneath the project. Features' OS support changes
+with the OS: `docker-outside-of-docker` fails its install on Debian trixie
+unless `"moby": false` is set ("The 'moby' option is not supported on
+debian 'trixie' …"; `moby` defaults to `true`). A floating base tag can
+therefore break a container build with no change in the repo.
+
+**How.**
+
+```jsonc
+{
+  "image": "mcr.microsoft.com/devcontainers/python:3-3.14-trixie",
+  "features": {
+    // trixie: moby packages unavailable — required, or install.sh exits 1
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": { "moby": false }
+  }
+}
+```
+
+For full reproducibility pin the digest (`…:3-3.14-trixie@sha256:…`) and
+let Dependabot / Renovate bump it. When you do change the OS, re-check
+every feature's options against the new release.
+
+Cite: [devcontainers/images python manifest (tag scheme)](https://github.com/devcontainers/images/blob/c04ecb19a95e23cf7a4275993cdb3119e9f97c60/src/python/manifest.json),
+[python image history 1.0.0 vs 2.0.2](https://github.com/devcontainers/images/blob/c04ecb19a95e23cf7a4275993cdb3119e9f97c60/src/python/history/2.0.2.md),
+[docker-outside-of-docker install.sh L210-L214 — trixie guard](https://github.com/devcontainers/features/blob/47406487f9b4965e4f9865f20b86805b1e2d5c0f/src/docker-outside-of-docker/install.sh#L210-L214),
+[`moby` option default](https://github.com/devcontainers/features/blob/47406487f9b4965e4f9865f20b86805b1e2d5c0f/src/docker-outside-of-docker/devcontainer-feature.json#L4-L21).
+
+**When NOT to apply.** Throwaway or exploratory containers where picking
+up the newest OS automatically is the point. Even then, expect feature
+option breakage on OS switches.
 
 ---
