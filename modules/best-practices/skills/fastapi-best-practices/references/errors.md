@@ -71,38 +71,68 @@ Pydantic — the default 422 is informative and not worth replacing.
 
 ---
 
-## FAPI-052 — Register a catch-all `Exception` handler that logs and returns a safe `500`
+## FAPI-052 — Register a catch-all `Exception` handler for a uniform `500` body; don't log in it
 
-**What.** Install `@app.exception_handler(Exception)` that logs the
-exception (with any request correlation ID) and returns a generic
-`500` body. Don't let unexpected exceptions reach Starlette's default.
+**What.** Install `@app.exception_handler(Exception)` that returns a
+`500` in the same body shape as your other error handlers (FAPI-050,
+FAPI-051, FAPI-053). Don't log the exception in it, and read the request
+correlation ID from `request.state`, not from a ContextVar.
 
-**Why.** With `debug=True`, Starlette renders the full traceback into the
-HTTP response — a data-exposure bug if it ever ships enabled. Even in
-production, an explicit handler guarantees consistent structured logging
-and a safe, uniform error body instead of relying on framework defaults
-that differ by environment.
+**Why.** Starlette routes this handler to its outermost
+`ServerErrorMiddleware`, which shapes what the handler can and can't do
+(`starlette/middleware/errors.py`):
+
+- **The exception is already logged.** After sending the handler's
+  response, the middleware re-raises: "We always continue to raise the
+  exception. This allows servers to log the error". Uvicorn then logs the
+  traceback, so a `logger.exception` in the handler logs every error
+  twice.
+- **It buys a uniform body, not safety.** Without a handler, the
+  non-debug default is already a bare `PlainTextResponse("Internal Server
+  Error", status_code=500)` with no traceback. The handler's value is
+  a body clients can parse like every other error.
+- **`debug=True` bypasses it.** With debug on, the middleware renders the
+  traceback response before it ever consults the handler, so the handler
+  does not protect against a debug flag that ships to production. Keep
+  `debug` off in production config.
+- **It runs outside all user middleware.** By the time it runs, a
+  request-ID middleware has already reset its ContextVar, and the
+  handler's response goes straight to the server, bypassing that
+  middleware's `send` wrapper (so no `X-Request-ID` header either). Have
+  the middleware also store the ID on `scope["state"]`; the handler reads
+  it back as `request.state.request_id`.
 
 **How.**
 
 ```python
-import logging
-logger = logging.getLogger(__name__)
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
 @app.exception_handler(Exception)
-async def on_unhandled(request, exc):
-    logger.exception("unhandled error", extra={"path": request.url.path})
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+async def on_unhandled(request: Request, exc: Exception) -> JSONResponse:
+    # No logging here: ServerErrorMiddleware re-raises and the server logs it.
+    request_id = getattr(request.state, "request_id", None)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "request_id": request_id},
+        headers={"X-Request-ID": request_id} if request_id else None,
+    )
+```
+
+In the request-ID middleware, next to setting the ContextVar:
+
+```python
+scope.setdefault("state", {})["request_id"] = request_id
 ```
 
 Register it alongside the `StarletteHTTPException` and
 `RequestValidationError` handlers — FastAPI dispatches by exception type,
 so the specific handlers still win for their types.
 
-**When NOT to apply.** Never skip it in production. The one caveat:
-don't let the catch-all swallow `HTTPException`/validation errors — those
-have their own handlers and should keep their intended status codes, not
-collapse to 500.
+**When NOT to apply.** Never skip it in production if clients parse
+error bodies. The one caveat: don't let the catch-all swallow
+`HTTPException`/validation errors — those have their own handlers and
+should keep their intended status codes, not collapse to 500.
 
 ---
 

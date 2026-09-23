@@ -154,15 +154,15 @@ regex managers, grouped PRs across ecosystems Dependabot doesn't cover
 well); a small repo where Dependabot's four ecosystems already cover
 every pin doesn't need the second bot.
 
-This rule also deliberately departs from UVP-040 in
-[`uv-best-practices`](../../uv-best-practices/references/tools.md), which
-installs standalone CLIs such as `pre-commit` with `uv tool install`.
-Pinning them in `uv.lock` instead means Dependabot bumps them with
+Workflow CLIs such as `pre-commit` go in `[dependency-groups]` too, as
+UVP-040 in
+[`uv-best-practices`](../../uv-best-practices/references/tools.md) says.
+Pinning them in `uv.lock` means Dependabot bumps them with
 everything else and hooks, CI and the dev container all run one version;
 the cost is that they join the project's dependency resolution, so
-their own dependencies must be compatible with the project's. If you follow UVP-040,
-nothing Dependabot reads records the tool's version, so pin it some other
-way.
+their own dependencies must be compatible with the project's. A tool
+that conflicts has to be pinned some other way (a pinned `uvx`
+invocation), and nothing Dependabot reads records that version.
 
 ---
 

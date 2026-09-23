@@ -67,7 +67,7 @@
       "name": "best-practices",
       "description": "Library of domain best-practices skills with stable, citable rule IDs (containers, uv, Python, FastAPI, databases, repo hygiene, Go, gRPC) plus the containers-audit interactive scan-and-fix workflow and the authoring tools for adding rules.",
       "category": "development",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "source": "./modules/best-practices"
     }
   ]

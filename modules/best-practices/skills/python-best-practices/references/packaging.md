@@ -1105,22 +1105,26 @@ audit:
     - run: uv run pip-audit --strict
 ```
 
-For uv projects, the native command:
+For uv projects, the native command (experimental, so it needs the
+preview flag; `--locked` audits the committed lockfile instead of
+re-resolving; see UVP-028 in `uv-best-practices`):
 
 ```bash
-uv audit
+uv audit --locked --preview-features audit-command
 ```
 
 **Why.** Three concrete failure modes when this isn't a CI step:
 
 1. **Local-only audits aren't audits.** A developer who runs `pip-audit` manually catches advisories the day they look. Between checks, new CVEs land against pinned versions and nobody knows. CI runs every PR and main-branch push, so the gap shrinks from "weeks" to "minutes."
 2. **Transitive vulnerabilities are invisible.** Your `pyproject.toml` lists 12 direct dependencies; your lockfile resolves to 87 packages. Most CVEs hit transitives. `pip-audit` walks the full resolved tree (from the lockfile or installed env) and surfaces every match — manual `pip list` + Google won't.
-3. **No coverage gap with Dependabot / Renovate.** Those tools open PRs for *version updates*; they don't have a notion of "this current pin has an advisory I should know about." `pip-audit` complements them: Dependabot keeps versions current, `pip-audit` flags anything dangerous in the meantime.
+3. **A PR is not a gate.** Dependabot alerts and security updates do track "this current pin has an advisory": "Dependabot will automatically try to open pull requests to resolve **every** open Dependabot alert that has an available patch" ([About Dependabot security updates](https://docs.github.com/en/code-security/dependabot/dependabot-security-updates/about-dependabot-security-updates)). But an alert or a PR doesn't stop anything; the vulnerable pin keeps shipping until someone merges. An audit step in CI complements them by failing the build.
 
 `uv audit` is the uv-native equivalent. It uses the same OSV
 database under the hood (via `uv`'s own resolver state) and runs
 faster than re-resolving with `pip-audit`. Functionally equivalent
-for the purpose of this rule; pick whichever fits your stack.
+for the purpose of this rule, but still experimental in uv (it warns
+unless you pass `--preview-features audit-command`), so pin the uv
+version in CI if you gate on it.
 
 **Handling unfixable advisories.** Sometimes a CVE is real but
 there's no fix yet (the upstream maintainer hasn't released a
@@ -1172,7 +1176,7 @@ jobs:
 Or, with uv's native audit:
 
 ```yaml
-      - run: uv audit
+      - run: uv audit --locked --preview-features audit-command
 ```
 
 For local dev, the same command runs against the dev tree:
@@ -1180,7 +1184,7 @@ For local dev, the same command runs against the dev tree:
 ```bash
 uv run pip-audit
 # or:
-uv audit
+uv audit --locked --preview-features audit-command
 ```
 
 **When NOT to apply.** Two narrow cases:

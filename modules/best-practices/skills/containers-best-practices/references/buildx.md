@@ -487,10 +487,19 @@ an OCI image **with attestations**: a separate manifest for the SBOM
 The result is an OCI manifest *index* that points at the image
 manifest plus the two attestation manifests.
 
-Since BuildKit v0.21, OCI media types and the `image-manifest=true`
-index form are the **default** output, so on a current toolchain pushing
-to a modern registry this round-trips without any extra flags — the
-workaround below is now mostly a legacy concern. The remaining catch:
+The image exporter's documented default is Docker media types
+(`oci-mediatypes` defaults to `false`,
+[image exporter](https://docs.docker.com/build/exporters/image-registry/)),
+but an index carrying attestations must use OCI media types: BuildKit
+switches to them when attestations are attached and rejects an explicit
+`oci-mediatypes=false` ("cannot export attestations with
+\"oci-mediatypes=false\"", `exporter/containerimage/writer.go` in
+[moby/buildkit](https://github.com/moby/buildkit)). `image-manifest` is
+not an image-output option at all: Docker documents it only for cache
+exports (`--cache-to`), where it has defaulted to `true` since BuildKit
+v0.21 ([cache storage backends](https://docs.docker.com/build/cache/backends/)).
+So on a current toolchain pushing to a modern registry this round-trips
+without extra flags. The catch:
 some *older* registries don't accept OCI manifest indexes pointing
 at non-image artifacts. ECR (pre-2024), older Harbor versions, and a
 handful of internal/self-hosted registries fail the push or fail
@@ -512,7 +521,7 @@ compatibility fallback; only turning attestations off avoids the index.
 
 The fix has two paths depending on what your registry supports:
 
-1. **Force the OCI media types and `image-manifest=true` index.**
+1. **Set OCI media types explicitly.**
    Modern OCI-compliant registries (ghcr.io, Docker Hub, GitLab,
    Quay, Artifactory ≥7.50, Harbor ≥2.10, ECR as of late 2024) accept
    this and round-trip attestations correctly:
@@ -520,7 +529,7 @@ The fix has two paths depending on what your registry supports:
    ```bash
    docker buildx build \
      --sbom=true --provenance=mode=max \
-     --output type=image,name=ghcr.io/myorg/myapp:${TAG},push=true,oci-mediatypes=true,image-manifest=true \
+     --output type=image,name=ghcr.io/myorg/myapp:${TAG},push=true,oci-mediatypes=true \
      .
    ```
 
@@ -548,7 +557,7 @@ Cite: [Build attestations](https://docs.docker.com/build/metadata/attestations/)
 
 **How.** Decision: do you control the registry?
 
-- **ghcr.io / Docker Hub / Quay / GitLab Container Registry / modern Harbor / modern ECR** → `mode=max` + `oci-mediatypes=true,image-manifest=true` and you get full attestations.
+- **ghcr.io / Docker Hub / Quay / GitLab Container Registry / modern Harbor / modern ECR** → `mode=max` + `oci-mediatypes=true` and you get full attestations.
 - **Older Harbor (<2.10), ECR before late 2024, custom in-house registries you don't control** → push with `--provenance=false` (or `BUILDX_NO_DEFAULT_ATTESTATIONS=1`) and check the registry round-trips it; upgrade the registry before you upgrade attestations.
 - **Unsure** → push to a staging tag first, then `docker buildx imagetools inspect <ref>` to see whether the attestation manifests survived the push:
 

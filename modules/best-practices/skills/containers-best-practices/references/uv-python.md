@@ -122,7 +122,9 @@ RUN --mount=type=cache,id=uv-${TARGETARCH:-amd64},target=/root/.cache/uv,sharing
     uv sync --locked --no-install-project --no-dev
 
 # Pass 2: project source + editable install.
-COPY pyproject.toml uv.lock ./
+# Copy every file the build backend reads, not just the manifests:
+# `readme = "README.md"` (written by `uv init`) fails the build without it.
+COPY pyproject.toml uv.lock README.md ./
 COPY src/ ./src/
 RUN --mount=type=cache,id=uv-${TARGETARCH:-amd64},target=/root/.cache/uv,sharing=locked \
     uv sync --locked --no-dev
@@ -130,6 +132,12 @@ RUN --mount=type=cache,id=uv-${TARGETARCH:-amd64},target=/root/.cache/uv,sharing
 # put the venv on PATH so `python` is the project's interpreter
 ENV PATH="/app/.venv/bin:$PATH"
 ```
+
+Pass 2 builds the project, so it needs everything `[project]` points at:
+`readme`, `license-files`, and the package source. Missing the README
+fails with "failed to open file `/app/README.md`". If your `.dockerignore`
+is an allowlist (`*` then `!src/` …), add those files to it too
+(SEC-001).
 
 Why `ARG TARGETARCH` inside the stage: the predefined platform ARGs
 "are available in the global scope of the Dockerfile, but they aren't
@@ -294,7 +302,11 @@ referenced — you can copy the venv alone into a minimal final stage.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-FROM python:3.12-slim@sha256:... AS builder
+# One pinned base for both stages: the venv's interpreter must exist at the
+# same path, same version, in the final stage.
+FROM python:3.12-slim@sha256:... AS base
+
+FROM base AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.11.16@sha256:... /uv /uvx /bin/
 ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_PYTHON_DOWNLOADS=0
 WORKDIR /app
@@ -305,14 +317,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     uv sync --locked --no-install-project --no-editable --no-dev
 
-# Pass 2: project, non-editable so we don't need source at runtime
-COPY pyproject.toml uv.lock ./
+# Pass 2: project, non-editable so we don't need source at runtime.
+# README.md (and any license file) too: the build backend reads them (UV-002).
+COPY pyproject.toml uv.lock README.md ./
 COPY src/ ./src/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-editable --no-dev
 
 # Final stage: just the venv. No uv, no compiler, no source.
-FROM python:3.12-slim@sha256:...
+FROM base
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
@@ -326,6 +339,13 @@ ENTRYPOINT ["python", "-m", "myapp"]
 
 Final-stage size: typically 80–120 MB (python:slim + venv), vs 300–500 MB
 for the all-in-one form. No build toolchain, no source tree, no uv.
+
+Why both stages build `FROM base`: a venv is not self-contained. Its
+`bin/python` is an absolute symlink to the builder's interpreter
+(`/usr/local/bin/python3` on `python:*-slim`), and `pyvenv.cfg` records
+that `home`. Two separately pinned `FROM python…` lines drift apart on the
+next bump, and the copied venv then points at a missing or different
+Python. A shared stage keeps one pin for both.
 
 **When NOT to apply.** Dev containers — you *want* the source to be
 editable and the env to reflect it. Single-stage images where you've
@@ -347,7 +367,7 @@ ENV UV_PROJECT_ENVIRONMENT=/usr/local
 
 **Why.**
 
-- `UV_PYTHON_DOWNLOADS=0` — uv defaults to downloading and managing its own Python versions. In a Docker stage that already has Python from the base image, this is pure overhead (extra download, extra MB). Setting `0` forces uv to use the system Python.
+- `UV_PYTHON_DOWNLOADS=0` — a fail-fast guard. When the base image's Python satisfies the project's request, uv uses it and downloads nothing, with or without this setting. When it doesn't (a `.python-version` or `requires-python` asking for a newer version than the image has), uv's default is to silently download a managed Python and build the venv against it. That interpreter lives in uv's managed-Python directory in the builder stage (`uv python dir`), so a runtime stage that copies only the venv gets a dangling `bin/python`. With `0`, the build stops with an error instead.
 - `UV_PROJECT_ENVIRONMENT=/usr/local` — uv defaults to creating `.venv/` in the working directory. For minimal final stages, you may want to install directly into the system Python instead, skipping the `PATH="/app/.venv/bin:$PATH"` shim. Mostly useful when copying *into* a fresh final stage.
 
 **⚠️ Destructive footgun.** `uv sync` removes packages from the target
@@ -385,7 +405,8 @@ ENV UV_PYTHON_DOWNLOADS=0 \
     UV_LINK_MODE=copy
 
 WORKDIR /app
-COPY pyproject.toml uv.lock src/ ./
+COPY pyproject.toml uv.lock README.md ./
+COPY src/ ./src/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-editable --no-dev
@@ -397,8 +418,13 @@ Accepted values for `UV_PYTHON_DOWNLOADS`: `automatic` (default),
 `manual`, `never`. `0` is accepted as a falsy alias for `never` — both
 work.
 
-The combination is especially helpful in distroless final stages where
-adding a `.venv` adds path-shimming complexity for no gain.
+The combination can help in distroless final stages where a `.venv`
+adds path-shimming for no gain, but only if the builder's Python matches
+the distroless one. Distroless Python lives at `/usr/bin` (and its
+version follows the Debian release), while `python:*-slim` uses
+`/usr/local/bin`. Packages synced into a slim builder's `/usr/local`
+aren't on the distroless interpreter's path. Build in an image with the
+same interpreter, or check `sys.path` in the final image.
 
 **When NOT to apply.**
 

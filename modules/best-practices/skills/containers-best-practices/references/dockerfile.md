@@ -27,10 +27,13 @@ essentials and shrinks attack surface.
 ```dockerfile
 # syntax=docker/dockerfile:1
 FROM python:3.12-slim AS builder
+COPY --from=ghcr.io/astral-sh/uv:0.11.16@sha256:... /uv /uvx /bin/
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-RUN pip install --no-cache-dir uv && uv sync --frozen --no-dev
+# Deps only: installing the project itself needs its source (UV-002)
+RUN uv sync --locked --no-install-project --no-dev
 COPY . .
+RUN uv sync --locked --no-dev
 
 FROM python:3.12-slim AS final
 WORKDIR /app
@@ -54,7 +57,10 @@ tools at runtime (uncommon — usually a sign something is wrong).
 **Why.** Tags are mutable. `python:3.12-slim` today is not the same blob as
 `python:3.12-slim` next week. That breaks reproducibility, hides supply-chain
 swaps, and can silently introduce CVEs (or fix them, which also matters for
-auditability). Digest pinning makes the build bit-for-bit reproducible.
+auditability). A digest guarantees every build starts from the same base
+image. It does not make the build reproducible on its own: package
+installs, timestamps and unpinned downloads still vary. For whole-build
+reproducibility see DOCKER-030.
 
 **How.**
 
@@ -86,15 +92,22 @@ dependency — turning a 3-second rebuild into a 90-second one.
 ```dockerfile
 # good — manifest copied first, deps installed, then source
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --locked --no-install-project --no-dev
+COPY README.md ./
 COPY src/ ./src/
+RUN uv sync --locked --no-dev
 ```
 
 ```dockerfile
 # bad — any source change rebuilds deps
 COPY . .
-RUN uv sync --frozen --no-dev
+RUN uv sync --locked --no-dev
 ```
+
+For a packaged Python project the dependency pass needs
+`--no-install-project`: without it uv tries to build the project from
+manifests alone and fails with "Expected a Python module at
+`src/…/__init__.py`". See UV-002 for the full two-pass pattern.
 
 For Node: `COPY package.json package-lock.json ./` then `RUN npm ci`, then
 `COPY . .`. Same pattern for Go (`go.mod`/`go.sum`), Rust (`Cargo.toml`/`Cargo.lock`),
@@ -196,13 +209,22 @@ docker run --init myimage
 
 Cite: [docker run --init](https://docs.docker.com/reference/cli/docker/container/run/#init).
 
-In Kubernetes, the right knob is a real init container or an init-aware
-process inside your container — `shareProcessNamespace: true` is unrelated
-to PID 1 reaping (it merely shares the PID namespace across containers in
-a pod, useful for debugging sidecars).
+Wherever `docker run --init` isn't available (Kubernetes and most
+orchestrators have no equivalent), bake tini or dumb-init into the image
+(Option A). Kubernetes init containers are unrelated: they "run to
+completion" before the app containers start
+([Init Containers](https://kubernetes.io/docs/concepts/workloads/pods/init-containers/))
+and never become the app's PID 1. The Kubernetes-side alternative is
+`shareProcessNamespace: true`: the pod's `pause` process becomes PID 1
+and reaps zombies, but your process is no longer PID 1, and every
+container in the pod can see the others' processes and `/proc`
+([Share Process Namespace](https://kubernetes.io/docs/tasks/configure-pod-container/share-process-namespace/)).
 
-A few application runtimes do the right thing without tini — distroless
-images, supervisord-style entrypoints, and some language servers. **Don't
+Distroless images ship no init: `gcr.io/distroless/python3` runs the
+interpreter directly as PID 1, so bake tini into it the same way (copy
+the static binary from a builder stage). A few entrypoints do the right
+thing without tini (supervisord-style process managers, some language
+servers). **Don't
 assume a runtime is init-aware just because it's "modern."** Most aren't.
 Verify by sending `SIGTERM` and watching shutdown behavior. Node, in
 particular, handles SIGTERM/SIGINT in newer versions but does **not** reap
@@ -229,13 +251,26 @@ a DB connection pool can starve, and `docker ps` will still report `Up`.
 **How.**
 
 ```dockerfile
+# exec form, no curl needed: slim and distroless images don't ship curl
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD curl -fsS http://localhost:8080/healthz || exit 1
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
 ```
 
-Pick a check that exercises the real failure mode (DB connectivity, dependent
-service reachable) — not just `pid 1 is alive`. Set `--start-period` to skip
-the boot window where transient failures are expected.
+The container `HEALTHCHECK` is a *liveness* check: can this process serve
+a request at all? Don't make it check the database or other dependent
+services. A DB blip then marks every replica unhealthy at once, and
+restarts pile onto the outage. Kubernetes' probe docs warn that
+"Incorrect implementation of liveness probes can lead to cascading
+failures"
+([Liveness, Readiness and Startup Probes](https://kubernetes.io/docs/concepts/workloads/pods/probes/)).
+Put dependency checks on a separate readiness endpoint instead
+([OBS-001](../../fastapi-best-practices/references/observability.md#obs-001)).
+Set `--start-period` to skip the boot window where transient failures are
+expected.
+
+One-shot jobs that reuse the service image (migrations, CLIs) inherit its
+`HEALTHCHECK`. In compose, turn it off for them with
+`healthcheck: { disable: true }`.
 
 In Kubernetes, prefer pod-level `livenessProbe`/`readinessProbe` and skip
 the Dockerfile `HEALTHCHECK` (Kubernetes ignores it). For docker-compose and
@@ -261,9 +296,9 @@ fetched — typical speedup is 5–20× for repos with many dependencies.
 ```dockerfile
 # syntax=docker/dockerfile:1
 
-# uv (Python)
+# uv (Python) — the full two-pass pattern is UV-002
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --locked --no-install-project --no-dev
 
 # pip (Python)
 RUN --mount=type=cache,target=/root/.cache/pip \

@@ -106,7 +106,7 @@ See [`references/ci.md`](./references/ci.md).
 
 See [`references/tools.md`](./references/tools.md).
 
-- **UVP-040** — Project-context tools (`pytest`, `mypy`, `ruff` for *this* project) → `uv add --dev`. Standalone CLIs (`pre-commit`, `cookiecutter`) → `uv tool install`.
+- **UVP-040** — Tools in *this* project's workflow (`pytest`, `mypy`, `ruff`, `pre-commit`) → `[dependency-groups]`, locked. Personal cross-project CLIs (`cookiecutter`, `httpie`) → `uv tool install`.
 - **UVP-041** — `uvx` (= `uv tool run`) for one-shot tool execution; pin the version when correctness matters (`uvx ruff@0.6.9`, not bare `uvx ruff`).
 - **UVP-042** — `uv tool upgrade --all` is fine locally but unsafe in CI — silent version drift; declare tools in `[dependency-groups]` or pin via `uvx <tool>@<version>` instead.
 - **UVP-072** — Audit global tools with `uv tool list --outdated` (≥0.10.10) and `--show-python` before a Python upgrade.

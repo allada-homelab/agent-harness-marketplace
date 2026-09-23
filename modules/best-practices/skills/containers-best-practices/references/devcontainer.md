@@ -482,7 +482,7 @@ defensive habit.
 
 **What.** Be explicit about how the container image is sourced:
 
-- `"image": "mcr.microsoft.com/devcontainers/python:3.12"` — use a pre-built image.
+- `"image": "mcr.microsoft.com/devcontainers/python:3-3.12-trixie"` — use a pre-built image, pinned per DEVC-026.
 - `"build": { "dockerfile": "Dockerfile" }` — build a custom image.
 - `"dockerComposeFile": "../docker-compose.yml"` — use compose.
 
@@ -701,7 +701,20 @@ between host and container, and its `bin/python` symlinks (and
 path that does not exist on the other side. `uv sync` then reports
 "Removed virtual environment" and rebuilds it, so host and container
 delete each other's venv on every alternation. A per-worktree named
-volume gives the container its own `.venv` and leaves the host's alone.
+volume gives the container its own `.venv`.
+
+It does touch the host, though. To mount a volume at `.venv` inside the
+bind-mounted workspace, the daemon creates the mountpoint in the host
+checkout if it is missing. With a rootful daemon that directory is empty
+and root-owned, so a later host `uv venv` or `uv sync` fails with
+"Permission denied". Pre-create every such mountpoint as your user from
+`initializeCommand`, which runs on the host before the container starts:
+
+```jsonc
+{
+  "initializeCommand": "mkdir -p .venv"
+}
+```
 
 **When NOT to apply.** Linux hosts where only the container ever runs uv
 against the workspace (no file-sharing overhead, and no second side to
@@ -743,7 +756,7 @@ leaking between branches.
 
 ```jsonc
 {
-  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "image": "mcr.microsoft.com/devcontainers/python:3-3.12-trixie",
   "remoteUser": "vscode",
   "mounts": [
     // Agentic CLIs — per-worktree named volumes
@@ -930,7 +943,7 @@ proper SIGTERM response that never comes.
 
 ```jsonc
 {
-  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "image": "mcr.microsoft.com/devcontainers/python:3-3.12-trixie",
   "init": true                              // adds --init to docker run
 }
 ```
@@ -939,7 +952,7 @@ Equivalent via `runArgs`:
 
 ```jsonc
 {
-  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "image": "mcr.microsoft.com/devcontainers/python:3-3.12-trixie",
   "runArgs": ["--init"]
 }
 ```
@@ -1221,6 +1234,10 @@ contributors — or CI vs a laptop — can silently get different Feature
 versions, reintroducing "works on my machine." The lockfile pins the
 exact resolved digests so every rebuild is identical; `--frozen-lockfile`
 fails the build if the lock is stale rather than silently re-resolving.
+The lock covers published Features only: "Local features and the
+deprecated GitHub releases features are not recorded in the lockfile"
+([lockfile spec](https://github.com/devcontainers/spec/blob/main/docs/specs/devcontainer-lockfile.md)),
+so a `./`-referenced Feature is pinned only by what's committed in the repo.
 
 **How.**
 
