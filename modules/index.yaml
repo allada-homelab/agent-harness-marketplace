@@ -95,7 +95,7 @@ modules:
       tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized
       results or sessions in the findings store beside it.
 - name: best-practices
-  version: 0.3.1
+  version: 0.4.0
   kinds:
   - skills
   - dsh-plugin
@@ -104,8 +104,8 @@ modules:
   - pi
   - dsh
   description: Library of domain best-practices skills with stable, citable rule IDs (containers, uv,
-    Python, FastAPI, Go, gRPC) plus the containers-audit interactive scan-and-fix workflow and the authoring
-    tools for adding rules.
+    Python, FastAPI, databases, repo hygiene, Go, gRPC) plus the containers-audit interactive scan-and-fix
+    workflow and the authoring tools for adding rules.
   skills:
   - name: containers-audit
     path: modules/best-practices/skills/containers-audit/SKILL.md
@@ -130,6 +130,18 @@ modules:
     command: false
     summary: Use when working with Dockerfiles, docker-compose/compose.yml, buildx, dev containers (devcontainer.json),
       or .dockerignore — including Python container builds with uv.
+  - name: databases-best-practices
+    path: modules/best-practices/skills/databases-best-practices/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: false
+    summary: Use when working with SQLite or PostgreSQL (Postgres) from Python — sqlite3 connections,
+      PRAGMA settings (journal_mode WAL, synchronous, foreign_keys, busy_timeout, optimize, user_version),
+      SQLite schema and migrations, Postgres via psycopg and a SQLAlchemy pool, Alembic migrations, pg_advisory_xact_lock
+      advisory locks, and SELECT FOR UPDATE row locking.
   - name: fastapi-best-practices
     path: modules/best-practices/skills/fastapi-best-practices/SKILL.md
     harness:
@@ -139,8 +151,10 @@ modules:
     tags: []
     command: false
     summary: Use when working with FastAPI apps — building or reviewing APIRouter route modules, Pydantic
-      v2 request/response models, Depends() dependencies, lifespan startup/shutdown, OAuth2/JWT auth,
-      async SQLAlchemy sessions, TestClient/httpx tests, or uvicorn deployment.
+      v2 request/response models, Depends() dependencies, lifespan startup/shutdown, OAuth2/JWT or bearer-token
+      auth, pydantic-settings secrets, async SQLAlchemy sessions, TestClient/httpx tests, uvicorn deployment,
+      or observability (OpenTelemetry tracing/metrics, OTLP export, X-Request-ID request id and log correlation,
+      /healthz and /readyz probes, pure ASGI middleware).
   - name: go-best-practices
     path: modules/best-practices/skills/go-best-practices/SKILL.md
     harness:
@@ -193,6 +207,17 @@ modules:
       `conftest.py`, `mypy.ini`, `pyrightconfig.json`, `.python-version` — or when the user asks about
       Python project layout, typing, linting, testing, async, logging, packaging, dependency auditing,
       or profiling.
+  - name: repo-best-practices
+    path: modules/best-practices/skills/repo-best-practices/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: false
+    summary: Use when editing repository hygiene and CI config — .pre-commit-config.yaml hooks, .github/dependabot.yml,
+      GitHub Actions workflows (.github/workflows/*.yml, permissions, zizmor audits), CODEOWNERS, justfile
+      task-runner recipes that CI calls, or secret scanning (gitleaks).
   - name: uv-best-practices
     path: modules/best-practices/skills/uv-best-practices/SKILL.md
     harness:

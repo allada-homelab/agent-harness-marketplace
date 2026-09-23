@@ -1,6 +1,6 @@
 # FAPI settings rules
 
-Detailed entries for `FAPI-020..FAPI-022`. Each follows the four-part
+Detailed entries for `FAPI-020..FAPI-022` and `API-002`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 Citations point at the
@@ -105,3 +105,65 @@ token = jwt.encode(payload, settings.jwt_secret.get_secret_value(), algorithm="H
 **When NOT to apply.** Non-secret config (hostnames, ports, feature
 flags) — `SecretStr` there just adds `.get_secret_value()` noise for no
 protection.
+
+---
+
+## API-002 — Mounted secret files beat environment variables: reorder sources in `settings_customise_sources`
+
+**What.** `Settings` reads secrets from files in `/run/secrets`.
+`settings_customise_sources` returns `(init, file secrets, env, dotenv)`,
+which puts the secrets source above environment variables. Secret files
+are named like the variables, env prefix included (`myapp_api_token`,
+`myapp_database_password`), because pydantic-settings finds secret files
+with the same `env_prefix` rules as environment variables. Non-secret
+settings still come from `MYAPP_*` variables. Pin the order with a test
+that sets both a secret file and the matching environment variable and
+asserts the file wins.
+
+**Why.** By default pydantic-settings ranks environment variables and
+dotenv above the secrets directory. A stray `MYAPP_API_TOKEN` inherited
+from a shell, CI job or base image would then silently override the
+secret the orchestrator mounted, and the app would run with a credential
+nobody provisioned. With the file on top, the provisioned secret is
+authoritative. Init arguments stay first, so tests can still pass values
+directly.
+Source: https://github.com/pydantic/pydantic-settings/blob/v2.15.0/docs/index.md
+
+> **a dotenv file and environment variables will always take priority over values loaded from the secrets directory**.
+
+> The order of the returned callables decides the priority of inputs; first item is the highest priority.
+
+> Secret files discovery is based on the same configuration options that are used by `EnvSettingsSource`: `case_sensitive`, `env_nested_delimiter`, `env_prefix`.
+
+**How.**
+
+```python
+from pydantic import SecretStr
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    # Secret files: /run/secrets/myapp_api_token, /run/secrets/myapp_database_password
+    model_config = SettingsConfigDict(env_prefix="MYAPP_", secrets_dir="/run/secrets", frozen=True)
+
+    database_host: str = "localhost"
+    database_password: SecretStr
+    api_token: SecretStr
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # First item wins: a mounted secret file outranks a stray MYAPP_* variable.
+        return init_settings, file_secret_settings, env_settings, dotenv_settings
+```
+
+**When NOT to apply.** Keep the default order on platforms that deliver
+secrets as environment variables and mount no files. Note that with
+files on top, a secret can't be rotated by setting an environment
+variable, only by replacing the file.
