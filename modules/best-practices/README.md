@@ -13,7 +13,9 @@ command: `/best-practices:containers-audit` on Claude Code,
 | [`containers-best-practices`](skills/containers-best-practices/) | Docker, dev containers, compose, buildx, container-side uv (`DOCKER-`, `COMPOSE-`, `DEVC-`, `BUILDX-`, `SEC-`, `UV-`) |
 | [`uv-best-practices`](skills/uv-best-practices/) | uv as a Python project tool — project shape, lockfile, environments, CI, tools, Python versions, migration (`UVP-`) |
 | [`python-best-practices`](skills/python-best-practices/) | Python project conventions — layout, typing, linting, testing, async, logging, packaging (`PY-`) |
-| [`fastapi-best-practices`](skills/fastapi-best-practices/) | FastAPI services — structure, models, settings, dependencies, lifespan, errors, security, async DB, testing, deployment (`FAPI-`) |
+| [`fastapi-best-practices`](skills/fastapi-best-practices/) | FastAPI services — structure, models, settings, dependencies, lifespan, errors, security, async DB, testing, deployment, observability (`FAPI-`, `OBS-`, `API-`) |
+| [`databases-best-practices`](skills/databases-best-practices/) | SQLite (connection PRAGMAs, WAL, writer/reader split, migrations) and PostgreSQL (pool sizing, migration locking and tests, row-lock order) (`SQLITE-`, `PG-`) |
+| [`repo-best-practices`](skills/repo-best-practices/) | Repository hygiene — pre-commit, Dependabot, secret scanning, task-runner/CI parity, CODEOWNERS, GitHub Actions hardening (`REPO-`) |
 | [`go-best-practices`](skills/go-best-practices/) | Go — layout, errors, concurrency, `net/http`, security, modules, quality, testing (`GO-`) |
 | [`grpc-best-practices`](skills/grpc-best-practices/) | gRPC — proto design, error model, deadlines, streaming, interceptors, security, tooling, performance (`GRPC-`) |
 | [`meta-best-practices`](skills/meta-best-practices/) | Format spec for the library — rule IDs, severity, entry structure, authoring tools |

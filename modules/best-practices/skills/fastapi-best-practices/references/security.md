@@ -1,6 +1,6 @@
 # FAPI security rules
 
-Detailed entries for `FAPI-060..FAPI-063`. Each follows the four-part
+Detailed entries for `FAPI-060..FAPI-063` and `API-001`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 Citations point at the
@@ -134,3 +134,62 @@ relative `tokenUrl` so the two stay in sync.
 **When NOT to apply.** No exception — if you use `OAuth2PasswordBearer`,
 `tokenUrl` has to point at the real endpoint. The only variation is
 whether you express it as an absolute path or rely on `root_path`.
+
+---
+
+## API-001 — Compare bearer tokens with `hmac.compare_digest` on bytes, never `==`
+
+**What.** A shared-token auth dependency encodes the presented bearer
+token and the configured one to bytes and compares them with
+`hmac.compare_digest`. A missing or non-Bearer header compares as `b""`,
+so every failure takes the same path to one 401 with
+`WWW-Authenticate: Bearer`.
+
+**Why.** `==` on strings or bytes returns at the first differing byte.
+Response time then leaks how much of a guess matched, so a token can be
+recovered a byte at a time over many requests. `compare_digest` doesn't
+short-circuit on content. Comparing bytes rather than `str` matters as
+well: with `str` arguments `compare_digest` accepts ASCII only and raises
+`TypeError` otherwise. Starlette decodes headers as latin-1, so a client
+could turn a bad token into a 500 instead of a 401.
+Source: https://docs.python.org/3.14/library/hmac.html#hmac.compare_digest
+
+> This function uses an approach designed to prevent timing analysis by avoiding content-based short circuiting behaviour, making it appropriate for cryptography.
+
+> *a* and *b* must both be of the same type: either "str" (ASCII only, as e.g. returned by "HMAC.hexdigest()"), or a *bytes-like object*.
+
+> If *a* and *b* are of different lengths, or if an error occurs, a timing attack could theoretically reveal information about the types and lengths of *a* and *b*—but not their values.
+
+**How.**
+
+```python
+import hmac
+from typing import Annotated
+
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+bearer = HTTPBearer(auto_error=False)  # a missing header reaches our single 401 path
+
+
+async def require_token(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> None:
+    expected = request.app.state.settings.api_token.get_secret_value().encode()
+    given = credentials.credentials.encode() if credentials else b""
+    if not hmac.compare_digest(given, expected):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "missing or invalid bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+```
+
+Attach it to the protected router with
+`APIRouter(dependencies=[Depends(require_token)])` (FAPI-002).
+
+**When NOT to apply.** Lengths still leak, so use a long, fixed-length
+random token. A single shared token authenticates the caller, not a
+user. Per-user auth needs OAuth2/JWT or sessions (FAPI-060..FAPI-063),
+and the same constant-time rule applies wherever a secret is compared.

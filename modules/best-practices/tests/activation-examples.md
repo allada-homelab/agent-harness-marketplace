@@ -104,6 +104,10 @@ Should activate:
 - "Inject settings into a FastAPI dependency"
 - "Test a FastAPI endpoint with an async client"
 - "What's FAPI-070?" (rule-ID match)
+- "Add OpenTelemetry tracing to my FastAPI app"
+- "Put the request id and trace id on every log line"
+- "What should /healthz check vs /readyz?"
+- "What's OBS-003?" / "What's API-001?" (rule-ID match)
 
 Should NOT activate:
 
@@ -163,3 +167,39 @@ Should NOT activate:
 When adding a new skill, append a section here with the same shape
 (Should activate / Should NOT activate). When editing a description
 field, re-read the relevant section to verify expectations still hold.
+
+## databases-best-practices
+
+Should activate:
+
+- "What PRAGMAs should I set on a SQLite connection?"
+- "Is WAL with synchronous=NORMAL safe?"
+- "Why do I get `database is locked` from sqlite3?"
+- "How do I run SQLite schema migrations with user_version?"
+- "How big should my SQLAlchemy pool be against Postgres max_connections?"
+- "Stop two replicas running Alembic migrations at the same time"
+- "How do I avoid deadlocks when a transaction updates two rows?"
+- "What's SQLITE-005?" / "What's PG-003?" (rule-ID match)
+
+Should NOT activate:
+
+- "Wire an async SQLAlchemy session into FastAPI" (→ fastapi-best-practices; databases-best-practices activates alongside only for pool sizing or migrations).
+- "Run Postgres in docker compose" (→ containers-best-practices).
+
+## repo-best-practices
+
+Should activate:
+
+- "Set up pre-commit for this repo"
+- "Configure Dependabot for uv, GitHub Actions and pre-commit"
+- "Harden this GitHub Actions workflow" / "What permissions should this workflow have?"
+- "Add secret scanning to CI"
+- "Keep the justfile and CI in sync"
+- "Do we need a CODEOWNERS file?"
+- "What's REPO-009?" (rule-ID match)
+
+Should NOT activate:
+
+- "Which ruff rules should I enable?" (→ python-best-practices).
+- "Cache uv in CI" (→ uv-best-practices).
+

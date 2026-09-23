@@ -1,6 +1,6 @@
 ---
 name: fastapi-best-practices
-description: Use when working with FastAPI apps — building or reviewing APIRouter route modules, Pydantic v2 request/response models, Depends() dependencies, lifespan startup/shutdown, OAuth2/JWT auth, async SQLAlchemy sessions, TestClient/httpx tests, or uvicorn deployment. Covers the FAPI- rule family (structure, models/validation, settings, dependencies, path operations, errors, security, async DB, testing, deployment). FastAPI-specific only; general Python rules live in python-best-practices.
+description: Use when working with FastAPI apps — building or reviewing APIRouter route modules, Pydantic v2 request/response models, Depends() dependencies, lifespan startup/shutdown, OAuth2/JWT or bearer-token auth, pydantic-settings secrets, async SQLAlchemy sessions, TestClient/httpx tests, uvicorn deployment, or observability (OpenTelemetry tracing/metrics, OTLP export, X-Request-ID request id and log correlation, /healthz and /readyz probes, pure ASGI middleware). Covers the FAPI- rule family (structure, models/validation, settings, dependencies, path operations, errors, security, async DB, testing, deployment), OBS- (observability) and API- (bearer-token comparison, secret-file precedence). FastAPI-specific only; general Python rules live in python-best-practices.
 ---
 
 # FastAPI best practices
@@ -21,7 +21,7 @@ Activate when any of these are true:
 
 - A file imports `fastapi`, `APIRouter`, `Depends`, `pydantic`, or `uvicorn`, or you're editing a FastAPI app (`main.py` with `FastAPI(...)`, `routers/`, path-operation decorators).
 - The user asks about FastAPI structure, dependencies, Pydantic models for an API, lifespan/startup events, OAuth2/JWT auth, async DB sessions, or deploying FastAPI behind a proxy or in containers.
-- The user references a `FAPI-` rule ID.
+- The user references a `FAPI-`, `OBS-` or `API-` rule ID.
 
 ## How to use the rule index
 
@@ -57,6 +57,7 @@ See [`references/settings.md`](./references/settings.md).
 - **FAPI-020** — Use `pydantic-settings` `BaseSettings` for config, not scattered `os.getenv`.
 - **FAPI-021** — Wrap `Settings()` in `@lru_cache` and inject it via `Depends`.
 - **FAPI-022** — Type secret fields as `SecretStr`.
+- **API-002** — Rank mounted secret files above environment variables via `settings_customise_sources`.
 
 ## Rules — Dependencies
 
@@ -92,6 +93,7 @@ See [`references/security.md`](./references/security.md).
 - **FAPI-061** — Verify against a dummy hash when the user lookup misses (timing attack).
 - **FAPI-062** — Never put secrets, PII, or session state in a JWT payload.
 - **FAPI-063** — Point `OAuth2PasswordBearer(tokenUrl=...)` at the real token endpoint path.
+- **API-001** — Compare bearer tokens with `hmac.compare_digest` on bytes, never `==`.
 
 ## Rules — Async database
 
@@ -116,3 +118,13 @@ See [`references/deployment.md`](./references/deployment.md).
 - **FAPI-090** — Run one Uvicorn process per container; let the orchestrator replicate.
 - **FAPI-091** — Set `--forwarded-allow-ips` and `root_path` when running behind a proxy.
 - **FAPI-092** — Never combine `allow_origins=["*"]` with `allow_credentials=True` in CORS.
+
+## Rules — Observability
+
+See [`references/observability.md`](./references/observability.md).
+
+- **OBS-001** — `/healthz` is liveness (no dependency checks); `/readyz` is readiness (checks the database, 503 problem+json).
+- **OBS-003** — Always instrument against the OTel API; start the SDK/exporters only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+- **OBS-004** — Reuse a safe `X-Request-ID` (else generate one), echo it, and stamp it on every log line with `trace_id`/`span_id`.
+- **OBS-005** — Push HTTP metrics over OTLP on the stable `http.server.request.duration` (`OTEL_SEMCONV_STABILITY_OPT_IN=http`); `OTEL_METRICS_EXPORTER=none` turns them off.
+- **OBS-006** — Use pure ASGI middleware, not `BaseHTTPMiddleware`, for anything that sets a ContextVar.
