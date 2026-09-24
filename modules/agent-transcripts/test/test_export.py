@@ -116,7 +116,13 @@ def test_discover_dsh_volumes(tmp_path, monkeypatch):
     }
     host = [s for s in sources if s["kind"] == "host"][0]
     assert host["origin"] == str(dsh_home / "sessions")
-    assert host["skipped"] == ["attachments/", "spill/"]
+    assert host["skipped"] == [
+        "attachments/",
+        "spill/",
+        "session.lock",
+        "query.sqlite",
+        "*.decompressed.jsonl",
+    ]
     assert {s["subdir"] for s in sources} == {"sessions"}
 
 
@@ -216,6 +222,26 @@ def test_pi_export_skips_spill(tmp_path, capsys):
     assert (dest / "raw/pi/host/default/a.jsonl").exists()
     assert not (dest / "raw/pi/host/default/spill").exists()
     assert "copied=1" in capsys.readouterr().out
+
+
+def test_dsh_export_skips_side_files(tmp_path, capsys):
+    origin = tmp_path / "sessions"
+    (origin / "key" / "sid").mkdir(parents=True)
+    (origin / "key" / "sid" / "session.jsonl.zstd").write_bytes(b"\x28\xb5\x2f\xfd")
+    (origin / "key" / "sid" / "session.v3.jsonl.zstd").write_bytes(b"\x28\xb5\x2f\xfd")
+    (origin / "key" / "sid" / "session.lock").write_text("locked")
+    (origin / "key" / "sid" / "session.jsonl.decompressed.jsonl").write_text("{}\n")
+    (origin / "query.sqlite").write_bytes(b"sqlite")
+    dest = tmp_path / "cache"
+
+    tr.export_sources(dest, [_host_source("dsh", origin, "sessions")], dry_run=False)
+    base = dest / "raw/dsh/host/sessions/key/sid"
+    assert (base / "session.jsonl.zstd").exists()
+    assert (base / "session.v3.jsonl.zstd").exists()
+    assert not (base / "session.lock").exists()
+    assert not (base / "session.jsonl.decompressed.jsonl").exists()
+    assert not (dest / "raw/dsh/host/sessions/query.sqlite").exists()
+    assert "copied=2" in capsys.readouterr().out
 
 
 def test_dry_run_writes_nothing(tmp_path):
