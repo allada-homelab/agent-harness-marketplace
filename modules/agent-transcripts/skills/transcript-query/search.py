@@ -77,7 +77,10 @@ def connect(dest_root: Path) -> sqlite3.Connection:
     db = dest_root / "transcripts.db"
     if not db.exists():
         raise SystemExit(f"no index at {db}; run the transcript-ingest skill first")
-    return sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5.0)
+    conn.execute("PRAGMA cache_size=-65536")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    return conn
 
 
 def quote_term(term: str) -> str:
