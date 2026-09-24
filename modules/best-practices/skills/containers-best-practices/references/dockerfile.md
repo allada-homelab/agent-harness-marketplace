@@ -734,11 +734,18 @@ cached layer, and the *next* `RUN apt-get install` line happily installs
 from an arbitrarily stale index. The bug manifests as:
 
 - `apt-get install` fails with "Unable to locate package X" for newly-published packages.
-- Security patches don't get picked up because the cached index doesn't know they exist.
+- Adding a package to the install line installs it from the stale index, at an old version or one the mirror no longer serves.
 - Builds work on one machine and fail on another, depending on whose layer cache is "fresh enough."
 
 This is documented at length in Docker's [build best-practices guide](https://docs.docker.com/build/building/best-practices/#apt-get)
 as the canonical "apt-get cache busting" problem.
+
+Combining the two only busts the cache when the `RUN` line *changes*.
+An unchanged `apt-get update && apt-get install` layer is reused as
+`CACHED` just like the split form, so it never picks up security
+patches on its own. For that, rebuild on a schedule with
+`docker build --pull --no-cache`
+([--no-cache for clean builds](https://docs.docker.com/build/building/best-practices/#use---no-cache-for-clean-builds)).
 
 **How.**
 
@@ -1080,12 +1087,17 @@ agree with what the running process actually binds, because everything
 downstream reads it as truth:
 
 - `docker run -P` (capital P) publishes every `EXPOSE`d port to random host ports.
-- Compose `expose:` (without `ports:`) defaults to the Dockerfile `EXPOSE`s.
+- Compose `expose:` *adds* ports to the image's `EXPOSE` list; it doesn't replace it.
 - Reverse proxies (Traefik with its docker provider) auto-discover ports via `EXPOSE`.
 - `docker inspect` and registry UIs surface `EXPOSE` as the "what this image listens on."
 
 When `EXPOSE 8080` but the app binds `:3000`, every one of those
 downstream tools is silently lying.
+
+Neither `EXPOSE` nor compose `expose:` gates traffic. Containers on a
+shared network reach *any* port the process listens on, declared or
+not. Use networks (COMPOSE-007) to restrict who can connect, not
+`EXPOSE`.
 
 **Why.** Common failure modes:
 

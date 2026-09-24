@@ -24,7 +24,7 @@ rest of the ecosystem.
 **Why.** Three failure modes:
 
 1. **Tool portability.** `[tool.uv.dev-dependencies]` is uv-only. Other tools (pip ≥25.1, hatch, PDM) read `[dependency-groups]`. A project pinned to the old field can't be installed by anything else without rewriting.
-2. **Silent duplication.** If you have *both* `[tool.uv.dev-dependencies]` and `[dependency-groups]`, uv merges them into the `dev` group. The same package can appear twice with different version constraints — resolution still succeeds, but the lockfile is confusing and the second constraint is silently ignored.
+2. **Hidden duplication.** If you have *both* `[tool.uv.dev-dependencies]` and `[dependency-groups]`, uv merges them into the `dev` group (and warns that the old field is deprecated). The same package can then appear twice with different version constraints. uv applies both, so the resolved range is their intersection, and constraints that don't overlap make the lock fail as unsatisfiable, with no hint that the second constraint came from the other table.
 3. **Future removal.** Astral has telegraphed eventual removal of `[tool.uv.dev-dependencies]`. New projects pinned to it accumulate migration debt for zero benefit.
 
 **How.**
@@ -50,13 +50,14 @@ docs = [
 ]
 ```
 
-Install all groups: `uv sync` (default-groups = `["dev"]` so dev installs by default).
+Install the default groups: `uv sync` (`default-groups` is `["dev"]`, so only `dev` installs — not `docs`).
+Install all groups: `uv sync --all-groups`.
 Install only the project: `uv sync --no-default-groups`.
 Install a specific group: `uv sync --group docs`.
 
 **When NOT to apply.** Two narrow cases:
 
-1. **Backward compat with very old uv versions** (pre-0.4 era, before PEP 735 support). If your team is genuinely pinned to an old uv, keep `[tool.uv.dev-dependencies]`. Otherwise migrate.
+1. **Backward compat with very old uv versions** (before 0.4.27, the first release that reads `[dependency-groups]`). If your team is genuinely pinned to an old uv, keep `[tool.uv.dev-dependencies]`. Otherwise migrate.
 2. **You're publishing a library and want consumers to install dev deps as PyPI extras.** Extras (`[project.optional-dependencies]`) are different from dependency groups — extras ship in the wheel metadata; groups do not. If consumers need to `pip install yourpkg[test]`, use extras. Groups are for *your* dev workflow; extras are for *your consumers*.
 
 ---

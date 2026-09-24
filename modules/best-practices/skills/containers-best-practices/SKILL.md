@@ -79,7 +79,7 @@ See [`references/dockerfile.md`](./references/dockerfile.md).
 
 See [`references/devcontainer.md`](./references/devcontainer.md).
 
-- **DEVC-001** — Map host UID/GID to avoid file-ownership pain on bind mounts (`updateRemoteUserUID`; it skips taken UIDs, is off on macOS, and only re-owns `$HOME`).
+- **DEVC-001** — Map host UID/GID to avoid file-ownership pain on bind mounts (`updateRemoteUserUID`; it skips taken UIDs, is off on macOS, only re-owns `$HOME`, and misfires under rootless Docker).
 - **DEVC-002** — Put long-running installs in the **image**, not `postCreateCommand`.
 - **DEVC-003** — Use official `features` for common tooling instead of hand-rolling; `:1` pins the feature major, the `version` option is the tool version.
 - **DEVC-004** — Pick the right lifecycle hook: `onCreateCommand` vs `updateContentCommand` vs `postCreateCommand` vs `postStartCommand` vs `postAttachCommand`.

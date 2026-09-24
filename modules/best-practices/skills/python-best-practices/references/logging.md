@@ -593,6 +593,13 @@ def configure_logging(level: str = "INFO") -> None:
             "json": {
                 "()": structlog.stdlib.ProcessorFormatter,
                 "processor": structlog.processors.JSONRenderer(),
+                # stdlib (library) records skip structlog's processors;
+                # without this they render as {"event": ...} only
+                "foreign_pre_chain": [
+                    structlog.stdlib.add_log_level,
+                    structlog.stdlib.add_logger_name,
+                    structlog.processors.TimeStamper(fmt="iso"),
+                ],
             },
         },
         "handlers": {

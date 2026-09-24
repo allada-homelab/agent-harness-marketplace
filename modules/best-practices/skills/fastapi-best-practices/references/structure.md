@@ -162,11 +162,16 @@ models, HTTP clients) attach to `app.state` (`app.state.pool = pool`) and
 are read in routes via `request.app.state.pool`.
 
 **Why.** Module-level globals defeat test isolation (every test must
-remember to reset them) and are per-process — with multiple workers each
-holds its own copy, so anything you mutate as "shared state" silently
-diverges across workers. `app.state` is scoped to the application
+remember to reset them). `app.state` is scoped to the application
 instance, which makes the lifetime explicit and lets tests mount a
 configured app.
+
+`app.state` is still per-process. With `--workers N`, each worker runs
+its own lifespan and holds its own copy. A counter or cache you mutate
+there silently diverges across workers, exactly like a global. Keep
+state that must be shared across workers in an external store (Redis,
+the database). Use `app.state` only for per-process *handles* such as
+pools and clients.
 
 **How.**
 
