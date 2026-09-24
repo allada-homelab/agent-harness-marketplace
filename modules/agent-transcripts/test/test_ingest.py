@@ -224,6 +224,30 @@ def test_iter_raw_files_finds_every_harness(cache):
     ]
 
 
+def test_iter_raw_files_finds_dsh_v3_sessions_and_ingest_parses_them(tmp_path):
+    """dsh renamed its session logs to session.v3.jsonl.zstd; both names must be found."""
+    cache = build_cache(tmp_path)
+    v3 = cache / "raw/dsh/host/sessions/--tmp-proj--/session-v3/session.v3.jsonl.zstd"
+    v3.parent.mkdir()
+    v3.write_bytes(
+        _frame([{**DSH_HEADER, "id": "session-v3", "version": 3}])
+        + _frame(DSH_BODY[:4])
+    )
+    dsh_names = [p.name for h, p in tr.iter_raw_files(cache) if h == "dsh"]
+    assert "session.v3.jsonl.zstd" in dsh_names
+    assert "session.jsonl.zstd" in dsh_names
+
+    assert tr.ingest(cache, rebuild=False) == 1  # only the pi v1 fixture errors
+    conn = tr.open_db(cache)
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM sessions WHERE harness = 'dsh' AND native_id = 'session-v3'"
+        ).fetchone()[0]
+        == 1
+    )
+    conn.close()
+
+
 def test_to_iso_formats_epoch_millis():
     assert tr.to_iso(1700000001000) == "2023-11-14T22:13:21.000Z"
 
