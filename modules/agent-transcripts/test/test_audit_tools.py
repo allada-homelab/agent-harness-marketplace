@@ -50,7 +50,7 @@ def _seed(root: Path) -> None:
             " output_tokens, raw, injected, norm_key, harness)"
             " VALUES (?, ?, NULL, NULL, 1, ?,"
             " '2026-01-01T00:00:00.000Z', ?, NULL, NULL, NULL, NULL, '', 0, ?, 'dsh')",
-            (sid, ord_, role, text, ti._norm_text(text)),
+            (sid, ord_, role, text, ti._norm_key(text)),
         )
 
     session(10, "devcontainer up failed")

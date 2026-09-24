@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -1122,7 +1123,7 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> None
                 m.output_tokens,
                 m.raw,
                 int(m.injected),
-                _norm_text(m.text),
+                _norm_key(m.text),
                 harness,
             ),
         )
@@ -1192,6 +1193,18 @@ def ingest(dest_root: Path, rebuild: bool) -> int:
 def _norm_text(text: str) -> str:
     """Whitespace-collapsed, lowercased key for near-duplicate detection."""
     return " ".join(text.split()).lower()
+
+
+def _norm_key(text: str) -> str:
+    """A fixed-size digest of the normalized text; identical text ⇒ identical key.
+
+    The normalized text of a large tool result can run to hundreds of KB, and
+    storing it in the (norm_key, session_id) index made a rebuild crawl. A
+    SHA-256 digest keeps the index at 64 bytes per row with the same grouping
+    semantics (collisions are astronomically unlikely).
+    """
+    key = _norm_text(text)
+    return hashlib.sha256(key.encode()).hexdigest() if key else ""
 
 
 def annotate(

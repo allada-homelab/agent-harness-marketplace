@@ -260,6 +260,17 @@ def test_ingest_populates_norm_key_and_harness(cache):
     assert conn.execute(
         "SELECT count(*) FROM tool_calls WHERE harness = 'dsh'"
     ).fetchone()[0] > 0
+    # norm_key is a fixed-size digest, not the (possibly huge) normalized text
+    keys = [
+        r[0]
+        for r in conn.execute(
+            "SELECT DISTINCT norm_key FROM messages WHERE norm_key != ''"
+        )
+    ]
+    assert keys
+    assert all(
+        len(k) == 64 and all(c in "0123456789abcdef" for c in k) for k in keys
+    )
     conn.close()
 
 
