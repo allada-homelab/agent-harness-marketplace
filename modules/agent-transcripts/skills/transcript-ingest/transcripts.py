@@ -571,7 +571,7 @@ def iter_raw_files(dest_root: Path) -> list[tuple[str, Path]]:
     for harness, pattern in (
         ("claude", "*/**/*.jsonl"),
         ("pi", "*/**/*.jsonl"),
-        ("dsh", "*/sessions/*/*/session.jsonl.zstd"),
+        ("dsh", "*/sessions/*/*/session*.jsonl.zstd"),
     ):
         found += [(harness, p) for p in (raw / harness).glob(pattern) if p.is_file()]
     return sorted(found, key=lambda row: (row[0], str(row[1])))
