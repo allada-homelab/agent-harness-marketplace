@@ -51,9 +51,9 @@ select = [
   "SIM",                 # simplify
   "RUF",                 # ruff-specific
 ]
-ignore = [
-  "S101",                # allow `assert` (override per-file for tests, see PY-022)
-]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]   # asserts only in tests; keep S101 on in src (PY-022)
 
 [tool.ruff.format]
 quote-style = "double"
@@ -115,7 +115,6 @@ older Python. Match it to your `requires-python` floor.
 select = [...as above...]
 ignore = [
   "E501",     # let formatter handle line length (ruff format wraps long lines)
-  "S101",     # asserts allowed globally (per-file override for tests, PY-022)
   "S104",     # binding to 0.0.0.0 is OK in container apps
   "SIM108",   # ternary if/else — sometimes if/else reads better
 ]
@@ -240,16 +239,16 @@ For *new* projects without an existing constraint: 88.
 
 ## PY-024 — pre-commit hook order: `ruff` (--fix) before `ruff-format`
 
-**What.** When configuring ruff in pre-commit, put `ruff` (the
+**What.** When configuring ruff in pre-commit, put `ruff-check` (the
 linter) *before* `ruff-format` (the formatter):
 
 ```yaml
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.0
+    rev: 2eeb5678de71a00c0902cbda7105d328432f72cb  # frozen: v0.16.8
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: [--fix]
       - id: ruff-format
 ```
@@ -273,14 +272,20 @@ clean state per commit.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.0                 # pin to a specific tag
+    rev: 2eeb5678de71a00c0902cbda7105d328432f72cb  # frozen: v0.16.8
     hooks:
-      - id: ruff
+      - id: ruff-check
         name: ruff (lint + fix)
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
         name: ruff (format)
 ```
+
+`ruff-check` is the hook id the
+[ruff-pre-commit README](https://github.com/astral-sh/ruff-pre-commit) uses
+today. Pin `rev` to the full commit SHA with a `# frozen: vX.Y.Z` comment
+(`pre-commit autoupdate --freeze` writes that form) so a moved tag can't
+change what runs.
 
 `--exit-non-zero-on-fix` makes pre-commit fail when ruff *does*
 fix something — forcing you to re-stage the fixed file. Without it,

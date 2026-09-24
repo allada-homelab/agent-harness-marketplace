@@ -469,6 +469,12 @@ LOGGING = {
 }
 ```
 
+Behind a `QueueHandler` (PY-076), put `"filters": ["context"]` on the
+`queue` handler instead of `stdout`. A filter on a handler behind the
+queue runs on the listener thread, where the ContextVar is unset, so
+every record logs the default `-`. The QueueHandler's own filters run in
+the thread that made the logging call.
+
 structlog has a cleaner pattern for the same thing:
 
 ```python
@@ -685,10 +691,14 @@ logging.config.dictConfig({
     "root": {"level": "INFO", "handlers": ["queue"]},
 })
 
-# Start the listener (drains the queue on a background thread).
-# logging.config.dictConfig() does this automatically when the
-# QueueHandler has `handlers: [...]` in 3.12+; for earlier
-# versions, set up the QueueListener manually.
+# dictConfig() builds the QueueListener but does not start it
+# (`listener._thread` is None). Until you start it, records pile up
+# in the queue and nothing is written.
+import atexit
+
+listener = logging.getHandlerByName("queue").listener
+listener.start()
+atexit.register(listener.stop)   # drain the queue on exit
 ```
 
 **Why.** Synchronous handler I/O is on the critical path of
@@ -708,9 +718,19 @@ but the request path stays fast.
 Python 3.12 introduced
 [`logging.getHandlerByName()`](https://docs.python.org/3/library/logging.html#logging.getHandlerByName),
 which lets `dictConfig` resolve handler names inside a
-`QueueHandler` config without manual wiring — the snippet above
-uses that. On 3.11 and earlier, you have to construct the
-`QueueHandler` / `QueueListener` pair programmatically.
+`QueueHandler` config and build the `QueueListener` for you — the
+snippet above uses that. Starting and stopping the listener is still
+your job: "After the configuration, the `QueueListener` instance
+will be available as the `listener` attribute of the created handler"
+([logging.config — Configuring QueueHandler and QueueListener](https://docs.python.org/3/library/logging.config.html#configuring-queuehandler-and-queuelistener)),
+and nothing calls `start()` on it. On 3.11 and earlier, you have to
+construct the `QueueHandler` / `QueueListener` pair programmatically.
+
+Filters that read `contextvars` (PY-055's `ContextFilter`) go on the
+`QueueHandler`, not on the handlers behind it. The QueueHandler's
+filters run in the thread that made the logging call; the target
+handlers' filters run on the listener thread, where the request's
+ContextVar is unset and every record gets the default.
 
 Pair with PY-056: JSON-to-stdout remains the format and
 destination; QueueHandler is the *transport* underneath that makes
@@ -721,6 +741,8 @@ it safe on the hot path.
 3.12+ — declarative `dictConfig` (handler resolution by name):
 
 ```python
+import atexit
+import logging
 import logging.config
 import sys
 
@@ -744,6 +766,11 @@ logging.config.dictConfig({
     },
     "root": {"level": "INFO", "handlers": ["queue"]},
 })
+
+# dictConfig built the listener; starting and stopping it is on you.
+listener = logging.getHandlerByName("queue").listener
+listener.start()
+atexit.register(listener.stop)
 ```
 
 Pre-3.12 — manual `QueueListener`:
@@ -785,5 +812,5 @@ make the trade-off explicit).
 **When NOT to apply.** Three cases:
 
 1. **CLI tools and short-lived scripts.** Logging is synchronous to a terminal; the user *wants* it to flush before the process exits. The queue/listener pair adds a graceful-shutdown burden that earns nothing for a script that runs for 3 seconds.
-2. **Tests.** pytest captures logging via `caplog`; introducing a queue between your code and the captor breaks the capture. Configure logging without QueueHandler in test config.
+2. **Tests.** Tests gain nothing from off-thread I/O, and a running listener adds shutdown ordering to every session. The queue itself doesn't break `caplog`: caplog's handler sits on the root logger beside the `QueueHandler` and still receives every record. What breaks it is a `dictConfig` call that runs after caplog attaches (in a fixture, or an app factory the test calls): it replaces the root logger's handlers, queue or not. Configure logging once before tests start, or not at all in test config.
 3. **Single-handler stdout logging with no slow sink behind it.** If you're confident the only downstream is an unblocked stdout pipe to a fast collector, the queue indirection is overhead with no upside. The rule fires when you have *any* network handler, file rotation, or slow consumer in the chain — which is most production services, but not all.

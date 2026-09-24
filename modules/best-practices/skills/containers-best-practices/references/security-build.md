@@ -67,9 +67,13 @@ compose*.yml
 docker-compose*.yml
 
 # Build artifacts and caches
-target           # Rust
-.gradle          # Java
-bin              # Go (if you have one)
+# (comments must start the line: `target  # Rust` would be read as a pattern)
+# Rust
+target
+# Java
+.gradle
+# Go (if you have one)
+bin
 coverage
 *.log
 
@@ -420,14 +424,21 @@ if an env var of the same name leaks in:
 ```python
 @classmethod
 def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
-    return init_settings, file_secret_settings, dotenv_settings, env_settings   # files beat env
+    return init_settings, file_secret_settings, env_settings, dotenv_settings   # files beat env, env beats .env
 ```
+
+Keep `env_settings` ahead of `dotenv_settings`: the default order is
+init, then "Environment variables", then "Variables loaded from a dotenv
+(`.env`) file", then secrets
+([Field value priority](https://docs.pydantic.dev/latest/concepts/pydantic_settings/#field-value-priority)).
+Swapping those two lets a stale `.env` silently override the real
+environment.
 
 The `secrets:` block also accepts:
 
 - `environment: VAR` — pull from compose's env at parse time (least secure of the three; OK for dev). The only source where the long-syntax `uid` / `gid` / `mode` take effect.
 - `file: ./path` — read from a host file; bind-mounted, `0444`, `uid`/`gid`/`mode` ignored.
-- `external: true` — reference a Docker / Swarm secret managed outside compose (best for prod).
+- `external: true` — reference a secret managed outside compose. Swarm only: plain `docker compose up` without Swarm rejects it ("unsupported external secret"). Use it with `docker stack deploy`.
 
 Cite: [compose reference — services secrets](https://docs.docker.com/reference/compose-file/services/#secrets).
 

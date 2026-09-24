@@ -97,21 +97,27 @@ allow transparently upgrading across minor Python versions...
 Patch upgrades are transparent."), and the resolution stays
 stable across patches.
 
-**How.**
+**How.** Each block below is the whole `.python-version` file. Keep
+annotations out of it: uv rejects a trailing comment ("Ignoring
+unsupported Python request `3.12  # good` in version file") and falls
+back to another interpreter. A `#` comment on its own line is fine.
+
+Good — minor pin:
 
 ```
-.python-version
-3.12                                 # good — minor pin
+3.12
 ```
 
-```
-.python-version
-3.12.7                               # bad — too tight, freezes security
-```
+Bad — too tight, freezes security:
 
 ```
-.python-version
-cpython-3.12.7-linux-x86_64-gnu      # bad — platform-specific, breaks on macOS
+3.12.7
+```
+
+Bad — platform-specific, breaks on macOS:
+
+```
+cpython-3.12.7-linux-x86_64-gnu
 ```
 
 For exact reproducibility (e.g. in deploys where you genuinely

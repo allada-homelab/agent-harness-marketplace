@@ -13,14 +13,19 @@ and the [Pydantic v2 config docs](https://docs.pydantic.dev/latest/concepts/conf
 ## FAPI-010 — Configure Pydantic v2 models with `model_config = ConfigDict(...)`, not inner `class Config`
 
 **What.** All Pydantic v2 model configuration goes in a class-level
-`model_config = ConfigDict(...)`. The v1 inner `class Config:` (and
-`orm_mode`) is gone — in v2 it is **silently ignored**, not an error.
+`model_config = ConfigDict(...)`. The v1 inner `class Config:` still
+works in v2 but is deprecated (`PydanticDeprecatedSince20`), and v1 keys
+that v2 renamed, such as `orm_mode`, are **ignored** with only a
+`UserWarning`.
 
-**Why.** Silent is the problem. `class Config: orm_mode = True` on a v2
-model parses fine and does nothing, so the model looks correct until you
-notice ORM attributes aren't being read off your SQLAlchemy objects. The
-v2 spelling is `model_config = ConfigDict(from_attributes=True)`; without
-it, `Model.model_validate(orm_obj)` won't pull attributes.
+**Why.** A warning is easy to miss. `class Config: orm_mode = True` on a
+v2 model imports fine and does nothing ("'orm_mode' has been renamed to
+'from_attributes'"), so the model looks correct until you notice ORM
+attributes aren't being read off your SQLAlchemy objects. The v2 spelling
+is `model_config = ConfigDict(from_attributes=True)`; without it,
+`Model.model_validate(orm_obj)` won't pull attributes. Run tests with
+warnings as errors (`filterwarnings = ["error"]`, PY-030) so both
+warnings fail the suite instead of scrolling past.
 
 **How.**
 
@@ -33,7 +38,7 @@ class ItemOut(BaseModel):
     name: str
 ```
 
-**When NOT to apply.** Never on v2 — `class Config` is always wrong
+**When NOT to apply.** Never on v2 — `class Config` is deprecated
 there. If you're still on Pydantic v1 (FastAPI <0.100), `class Config` is
 correct, but that's a migration to schedule, not a style choice.
 
@@ -48,11 +53,15 @@ sensitive field and a `UserOut`/`BaseUser` without it, and use the output
 model as the return annotation.
 
 **Why.** A single `User` model returned from a create endpoint echoes the
-submitted password straight back. `response_model` *can* filter it — but
-only if you remember to set it on every such route. A distinct return
-type makes the protection static: mypy/pyright flag a handler that
-returns `UserIn` where `UserOut` is declared, so the leak is caught at
-check time, not in a pen test.
+submitted password straight back. With a separate output model, FastAPI
+does the protecting: it filters the response to the fields of the
+declared return type (or `response_model`), so returning the `UserIn`
+instance still sends only `BaseUser`'s fields. Type checkers don't catch
+this: `UserIn` is a subclass of `BaseUser`, so "The editor, mypy, and
+other tools won't complain about this"
+([FastAPI — Return Type and Data Filtering](https://fastapi.tiangolo.com/tutorial/response-model/#return-type-and-data-filtering)).
+The filtering is runtime behavior, so cover it with a test that asserts
+the secret field is absent from the response.
 
 **How.**
 
@@ -65,7 +74,7 @@ class UserIn(BaseUser):
     password: str          # inbound only
 
 @router.post("/users/")
-async def create_user(user: UserIn) -> BaseUser:   # password can't be returned
+async def create_user(user: UserIn) -> BaseUser:   # FastAPI filters password out
     ...
 ```
 

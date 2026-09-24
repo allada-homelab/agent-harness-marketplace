@@ -42,7 +42,7 @@ services:
   postgres:
     image: postgres:16-alpine@sha256:...
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -54,6 +54,12 @@ services:
       postgres:
         condition: service_healthy
 ```
+
+Pass `-h 127.0.0.1` to `pg_isready`. Without it, it probes the Unix
+socket, and on first boot the official image runs a temporary setup
+server that listens on the socket only (`listen_addresses=''` in its
+`docker-entrypoint.sh`). The check can then pass before the real server
+accepts TCP connections from `api`.
 
 Available conditions: `service_started` (default short-form behavior),
 `service_healthy` (preferred), `service_completed_successfully` (for one-shot
@@ -215,15 +221,25 @@ small flavor-toggles within one logical environment.
 
 ---
 
-## COMPOSE-005 — Use `compose.override.yml` for local-only overrides
+## COMPOSE-005 — Commit `compose.override.yml` as the shared dev overlay
 
 **What.** `compose.yml` (or `docker-compose.yml`) holds the canonical
-shared config. `compose.override.yml` is auto-loaded *on top* of it for
-local-only changes. Commit the base file; `.gitignore` the override.
+config. `compose.override.yml` holds the shared *development* overlay
+(build from source, published ports, debug settings) that a bare
+`docker compose up` auto-loads on top of it. Commit both. Production and
+other deployed environments name their files explicitly with `-f`, which
+leaves the override out. Personal, per-developer tweaks go in a
+gitignored file (e.g. `compose.local.yml`) passed with an extra `-f`.
 
-**Why.** Without an override file, contributors fork the base file or pile
-local edits into it — and then accidentally commit them. The override is a
-clean separation: shared truth + local diff.
+**Why.** Without a committed dev overlay, contributors fork the base file
+or pile dev settings into it, and those settings then ship to prod.
+Gitignoring the override instead makes every contributor's dev stack
+drift, and nothing in the repo describes how to run it. Docker's own
+merge docs use the override for the dev configuration and deploy prod
+with `-f`: "This deploys all three services using the configuration in
+`compose.yaml` and `compose.prod.yaml` but not the dev configuration in
+`compose.override.yaml`."
+([Docker docs — Merge Compose files](https://docs.docker.com/compose/how-tos/multiple-compose-files/merge/))
 
 **How.**
 
@@ -237,7 +253,7 @@ services:
       LOG_LEVEL: info
 ```
 
-`compose.override.yml` (gitignored):
+`compose.override.yml` (committed; dev only):
 
 ```yaml
 services:
@@ -245,23 +261,31 @@ services:
     environment:
       LOG_LEVEL: debug
     ports:
-      - "5678:5678"     # debugger port — local only
+      - "5678:5678"     # debugger port — dev only
 ```
 
 ```bash
-docker compose up   # automatically merges override.yml on top
+docker compose up   # dev: automatically merges compose.override.yml on top
 ```
 
-For *intentionally shared* alternative configs (production, staging), name
-them explicitly and pass with `-f`:
+Deployed environments name their files explicitly, so the dev overlay is
+never loaded:
 
 ```bash
-docker compose -f compose.yml -f compose.prod.yml up
+docker compose -f compose.yml -f compose.prod.yml up -d
 ```
 
-**When NOT to apply.** When every contributor uses identical config —
-override.yml is harmless but unused. (Still a good convention to establish
-early.)
+For personal tweaks, add a gitignored file and pass it on top of the
+dev pair. Once you pass any `-f`, Compose stops auto-loading the
+override, so list it too:
+
+```bash
+# .gitignore: compose.local.yml
+docker compose -f compose.yml -f compose.override.yml -f compose.local.yml up
+```
+
+**When NOT to apply.** When the project has no dev-specific settings,
+there is nothing to put in an override; don't create an empty one.
 
 ---
 
@@ -458,7 +482,7 @@ services:
   postgres:
     image: postgres:16-alpine
     healthcheck:                          # ← healthcheck on the dependency
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
       interval: 5s
       retries: 10
 
@@ -500,7 +524,7 @@ services:
   postgres:
     image: postgres:16-alpine
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
       interval: 5s
       retries: 10
 
@@ -575,7 +599,7 @@ services:
     secrets:
       - postgres_password
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
       interval: 5s
       retries: 10
 
@@ -1313,7 +1337,7 @@ include:
 |---|---|---|
 | `include:` | File-level — pulls in a whole compose document | Composing sub-applications; sharing infra across projects |
 | `extends:` | Service-level — merges one service's config from another file | Deduplicating boilerplate across services within one project |
-| `-f file1 -f file2` | File-level merge by CLI argument | Environment-specific overrides (`compose.prod.yaml`) — but `compose.override.yml` (COMPOSE-005) is usually cleaner |
+| `-f file1 -f file2` | File-level merge by CLI argument | Environment-specific overrides (`compose.prod.yaml`); the dev overlay is the auto-loaded `compose.override.yml` (COMPOSE-005) |
 
 **When NOT to apply.**
 

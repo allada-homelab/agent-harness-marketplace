@@ -98,10 +98,10 @@ PEP 735 prohibits cycles — `a` including `b` including `a` raises a
 resolution error at install time. Linear or DAG-shaped inclusion is
 fine and common.
 
-**When NOT to apply.** When the groups genuinely diverge — e.g.
-`test` uses `pytest`, `lint` uses `ruff` and `mypy`, and they share
-nothing. Don't reach for `include-group` to manufacture a parent if
-no shared dependencies exist; that's overhead without benefit.
+**When NOT to apply.** Never. Composing a parent from groups that
+share nothing is fine too: uv's own example builds `dev` from disjoint
+`lint` and `test` groups
+([uv docs — nesting groups](https://docs.astral.sh/uv/concepts/projects/dependencies/#nesting-groups)).
 
 ---
 
@@ -129,7 +129,7 @@ on why upper bounds on Python versions are an antipattern.
 name = "myapp"
 requires-python = ">=3.12"          # good
 # requires-python = ">=3.12,<3.14"  # bad — caps users
-# requires-python = "~=3.12"        # bad — same problem (compatible release operator caps minor)
+# requires-python = "~=3.12"        # bad — same problem (`~=3.12` means `>=3.12, ==3.*`: caps the major)
 ```
 
 If you discover your package genuinely doesn't work on a new Python,
@@ -197,8 +197,8 @@ this in anything that ships.
 |---|---|---|---|
 | `uv init` | flat | none | `package = false` (project is *not* installed into the venv) |
 | `uv init --app` | flat | none | `package = false` (same as bare `uv init`) |
-| `uv init --lib` | `src/` | hatchling | editable install of the project |
-| `uv init --package` | `src/` | hatchling | editable install (same as `--lib` for layout) |
+| `uv init --lib` | `src/` | `uv_build` | editable install of the project |
+| `uv init --package` | `src/` | `uv_build` | editable install (same as `--lib` for layout) |
 
 The mode you want depends on whether your project is *consumed*
 (library: yes, app: no) and whether you need to `import myapp`
@@ -218,8 +218,9 @@ yes for apps too).
 uv init --lib mylib
 # creates:
 #   mylib/
-#     pyproject.toml      # has [build-system] = hatchling
+#     pyproject.toml      # has [build-system] = uv_build (UVP-029)
 #     src/mylib/__init__.py
+#     src/mylib/py.typed
 #     README.md
 #     .python-version
 
@@ -228,7 +229,7 @@ uv init myapp
 # creates:
 #   myapp/
 #     pyproject.toml      # no [build-system]; package = false
-#     hello.py            # at repo root
+#     main.py             # at repo root
 #     README.md
 #     .python-version
 ```

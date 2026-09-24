@@ -273,11 +273,20 @@ package version in `uv.lock` and reports known CVEs / advisories.
 Exit code is non-zero when findings are present, which makes it a
 proper CI gate. Add it as a step alongside lint and tests.
 
+`uv audit` is still **experimental**: uv prints "`uv audit` is
+experimental and may change without warning. Pass `--preview-features
+audit-command` to disable this warning." Pass that flag to acknowledge
+it, and pin the uv version in CI so a flag or output change arrives as a
+reviewed bump. Pass `--locked` too: without it, audit re-resolves and
+may rewrite `uv.lock` instead of auditing the committed one, while
+`--locked` fails if the lockfile is stale.
+
 ```bash
-uv audit                                  # human-readable; non-zero on findings
-uv audit --output-format json             # for tooling / annotation
-uv audit --no-dev                         # ignore dev-group vulnerabilities
-uv audit --ignore GHSA-xxxx-yyyy-zzzz     # accepted-risk allowlist
+uv audit --locked --preview-features audit-command                         # non-zero on findings
+uv audit --locked --preview-features audit-command --output-format json    # tooling / annotation
+uv audit --locked --preview-features audit-command --output-format sarif   # GitHub code scanning
+uv audit --locked --preview-features audit-command --no-dev                # skip the dev group
+uv audit --locked --preview-features audit-command --ignore GHSA-xxxx-yyyy-zzzz  # accepted risk
 ```
 
 **Why.** A lockfile pinned today drifts into vulnerability over time —
@@ -317,7 +326,7 @@ jobs:
         with:
           enable-cache: true
       # No sync needed — audit reads uv.lock directly
-      - run: uv audit --no-dev
+      - run: uv audit --locked --preview-features audit-command --no-dev
 ```
 
 For accepted-risk findings (e.g. a CVE that only affects a code path
@@ -334,8 +343,8 @@ ignore-until-fixed = [
 ]
 ```
 
-For machine-consumable output (SARIF for GitHub code scanning,
-custom dashboards), use `--output-format json`.
+For machine-consumable output, use `--output-format sarif` for GitHub
+code scanning (UVP-065) or `--output-format json` for custom dashboards.
 
 **When NOT to apply.** Two narrow cases:
 
@@ -363,8 +372,11 @@ silently masking a now-fixable CVE.
 **How.**
 
 ```yaml
-- run: uv audit --no-dev --output-format sarif -o audit.sarif
+# `uv audit` writes SARIF to stdout (it has no -o flag) and exits 1 on findings,
+# so upload with always() or the report is lost exactly when it matters.
+- run: uv audit --locked --preview-features audit-command --no-dev --output-format sarif > audit.sarif
 - uses: github/codeql-action/upload-sarif@<sha>
+  if: always()
   with: { sarif_file: audit.sarif }
 ```
 

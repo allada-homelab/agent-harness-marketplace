@@ -82,7 +82,7 @@ See [`references/errors.md`](./references/errors.md).
 
 - **FAPI-050** — Register handlers against `StarletteHTTPException` to also catch routing 404/405.
 - **FAPI-051** — Override `RequestValidationError` to stabilize the 422 response shape.
-- **FAPI-052** — Register a catch-all `Exception` handler that logs and returns a safe `500`.
+- **FAPI-052** — Register a catch-all `Exception` handler for a uniform `500` body; don't log in it (the server already does).
 - **FAPI-053** — Use a structured `detail` (dict with a code) for machine-readable errors.
 
 ## Rules — Security

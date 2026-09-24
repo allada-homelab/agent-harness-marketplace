@@ -10,15 +10,16 @@ and the [uv tools concepts](https://docs.astral.sh/uv/guides/tools/).
 
 ---
 
-## UVP-040 — Project-context tools → `uv add --dev`. Standalone CLIs → `uv tool install`
+## UVP-040 — Project-workflow tools → `[dependency-groups]`. Personal cross-project CLIs → `uv tool install`
 
-**What.** Pick the install path by whether the tool needs to see your
-project:
+**What.** Pick the install path by one test: is the tool part of *this
+project's* workflow (CI steps, git hooks, task-runner recipes, the
+commands the README tells contributors to run)?
 
 | Tool category | Examples | Install via |
 |---|---|---|
-| Operates on this project's code; needs to import / introspect it | `pytest`, `mypy`, `pyright`, `coverage`, project-bound `ruff` config | `uv add --dev <tool>` |
-| Standalone CLI used across many projects, no project-import need | `pre-commit`, `cookiecutter`, `pipx` (the tool itself), `httpie` | `uv tool install <tool>` |
+| Part of this project's workflow, whether or not it imports the project | `pytest`, `mypy`, `pyright`, `coverage`, `ruff`, `pre-commit` | `uv add --dev <tool>` (or another `[dependency-groups]` group) |
+| Personal CLI one developer uses across many projects | `cookiecutter`, `httpie`, `ipython` for ad-hoc shells | `uv tool install <tool>` (or `uvx`, UVP-041) |
 
 **Why.** This is the **single most common "works locally, fails in
 CI"** cause for uv projects:
@@ -36,36 +37,38 @@ The fix: any tool that's part of the project's *expected workflow*
 `[dependency-groups]` so the lockfile pins it and everyone gets the
 same version with one `uv sync`.
 
-Standalone CLIs are different — `pre-commit` literally manages its
-*own* hook environments separately from any project venv, so
-installing it as a project dep would be weird. `cookiecutter` is
-invoked once when scaffolding a new project. Those legitimately
-belong in `uv tool install` (or `uvx`, see UVP-041).
+That includes tools that never import the project. `pre-commit`
+manages its own hook environments, but the project's CI and hooks still
+depend on its version: in a dependency group, `uv.lock` pins it and the
+dependency bot updates it with every other pin (REPO-002,
+[hooks and bots](../../repo-best-practices/references/hooks-and-bots.md#repo-002)).
+A `uv tool install` pin lives outside the lockfile, so nothing updates it
+and nothing checks it (UVP-042). uv's own docs frame `uv tool install` as
+a convenience for a tool you use often ("install it to a persistent
+environment and add it to the `PATH` instead of invoking `uvx`
+repeatedly", [uv tools guide](https://docs.astral.sh/uv/guides/tools/)),
+not as the home for a project's tooling.
 
 **How.**
 
 ```bash
-# project-context tools — pinned in pyproject.toml + uv.lock
-uv add --dev pytest pytest-cov ruff mypy
-# now `uv run pytest` and `uv run ruff check .` work everywhere
+# project-workflow tools — pinned in pyproject.toml + uv.lock
+uv add --dev pytest pytest-cov ruff mypy pre-commit
+# now `uv run pytest` and `uv run pre-commit run --all-files` work everywhere
 
-# standalone CLIs — global install, version-pinned
-uv tool install 'pre-commit==4.0.0'
+# personal CLIs — your machine only, version-pinned
 uv tool install 'cookiecutter==2.6.0'
 ```
 
 In CI:
 
 ```yaml
-# project-context tools work because they're in the lockfile
+# every workflow tool comes from the lockfile — nothing installed ad hoc
 - run: uv sync --locked --dev
 - run: uv run pytest
 - run: uv run ruff check .
 - run: uv run mypy src/
-
-# standalone CLIs need explicit install in CI (or use uvx, see UVP-041)
-- run: uv tool install pre-commit
-- run: pre-commit run --all-files
+- run: uv run pre-commit run --all-files
 ```
 
 A useful self-check: ask "if a new contributor clones this repo,
@@ -76,8 +79,10 @@ ruff globally," ruff is in the wrong place.
 **When NOT to apply.** Genuinely user-level utilities the *human*
 uses across many projects (`httpie`, `ranger`, `ipython` for ad-hoc
 shells) — those belong in `uv tool install` because they're not
-tied to any one project. The rule targets project-scoped tools that
-masquerade as global.
+tied to any one project. The rule targets project-workflow tools that
+masquerade as global. A tool whose dependencies conflict with the
+project's can't share its environment; run it with a pinned
+`uvx <tool>@<version>` in CI instead (UVP-041).
 
 ---
 

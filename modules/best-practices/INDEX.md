@@ -79,7 +79,7 @@ _Use when working with Dockerfiles, docker-compose/compose.yml, buildx, dev cont
 | [`COMPOSE-002`](skills/containers-best-practices/references/compose.md#compose-002) | Pick named volumes vs bind mounts deliberately; know when each is correct. |
 | [`COMPOSE-003`](skills/containers-best-practices/references/compose.md#compose-003) | Use `env_file` instead of inline `environment` for secrets-adjacent values. |
 | [`COMPOSE-004`](skills/containers-best-practices/references/compose.md#compose-004) | Gate optional services with `profiles` (tools, debug, monitoring). |
-| [`COMPOSE-005`](skills/containers-best-practices/references/compose.md#compose-005) | Use `compose.override.yml` for local-only overrides; `.gitignore` it. |
+| [`COMPOSE-005`](skills/containers-best-practices/references/compose.md#compose-005) | Commit `compose.override.yml` as the shared dev overlay; prod uses `-f`, personal tweaks a gitignored `compose.local.yml`. |
 | [`COMPOSE-006`](skills/containers-best-practices/references/compose.md#compose-006) | Compose v2 ignores the top-level `version:` key — remove it from new files. |
 | [`COMPOSE-007`](skills/containers-best-practices/references/compose.md#compose-007) | Define explicit `networks` for multi-service apps; don't rely on the default bridge for everything. |
 | [`COMPOSE-009`](skills/containers-best-practices/references/compose.md#compose-009) | Use `restart: unless-stopped` for long-lived services; it differs from `always` only in keeping a manually stopped container stopped across a daemon restart. |
@@ -200,7 +200,7 @@ _Use when working with FastAPI apps — building or reviewing APIRouter route mo
 | [`FAPI-043`](skills/fastapi-best-practices/references/path-operations.md#fapi-043) | Use `BackgroundTasks` only for fire-and-forget work; escalate durable jobs to a queue. |
 | [`FAPI-050`](skills/fastapi-best-practices/references/errors.md#fapi-050) | Register handlers against `StarletteHTTPException` to also catch routing 404/405. |
 | [`FAPI-051`](skills/fastapi-best-practices/references/errors.md#fapi-051) | Override `RequestValidationError` to stabilize the 422 response shape. |
-| [`FAPI-052`](skills/fastapi-best-practices/references/errors.md#fapi-052) | Register a catch-all `Exception` handler that logs and returns a safe `500`. |
+| [`FAPI-052`](skills/fastapi-best-practices/references/errors.md#fapi-052) | Register a catch-all `Exception` handler for a uniform `500` body; don't log in it (the server already does). |
 | [`FAPI-053`](skills/fastapi-best-practices/references/errors.md#fapi-053) | Use a structured `detail` (dict with a code) for machine-readable errors. |
 | [`FAPI-060`](skills/fastapi-best-practices/references/security.md#fapi-060) | Hash passwords with Argon2 via `pwdlib`; never plaintext, MD5, or SHA-1. |
 | [`FAPI-061`](skills/fastapi-best-practices/references/security.md#fapi-061) | Verify against a dummy hash when the user lookup misses (timing attack). |
@@ -411,7 +411,7 @@ _Use when working with uv (Astral's Python package and project manager) — `uv 
 | [`UVP-033`](skills/uv-best-practices/references/ci.md#uvp-033) | Set `UV_LINK_MODE=copy` in CI systems with cross-filesystem caches (GitLab, some Docker layered builds) to silence hardlink warnings and avoid mode confusion. |
 | [`UVP-065`](skills/uv-best-practices/references/ci.md#uvp-065) | Run `uv audit` with `--output-format sarif` (≥0.11.22) and centralize accepted-risk ignores in `[tool.uv.audit]`, not inline `--ignore` flags. |
 | [`UVP-069`](skills/uv-best-practices/references/ci.md#uvp-069) | In monorepo CI, enumerate members with `uv workspace list` (stable ≥0.10.0) instead of hardcoding paths. |
-| [`UVP-040`](skills/uv-best-practices/references/tools.md#uvp-040) | Project-context tools (`pytest`, `mypy`, `ruff` for *this* project) → `uv add --dev`. Standalone CLIs (`pre-commit`, `cookiecutter`) → `uv tool install`. |
+| [`UVP-040`](skills/uv-best-practices/references/tools.md#uvp-040) | Tools in *this* project's workflow (`pytest`, `mypy`, `ruff`, `pre-commit`) → `[dependency-groups]`, locked. Personal cross-project CLIs (`cookiecutter`, `httpie`) → `uv tool install`. |
 | [`UVP-041`](skills/uv-best-practices/references/tools.md#uvp-041) | `uvx` (= `uv tool run`) for one-shot tool execution; pin the version when correctness matters (`uvx ruff@0.6.9`, not bare `uvx ruff`). |
 | [`UVP-042`](skills/uv-best-practices/references/tools.md#uvp-042) | `uv tool upgrade --all` is fine locally but unsafe in CI — silent version drift; declare tools in `[dependency-groups]` or pin via `uvx <tool>@<version>` instead. |
 | [`UVP-072`](skills/uv-best-practices/references/tools.md#uvp-072) | Audit global tools with `uv tool list --outdated` (≥0.10.10) and `--show-python` before a Python upgrade. |

@@ -21,7 +21,12 @@ section with native TOML types is preferred; `[tool.pytest.ini_options]`
 remains the safe back-compat form through pytest 8.x. Pytest 9 also adds
 `strict = true` — a single mega-option bundling `strict_markers` +
 `strict_config` + `strict_parametrization_ids` + `strict_xfail` — prefer
-it to spelling those flags out individually in `addopts`.
+it to spelling those flags out individually in `addopts`, but only with
+pytest pinned in the lockfile: "If pytest adds new strictness options in
+the future, they will also be enabled in strict mode. Therefore, you
+should only enable strict mode if you use a pinned/locked version of
+pytest" ([pytest reference — strict](https://docs.pytest.org/en/stable/reference/reference.html#confval-strict)).
+An unpinned pytest can otherwise turn a new release into a red suite.
 
 ```toml
 [tool.pytest.ini_options]
@@ -277,11 +282,10 @@ def test_known_broken():
     assert buggy_function() == "fixed"   # currently returns "broken"
 ```
 
-**Why.** Three failure modes:
+**Why.** Two failure modes:
 
 1. **Typo'd marker runs in every suite.** `@pytest.mark.integartion` (typo) doesn't match `pytest -m integration` (correct), so the test isn't filtered out. It runs in unit-test runs *and* integration runs. Without `--strict-markers`, pytest just emits a warning that nobody reads.
 2. **`xfail` without `strict=True` is silent tech debt.** A test marked xfail that starts passing stays marked xfail forever, because pytest reports "XPASS (xfail)" as success. Three months later, when the underlying bug *regresses*, the test fails again — and you've lost the signal that it ever started working.
-3. **Unregistered markers can't be selected.** `pytest -m "slow"` filters by registered markers. Unregistered markers can be applied but not selected, breaking `pytest -m "not slow"` for everyone who relies on it.
 
 **How.**
 

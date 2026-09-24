@@ -114,7 +114,7 @@ See [`references/compose.md`](./references/compose.md).
 - **COMPOSE-002** — Pick named volumes vs bind mounts deliberately; know when each is correct.
 - **COMPOSE-003** — Use `env_file` instead of inline `environment` for secrets-adjacent values.
 - **COMPOSE-004** — Gate optional services with `profiles` (tools, debug, monitoring).
-- **COMPOSE-005** — Use `compose.override.yml` for local-only overrides; `.gitignore` it.
+- **COMPOSE-005** — Commit `compose.override.yml` as the shared dev overlay; prod uses `-f`, personal tweaks a gitignored `compose.local.yml`.
 - **COMPOSE-006** — Compose v2 ignores the top-level `version:` key — remove it from new files.
 - **COMPOSE-007** — Define explicit `networks` for multi-service apps; don't rely on the default bridge for everything.
 - **COMPOSE-009** — Use `restart: unless-stopped` for long-lived services; it differs from `always` only in keeping a manually stopped container stopped across a daemon restart.
