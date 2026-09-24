@@ -150,11 +150,11 @@ strict = true
 typeCheckingMode = "strict"
 ```
 
-For a more granular approach, mypy's `strict` flag is equivalent to:
+For a more granular approach, mypy's `strict` flag is equivalent to
+(the list `mypy --help` prints under `--strict`):
 
 ```toml
 [tool.mypy]
-warn_unused_configs = true
 disallow_any_generics = true
 disallow_subclassing_any = true
 disallow_untyped_calls = true
@@ -162,7 +162,6 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
 disallow_untyped_decorators = true
-no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_return_any = true
@@ -170,6 +169,10 @@ no_implicit_reexport = true
 strict_equality = true
 extra_checks = true
 ```
+
+`no_implicit_optional` isn't on that list because it has been mypy's
+default since 0.990. `warn_unused_configs` isn't on it either. Set it
+yourself so a typo'd override `module` pattern gets reported.
 
 **Why.** Untyped Python is harder to refactor safely than typed
 Python, and strict mode is the difference between "we have type
@@ -191,7 +194,11 @@ strict = true
 
 [[tool.mypy.overrides]]
 module = ["mypackage.legacy.*"]
-strict = false
+# `strict` is global-only: `strict = false` here is silently ignored
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+check_untyped_defs = false
 
 [[tool.mypy.overrides]]
 module = ["mypackage.thirdparty_no_stubs.*"]

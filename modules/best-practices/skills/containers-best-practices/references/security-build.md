@@ -32,27 +32,27 @@ including things that should never be in an image.
 .gitignore
 
 # Python
-__pycache__
+**/__pycache__
 *.py[cod]
 *$py.class
-.venv
-venv
+**/.venv
+**/venv
 .env
 .env.*
 !.env.example
-.pytest_cache
-.mypy_cache
-.ruff_cache
-dist
-build
-*.egg-info
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/dist
+**/build
+**/*.egg-info
 
 # Node
-node_modules
+**/node_modules
 npm-debug.log
 yarn-error.log
-.next
-.nuxt
+**/.next
+**/.nuxt
 
 # Editors
 .vscode
@@ -69,19 +69,25 @@ docker-compose*.yml
 # Build artifacts and caches
 # (comments must start the line: `target  # Rust` would be read as a pattern)
 # Rust
-target
+**/target
 # Java
-.gradle
+**/.gradle
 # Go (if you have one)
-bin
+**/bin
 coverage
 *.log
 
 # Secrets (defense in depth — they shouldn't be here, but if they are, exclude)
-*.pem
-*.key
-secrets/
+**/*.pem
+**/*.key
+**/secrets/
 ```
+
+Patterns match from the context root (Go `filepath.Match`). `*.pem` or
+`node_modules` excludes only `./x.pem` and `./node_modules`, so
+`src/leak.pem` and `web/node_modules` still ship. Prefix any pattern
+that can appear below the root with `**/`
+([build context — matching](https://docs.docker.com/build/concepts/context/#matching)).
 
 Tune per project. Critically, **exclude `.env*` but include `.env.example`**
 (the `!.env.example` line above).
@@ -833,6 +839,15 @@ The most-missed category in practice is **secrets** — `.env*` and
 private-key globs. The second most-missed is **per-ecosystem build
 dirs** when the repo is polyglot (Python service that also has a
 frontend, but only Python paths got ignored).
+
+An **allowlist** file (`*` first, then `!src`, `!pyproject.toml`, ...)
+covers every category by construction, so a per-category pattern check
+must count a leading `*` as full coverage. Its gap sits *inside* the
+re-included paths. The last matching line wins, so `!src` re-admits
+`src/node_modules` and `src/.env` unless you exclude them again *after*
+the `!` lines (`**/node_modules`, `**/.env`, `**/*.pem`, ...). Audit an
+allowlist for re-excludes below its last `!` line, not for the baseline
+categories.
 
 A concrete starter that covers the baseline:
 

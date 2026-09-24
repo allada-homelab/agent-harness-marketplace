@@ -73,6 +73,18 @@ async def info(settings: Annotated[Settings, Depends(get_settings)]):
 app.dependency_overrides[get_settings] = lambda: Settings(db_url="sqlite://", secret_key="x")
 ```
 
+The override has two limits:
+
+- **It reaches only `Depends` consumers.** `lifespan` and any direct
+  `get_settings()` call still get the real settings, so the pool that
+  lifespan opens connects to the production `db_url` even while routes
+  see the override. For code that runs at startup, build the app from a
+  factory, `create_app(settings)`, and pass test settings to the factory.
+- **The cache freezes config at first call, just like a module-level
+  instance.** A test that changes env vars with `monkeypatch.setenv`
+  must call `get_settings.cache_clear()` afterwards, or it keeps the old
+  values.
+
 **When NOT to apply.** Config that must hot-reload at runtime (rare for a
 typical web service) shouldn't be cached — but reach for a deliberate
 reload mechanism, not per-request re-parsing.

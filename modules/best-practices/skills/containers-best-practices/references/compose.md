@@ -334,6 +334,14 @@ relying entirely on the default bridge network.
 network — `nginx` can't reach the DB directly). They also document
 intended communication paths.
 
+A named network only separates services from *each other*. Each one is
+still an ordinary bridge with outbound internet access. To cut a backend
+off from the outside, mark it `internal: true`
+([compose networks — internal](https://docs.docker.com/reference/compose-file/networks/#internal)).
+A service attached *only* to an internal network also loses its
+published `ports:`. They bind, but the host can't reach them. So publish
+ports only from services that also sit on a non-internal network.
+
 **How.**
 
 ```yaml
@@ -351,11 +359,12 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    networks: [backend]   # not reachable from nginx
+    networks: [backend]   # not reachable from nginx, no internet egress
 
 networks:
   frontend:
   backend:
+    internal: true
 ```
 
 For simple two-service apps, the default network is fine — don't add

@@ -37,7 +37,7 @@ for this — **set (or inherit) `remoteUser` and let the remap run**.
 }
 ```
 
-Know its three limits (devcontainers CLI source):
+Know its four limits (devcontainers CLI source, plus Docker's UID mapping for the fourth):
 
 1. **Skipped when the host UID is already taken** by another user in the
    image — the build logs `User with UID exists (<name>=<uid>).` and leaves
@@ -52,6 +52,17 @@ Know its three limits (devcontainers CLI source):
 ```jsonc
 "onCreateCommand": "sudo chown -R \"$(id -u):$(id -g)\" /opt/venv /data"
 ```
+
+4. **Wrong under rootless Docker or `userns-remap`.** The remap assumes
+   container UID N is host UID N. That holds only on a rootful daemon
+   without user-namespace remapping. Rootless Docker maps container
+   UID 0 to your host UID, and container UID N≥1 to `subuid + N - 1`.
+   So a remote user remapped to your host UID (say 1000) writes files as
+   host UID `subuid + 999`, and your own files in the bind-mounted
+   workspace show up as `root:root` inside the container. Point the
+   tooling at a rootful daemon for bind-mounted workspaces. The fallback
+   is to run as `root` inside the container, which rootless maps back to
+   your host user.
 
 For custom base images that don't already have a non-root user, use the
 official `common-utils` feature (option keys are **`userUid` /
@@ -88,7 +99,8 @@ Dockerfile.
 Cite: [json_reference — updateRemoteUserUID](https://containers.dev/implementors/json_reference/#general-properties),
 [CLI updateUID.Dockerfile L20, L31 (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/scripts/updateUID.Dockerfile#L20-L31),
 [CLI containerFeatures.ts L425 — Linux-only gate](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/containerFeatures.ts#L425),
-[common-utils main.sh — existing user / automatic](https://github.com/devcontainers/features/blob/47406487f9b4965e4f9865f20b86805b1e2d5c0f/src/common-utils/main.sh#L447-L470).
+[common-utils main.sh — existing user / automatic](https://github.com/devcontainers/features/blob/47406487f9b4965e4f9865f20b86805b1e2d5c0f/src/common-utils/main.sh#L447-L470),
+[Docker rootless — UID/GID mapping](https://docs.docker.com/engine/security/rootless/uid-gid-mapping/).
 
 **When NOT to apply.** macOS/Windows-only dev — the host file-sharing layer
 abstracts UID mapping for you (and the CLI skips the remap there anyway).
