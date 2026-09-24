@@ -248,6 +248,31 @@ def test_iter_raw_files_finds_dsh_v3_sessions_and_ingest_parses_them(tmp_path):
     conn.close()
 
 
+def test_ingest_populates_norm_key_and_harness(cache):
+    tr.ingest(cache, rebuild=False)
+    conn = tr.open_db(cache)
+    assert conn.execute(
+        "SELECT count(*) FROM messages WHERE norm_key = '' OR harness = ''"
+    ).fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT count(*) FROM messages WHERE harness = 'dsh'"
+    ).fetchone()[0] > 0
+    assert conn.execute(
+        "SELECT count(*) FROM tool_calls WHERE harness = 'dsh'"
+    ).fetchone()[0] > 0
+    conn.close()
+
+
+def test_annotate_raises_when_norm_key_unpopulated(cache):
+    tr.ingest(cache, rebuild=False)
+    conn = tr.open_db(cache)
+    conn.execute("UPDATE messages SET norm_key = ''")
+    conn.commit()
+    conn.close()
+    with pytest.raises(RuntimeError, match="rebuild"):
+        tr.annotate(cache)
+
+
 def test_to_iso_formats_epoch_millis():
     assert tr.to_iso(1700000001000) == "2023-11-14T22:13:21.000Z"
 

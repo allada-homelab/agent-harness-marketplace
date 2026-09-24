@@ -453,6 +453,88 @@ def export_sources(
 
 PARSER_VERSION = 3
 
+# Migrations keyed on PRAGMA user_version (SQLITE-008). MIGRATIONS[0] is the
+# schema as of 0.6.3, idempotent for a database that already has it.
+MIGRATIONS: list[list[str]] = [
+    [
+        "CREATE TABLE IF NOT EXISTS files ("
+        " id INTEGER PRIMARY KEY, harness TEXT NOT NULL,"
+        " relpath TEXT NOT NULL UNIQUE, size INTEGER NOT NULL,"
+        " mtime INTEGER NOT NULL, parser_version INTEGER NOT NULL,"
+        " status TEXT NOT NULL, error TEXT, parsed_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS sessions ("
+        " id INTEGER PRIMARY KEY, harness TEXT NOT NULL, native_id TEXT NOT NULL,"
+        " file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,"
+        " cwd TEXT, project_key TEXT, kind TEXT NOT NULL, parent_native_id TEXT,"
+        " started_at TEXT, ended_at TEXT, model TEXT, title TEXT)",
+        "CREATE TABLE IF NOT EXISTS messages ("
+        " id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL"
+        " REFERENCES sessions(id) ON DELETE CASCADE, ord INTEGER NOT NULL,"
+        " native_id TEXT, parent_native_id TEXT, on_main_path INTEGER NOT NULL,"
+        " role TEXT NOT NULL, ts TEXT, text TEXT NOT NULL, model TEXT,"
+        " stop_reason TEXT, input_tokens INTEGER, output_tokens INTEGER,"
+        " raw TEXT NOT NULL, injected INTEGER NOT NULL DEFAULT 0)",
+        "CREATE TABLE IF NOT EXISTS tool_calls ("
+        " id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL"
+        " REFERENCES messages(id) ON DELETE CASCADE, call_id TEXT NOT NULL,"
+        " name TEXT, arguments TEXT, result_message_id INTEGER"
+        " REFERENCES messages(id) ON DELETE CASCADE, is_error INTEGER)",
+        "CREATE INDEX IF NOT EXISTS sessions_file_id ON sessions(file_id)",
+        "CREATE INDEX IF NOT EXISTS messages_session_id ON messages(session_id)",
+        "CREATE INDEX IF NOT EXISTS tool_calls_message_id ON tool_calls(message_id)",
+        "CREATE INDEX IF NOT EXISTS tool_calls_call_id ON tool_calls(call_id)",
+        "CREATE INDEX IF NOT EXISTS tool_calls_result_message_id"
+        " ON tool_calls(result_message_id)",
+        "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts"
+        " USING fts5(text, content='messages', content_rowid='id')",
+        "CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN"
+        " INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text); END",
+        "CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN"
+        " INSERT INTO messages_fts(messages_fts, rowid, text) VALUES"
+        " ('delete', old.id, old.text); END",
+        "CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN"
+        " INSERT INTO messages_fts(messages_fts, rowid, text) VALUES"
+        " ('delete', old.id, old.text);"
+        " INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text); END",
+    ],
+    # v2: denormalized columns + annotate/stats covering indexes. norm_key is
+    # populated at insert; a pre-existing database must be rebuilt
+    # (`ingest --rebuild`) or annotate() raises its guard.
+    [
+        "ALTER TABLE messages ADD COLUMN norm_key TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE messages ADD COLUMN harness TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE tool_calls ADD COLUMN harness TEXT NOT NULL DEFAULT ''",
+        "CREATE INDEX IF NOT EXISTS messages_norm_session"
+        " ON messages(norm_key, session_id)",
+        "CREATE INDEX IF NOT EXISTS messages_role ON messages(role)",
+        "CREATE INDEX IF NOT EXISTS messages_injected ON messages(injected)",
+        "CREATE INDEX IF NOT EXISTS messages_harness ON messages(harness)",
+        "CREATE INDEX IF NOT EXISTS tool_calls_harness ON tool_calls(harness)",
+    ],
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Apply pending MIGRATIONS steps; each step and its version bump commit together."""
+    while True:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version > len(MIGRATIONS):
+            raise RuntimeError(
+                f"transcripts.db is at schema {version}, newer than this code"
+            )
+        if version == len(MIGRATIONS):
+            return
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in MIGRATIONS[version]:
+                conn.execute(statement)
+            conn.execute(f"PRAGMA user_version = {version + 1:d}")
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     id             INTEGER PRIMARY KEY,
@@ -494,7 +576,9 @@ CREATE TABLE IF NOT EXISTS messages (
     input_tokens     INTEGER,
     output_tokens    INTEGER,
     raw              TEXT NOT NULL,
-    injected         INTEGER NOT NULL DEFAULT 0
+    injected         INTEGER NOT NULL DEFAULT 0,
+    norm_key         TEXT NOT NULL DEFAULT '',
+    harness          TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS tool_calls (
     id                INTEGER PRIMARY KEY,
@@ -503,7 +587,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     name              TEXT,
     arguments         TEXT,
     result_message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
-    is_error          INTEGER
+    is_error          INTEGER,
+    harness           TEXT NOT NULL DEFAULT ''
 );
 -- Result linking and cascade deletes look rows up by these; without them each
 -- UPDATE scans the table and a large file inserts in minutes instead of seconds.
@@ -512,6 +597,13 @@ CREATE INDEX IF NOT EXISTS messages_session_id ON messages(session_id);
 CREATE INDEX IF NOT EXISTS tool_calls_message_id ON tool_calls(message_id);
 CREATE INDEX IF NOT EXISTS tool_calls_call_id ON tool_calls(call_id);
 CREATE INDEX IF NOT EXISTS tool_calls_result_message_id ON tool_calls(result_message_id);
+-- annotate groups by (norm_key, session_id) and stats counts by harness; these
+-- covering indexes keep both off the big text column.
+CREATE INDEX IF NOT EXISTS messages_norm_session ON messages(norm_key, session_id);
+CREATE INDEX IF NOT EXISTS messages_role ON messages(role);
+CREATE INDEX IF NOT EXISTS messages_injected ON messages(injected);
+CREATE INDEX IF NOT EXISTS messages_harness ON messages(harness);
+CREATE INDEX IF NOT EXISTS tool_calls_harness ON tool_calls(harness);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
     USING fts5(text, content='messages', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
@@ -573,18 +665,28 @@ class ParsedFile:
 
 
 def open_db(dest_root: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(dest_root / "transcripts.db")
-    conn.execute("PRAGMA foreign_keys=ON")
-    # One commit per file: WAL + NORMAL keeps every committed file durable across a
-    # process kill while avoiding a full fsync per file on a multi-GB first ingest.
-    conn.execute("PRAGMA journal_mode=WAL")
+    """Open the index, migrate it to the current schema, and set per-connection pragmas.
+
+    The pragmas (SQLITE-001..004, 012) are per-connection and do not persist in
+    the file, so every connection sets them. WAL and the migration steps come
+    first: the old schema was created without a user_version, so _migrate also
+    builds a fresh database (MIGRATIONS[0] then [1]).
+    """
+    conn = sqlite3.connect(dest_root / "transcripts.db", timeout=5.0)
+    # WAL is a property of the file and persists, but the returned mode must be
+    # checked: SQLite silently keeps the old mode where WAL can't work.
+    mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+    if mode != "wal":
+        conn.close()
+        raise RuntimeError(f"transcripts.db journal_mode is {mode!r}, not 'wal'")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.executescript(SCHEMA)
-    # `CREATE TABLE IF NOT EXISTS` never adds a column to a pre-existing table, so a
-    # database built before the `injected` column gained it needs an explicit ALTER.
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
-    if "injected" not in cols:
-        conn.execute("ALTER TABLE messages ADD COLUMN injected INTEGER NOT NULL DEFAULT 0")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA cache_size=-65536")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    _migrate(conn)
+    # The documented first-open call; 0x10000 checks every table, and running it
+    # after a migration also covers the schema change's new indexes.
+    conn.execute("PRAGMA optimize = 0x10002")
     return conn
 
 
@@ -1003,7 +1105,8 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> None
         mcur = conn.execute(
             "INSERT INTO messages (session_id, ord, native_id, parent_native_id,"
             " on_main_path, role, ts, text, model, stop_reason, input_tokens,"
-            " output_tokens, raw, injected) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " output_tokens, raw, injected, norm_key, harness)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session_id,
                 m.ord,
@@ -1019,15 +1122,17 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> None
                 m.output_tokens,
                 m.raw,
                 int(m.injected),
+                _norm_text(m.text),
+                harness,
             ),
         )
         message_id = mcur.lastrowid
         inserted.append((message_id, m))
         for c in m.tool_calls:
             conn.execute(
-                "INSERT INTO tool_calls (message_id, call_id, name, arguments)"
-                " VALUES (?, ?, ?, ?)",
-                (message_id, c.call_id, c.name, c.arguments),
+                "INSERT INTO tool_calls (message_id, call_id, name, arguments, harness)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (message_id, c.call_id, c.name, c.arguments, harness),
             )
     # Link results to their calls once every message of the file exists.
     for message_id, m in inserted:
@@ -1073,7 +1178,14 @@ def ingest(dest_root: Path, rebuild: bool) -> int:
         parsed_count += 1
     conn.close()
     print(f"ingest: parsed={parsed_count} unchanged={unchanged} errors={errors}")
-    annotate(dest_root)
+    if parsed_count:
+        # The FTS external-content index grows via triggers; a periodic merge
+        # keeps searches fast on a large corpus.
+        conn = open_db(dest_root)
+        conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
+        conn.commit()
+        conn.close()
+        annotate(dest_root)
     return errors
 
 
@@ -1101,46 +1213,43 @@ def annotate(
     re-run after any ingest. Returns the number of messages flagged.
     """
     conn = open_db(dest_root)
-    conn.execute("UPDATE messages SET injected = 0")
-    conn.execute("UPDATE messages SET injected = 1 WHERE role = 'system'")
+    total = conn.execute("SELECT count(*) FROM messages").fetchone()[0]
+    if total:
+        populated = conn.execute(
+            "SELECT count(*) FROM messages WHERE norm_key != ''"
+        ).fetchone()[0]
+        if populated == 0:
+            conn.close()
+            raise RuntimeError("run 'ingest --rebuild' to populate norm_key")
+    role_clause = ""
+    params: tuple = (min_sessions,)
     if exclude_roles:
-        placeholders = ",".join("?" * len(exclude_roles))
-        rows = conn.execute(
-            f"SELECT id, session_id, role, text FROM messages"
-            f" WHERE role NOT IN ({placeholders})",
-            tuple(exclude_roles),
-        )
-    else:
-        rows = conn.execute("SELECT id, session_id, role, text FROM messages")
-    buckets: dict[str, tuple[set[int], list[int]]] = {}
-    for mid, sid, _role, text in rows:
-        key = _norm_text(text)
-        if not key:
-            continue
-        entry = buckets.get(key)
-        if entry is None:
-            entry = (set(), [])
-            buckets[key] = entry
-        entry[0].add(sid)
-        entry[1].append(mid)
-    flagged_ids: list[int] = []
-    for key, (sids, mids) in buckets.items():
-        if len(sids) >= min_sessions:
-            flagged_ids.extend(mids)
-    for i in range(0, len(flagged_ids), 500):
-        chunk = flagged_ids[i : i + 500]
-        conn.execute(
-            f"UPDATE messages SET injected = 1 WHERE id IN"
-            f" ({','.join('?' * len(chunk))})",
-            chunk,
-        )
+        role_placeholders = ",".join("?" * len(exclude_roles))
+        role_clause = f" AND role NOT IN ({role_placeholders})"
+        params = (*exclude_roles, min_sessions)
+    # The norm_key / role / injected covering indexes keep every statement off
+    # the big text column.
+    conn.execute("UPDATE messages SET injected = 0 WHERE injected = 1")
+    conn.execute("UPDATE messages SET injected = 1 WHERE role = 'system'")
+    flagged = conn.execute(
+        f"SELECT count(*) FROM messages WHERE norm_key IN ("
+        f" SELECT norm_key FROM messages WHERE norm_key != ''{role_clause}"
+        f" GROUP BY norm_key HAVING COUNT(DISTINCT session_id) >= ?)",
+        params,
+    ).fetchone()[0]
+    conn.execute(
+        f"UPDATE messages SET injected = 1 WHERE norm_key IN ("
+        f" SELECT norm_key FROM messages WHERE norm_key != ''{role_clause}"
+        f" GROUP BY norm_key HAVING COUNT(DISTINCT session_id) >= ?)",
+        params,
+    )
     conn.commit()
     conn.close()
     print(
-        f"annotate: injected={len(flagged_ids)}"
+        f"annotate: injected={flagged}"
         f" (min_sessions={min_sessions}, exclude_roles={','.join(exclude_roles)})"
     )
-    return len(flagged_ids)
+    return flagged
 
 
 def stats(conn) -> str:
@@ -1163,16 +1272,13 @@ def stats(conn) -> str:
                 conn.execute(
                     "SELECT count(*) FROM sessions WHERE harness = ?", (harness,)
                 ).fetchone()[0],
+                # The denormalized harness columns make these covering-index
+                # counts instead of per-row joins against the big tables.
                 conn.execute(
-                    "SELECT count(*) FROM messages m JOIN sessions s"
-                    " ON s.id = m.session_id WHERE s.harness = ?",
-                    (harness,),
+                    "SELECT count(*) FROM messages WHERE harness = ?", (harness,)
                 ).fetchone()[0],
                 conn.execute(
-                    "SELECT count(*) FROM tool_calls t JOIN messages m"
-                    " ON m.id = t.message_id JOIN sessions s ON s.id = m.session_id"
-                    " WHERE s.harness = ?",
-                    (harness,),
+                    "SELECT count(*) FROM tool_calls WHERE harness = ?", (harness,)
                 ).fetchone()[0],
             )
         )

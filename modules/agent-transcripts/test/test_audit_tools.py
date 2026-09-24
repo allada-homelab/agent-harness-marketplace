@@ -47,9 +47,10 @@ def _seed(root: Path) -> None:
         conn.execute(
             "INSERT INTO messages (session_id, ord, native_id, parent_native_id,"
             " on_main_path, role, ts, text, model, stop_reason, input_tokens,"
-            " output_tokens, raw, injected) VALUES (?, ?, NULL, NULL, 1, ?,"
-            " '2026-01-01T00:00:00.000Z', ?, NULL, NULL, NULL, NULL, '', 0)",
-            (sid, ord_, role, text),
+            " output_tokens, raw, injected, norm_key, harness)"
+            " VALUES (?, ?, NULL, NULL, 1, ?,"
+            " '2026-01-01T00:00:00.000Z', ?, NULL, NULL, NULL, NULL, '', 0, ?, 'dsh')",
+            (sid, ord_, role, text, ti._norm_text(text)),
         )
 
     session(10, "devcontainer up failed")
