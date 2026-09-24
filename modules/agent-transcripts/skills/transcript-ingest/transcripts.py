@@ -225,7 +225,13 @@ def discover_dsh(docker: str = "docker") -> list[dict]:
     base = os.environ.get("DSH_HOME")
     root = Path(base).expanduser() if base else Path.home() / ".dsh"
     sessions = root / "sessions"
-    skipped = ["attachments/", "spill/"]
+    skipped = [
+        "attachments/",
+        "spill/",
+        "session.lock",
+        "query.sqlite",
+        "*.decompressed.jsonl",
+    ]
     sources: list[dict] = []
     if sessions.is_dir():
         sources.append(
@@ -277,6 +283,22 @@ def _source_root(dest_root: Path, src: dict) -> Path:
     return dest_root / "raw" / src["harness"] / src["name"] / src["subdir"]
 
 
+def _skipped_member(harness: str, rel: Path) -> bool:
+    """Side files that sit beside the logs but are not session data.
+
+    pi's third-party `spill/` payloads and dsh's `session.lock` / `query.sqlite`
+    / `*.decompressed.jsonl` files are not transcripts; copying them only
+    bloats the cache and the manifest counts. The ingest ignores them anyway.
+    """
+    if harness == "pi":
+        return bool(rel.parts) and rel.parts[0] == "spill"
+    if harness == "dsh":
+        return rel.name in ("session.lock", "query.sqlite") or rel.name.endswith(
+            ".decompressed.jsonl"
+        )
+    return False
+
+
 def _export_host(src: dict, dest_root: Path, dry_run: bool) -> dict:
     origin = Path(src["origin"])
     base = _source_root(dest_root, src)
@@ -287,8 +309,8 @@ def _export_host(src: dict, dest_root: Path, dry_run: bool) -> dict:
         if not f.is_file():
             continue
         rel = f.relative_to(origin)
-        if src["harness"] == "pi" and rel.parts[0] == "spill":
-            continue  # pi's third-party spill payloads are out of scope in v0.1
+        if _skipped_member(src["harness"], rel):
+            continue
         dest = base / rel
         st = f.stat()
         if should_copy(st.st_size, int(st.st_mtime), dest):
@@ -330,6 +352,8 @@ def _export_volume(src: dict, dest_root: Path, dry_run: bool, docker: str) -> di
                     continue
                 if not _is_safe_member(member.name):
                     skipped += 1
+                    continue
+                if _skipped_member(src["harness"], Path(member.name)):
                     continue
                 dest = base / member.name
                 if should_copy(member.size, int(member.mtime), dest):
