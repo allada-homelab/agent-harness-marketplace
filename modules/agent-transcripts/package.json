@@ -1,6 +1,6 @@
 {
   "name": "@allada-homelab/agent-transcripts",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "private": true,
   "type": "module",
   "description": "Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a derived sqlite database.",
