@@ -204,9 +204,11 @@ constants.
 `app.include_router(v2, prefix="/v2")`. Avoid header-based versioning
 (`Accept-Version: 2`) in FastAPI-generated APIs.
 
-**Why.** Header versioning is invisible in access logs, not cacheable
-per-version by a CDN, unrepresentable in the OpenAPI `paths` object, and
-untestable from a browser address bar. Path versioning yields a clean
+**Why.** Header versioning is absent from default access logs,
+unrepresentable in the OpenAPI `paths` object, untestable from a browser
+address bar, and cached per version by a CDN only with explicit `Vary` or
+cache-key configuration (Cloudflare and CloudFront ignore origin `Vary` by
+default). Path versioning yields a clean
 OpenAPI schema where each version is a distinct path group, and generated
 clients can target a version by URL.
 

@@ -95,7 +95,7 @@ modules:
       tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized
       results or sessions in the findings store beside it.
 - name: best-practices
-  version: 0.4.2
+  version: 0.4.3
   kinds:
   - skills
   - dsh-plugin
