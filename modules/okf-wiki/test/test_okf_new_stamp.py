@@ -72,5 +72,6 @@ def test_stamp_keeps_the_newest_five_verifications(repo):
 
 def test_stamp_preserves_unknown_keys(repo):
     concept(repo, "x", meta=GOOD_META + "team: platform\n")
-    run(repo, "stamp", "x", "--by", "okf-wiki/haiku", "--generated")
-    assert okf.load(repo / ".wiki")[0].meta["team"] == "platform"
+    assert run(repo, "stamp", "x", "--by", "okf-wiki/haiku", "--generated").returncode == 0
+    meta = okf.load(repo / ".wiki")[0].meta
+    assert meta["team"] == "platform" and meta["generated"]["by"] == "okf-wiki/haiku"

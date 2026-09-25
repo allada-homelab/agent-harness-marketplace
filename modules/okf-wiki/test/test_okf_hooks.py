@@ -23,9 +23,12 @@ def test_session_start_is_silent_without_a_bundle_or_in_a_subagent(repo, tmp_pat
     plain = tmp_path / "plain"
     plain.mkdir()
     git(plain, "init", "-q")
-    assert hook(plain, "hook-session-start", {"cwd": str(plain)}).stdout == ""
+    for r in (hook(plain, "hook-session-start", {"cwd": str(plain)}),
+              hook(repo, "hook-session-start", {"cwd": str(repo), "agent_id": "sub"})):
+        assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
     concept(repo, "a")
-    assert hook(repo, "hook-session-start", {"cwd": str(repo), "agent_id": "sub"}).stdout == ""
+    r = hook(repo, "hook-session-start", {"cwd": str(repo), "agent_id": "sub"})
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
 
 
 def test_session_start_fails_open_and_loud(repo):
@@ -117,11 +120,14 @@ def test_hooks_are_fast(repo, tmp_path):
     plain = tmp_path / "plain"
     plain.mkdir()
     git(plain, "init", "-q")
+    r = hook(plain, "hook-session-start", {"cwd": str(plain)})
+    assert (r.returncode, r.stderr) == (0, "")  # the timed path is the real hook, not an argparse error
     assert median_seconds(lambda: hook(plain, "hook-session-start", {"cwd": str(plain)})) < 0.25
     for i in range(250):
         concept(repo, f"c{i:03d}", meta=f"type: gotcha\ntitle: T{i}\ndescription: claim {i}\n"
                 "verified:\n  - {by: okf-wiki/haiku, at: 2026-01-01T00:00:00Z, commit: "
                 + okf.head_commit(repo) + "}\n")
+    assert ctx(hook(repo, "hook-session-start", {"cwd": str(repo)})).startswith("okf-wiki:digest v1 · .wiki/ · 250")
     assert median_seconds(lambda: hook(repo, "hook-session-start", {"cwd": str(repo)}), n=3) < 1.5
 
 
