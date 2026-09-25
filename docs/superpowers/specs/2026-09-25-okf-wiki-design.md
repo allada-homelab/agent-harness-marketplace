@@ -41,13 +41,13 @@ everything deterministic; models do judgment only.
 | 3 | Write posture | Automatic, with a visible one-line receipt | Confirm-first was abandoned by llm-wiki; receipts + git keep it reversible. |
 | 4 | Unprompted trigger | Rule injected at SessionStart + a gated Stop nudge | Content alone relies on memory at task end; per-edit nudges nag. |
 | 5 | Read path | SessionStart injects a compact digest; forked cheap `recall` for depth | The read loop is the product; full fidelity on all three harnesses. |
-| 6 | Concept shape | Flat; closed types `gotcha, decision, runbook, convention, architecture`; claim descriptions; capture bar "not recoverable by grepping the code" | Open vocabularies drifted; code restatements had no value. |
+| 6 | Concept shape | Flat; closed types `gotcha, decision, runbook, convention, architecture, reference`; claim descriptions; capture bar "not recoverable by grepping the code" | Open vocabularies drifted; code restatements had no value. |
 | 7 | Freshness | `## Verify` anchors + `verified[].commit`; git-based STALE at recall; scribe heals | Knowledge repairs itself where it is used; time-based TTLs are a poor proxy. |
 | 8 | Derived files | Hooks rebuild `index.md` deterministically and validate loudly; models never write it | Model-written indexes drift. |
 | 9 | Bootstrap | History-mined `ingest` (commits, PRs, docs, existing bundles incl. llm-wiki migration) | The non-obvious knowledge lives in history, not in code. |
 | 10 | Scripts | One stdlib CLI `okf.py`, one verb per deterministic job | Models do judgment; anything checkable is a script. |
 | 11 | YAML | Strict frontmatter subset, own stdlib parser; anything outside it is a `validate` error | Zero dependencies, instant hooks, avoids PyYAML's timestamp coercion. |
-| 12 | Models | Agents declare `model: haiku`/`sonnet` — a deliberate exception to the model-agnostic rule (PR #34) | Cheap background models are the product. Recorded in the adding-a-module skill. |
+| 12 | Models | Agents declare `model: haiku`/`sonnet` | Cheap background models are the product. The PR #34 model-agnostic rule governs *ports* of upstream plugins, not first-party modules (`feature-dev` keeps `model:` too). Routes already exist: pi `DEFAULT_MODEL_ROUTES`, dsh `modelRoutes` in the module-agents patch. |
 | 13 | pi activation | Dotfiles bridge activates `delegate_agent` when cwd has `.wiki/` | Today it activates only on a user-typed skill tag, so unprompted dispatch is dead on pi. |
 | 14 | `log.md` | Not written; `git log -- .wiki/` is the changelog | Every PR prepending to one file guarantees merge conflicts. OKF makes it optional. |
 | 15 | Self-improvement | `reflect`: agent-transcripts + git evidence → scorecard → content fixes auto-applied, prompt fixes as PR proposals | Transcripts are the only place rediscovery is visible; a self-editing fleet-wide prompt is too high-blast. |
@@ -64,17 +64,17 @@ modules/okf-wiki/
     wiki/okf.py            # the one script; hooks and skills both call it
     wiki/references/       # type templates, anchor syntax, frontmatter subset
     capture/SKILL.md       # manual upsert → briefs scribe
-    recall/SKILL.md        # context: fork → recall agent
+    recall/SKILL.md        # dispatches the reader agent (not a forked skill: none exist in the repo yet)
     ingest/SKILL.md        # history-mined bootstrap → explorers → scribe
     tend/SKILL.md          # bundle-wide freshness + conformance report, offers heal
     reflect/SKILL.md       # effectiveness scorecard + fixes
   agents/
     scribe.md    model: haiku   # upsert concept via okf.py; never index.md
-    recall.md    model: haiku   # read, run fresh, cited answer ≤ ~1.5k chars; read-only
+    reader.md    model: haiku   # read, run fresh, cited answer ≤ ~1.5k chars; read-only
     explorer.md  model: sonnet  # one history slice → proposed briefs; read-only
     auditor.md   model: sonnet  # judges sampled transcript excerpts for reflect; read-only
   hooks/hooks.json              # SessionStart + Stop → okf.py
-  tests/
+  test/                         # pytest; bin/check.sh globs modules/*/test/test_*.py
 ```
 
 Skills call the script skill-relative (`./okf.py`, sibling skills `../wiki/okf.py`, per the
@@ -85,7 +85,7 @@ Agents receive the resolved script path in their brief from the main agent.
 |---|---|---|
 | Main agent | what is worth capturing; when to recall/heal/reflect | nothing in `.wiki/`; prints receipts |
 | `scribe` | wording, merge vs new | concept files only |
-| `recall` | which concepts answer; STALE flags | nothing |
+| `reader` | which concepts answer; STALE flags | nothing |
 | `explorer` | candidate concepts from one history slice | nothing |
 | `auditor` | whether wiki use helped in a transcript excerpt | nothing |
 | `okf.py` | nothing (deterministic) | `index.md`; state outside the repo |
@@ -124,6 +124,7 @@ sources:
 | runbook | When · Steps · Check it worked |
 | convention | Rule · Why · Example |
 | architecture | Shape · Why this way · Boundaries |
+| reference | What · Where · Caveats |
 
 - Claims cite `[^s1]` footnotes joined to `sources[].id`. Links are relative (`./other.md`)
   with relation-bearing link text.
@@ -154,8 +155,8 @@ Stdlib only; the final stdout line is a stable status line (pr-flow convention).
 | `anchor <id>` | Evaluate grep anchors: confirmed / broken |
 | `mv <old> <new>` | Rename a concept and rewrite every inbound link |
 | `migrate <path>` | Mechanical conversion of an llm-wiki/OKF bundle: type case, anchor syntax, placeholder actors, key order |
-| `gate` | Stop-hook state machine (below) |
-| `stats` | Deterministic half of the `reflect` scorecard (below) |
+| `hook-session-start` / `hook-stop` | The two hook entry points (below) |
+| `stats [--mark]` | Deterministic half of the `reflect` scorecard, read straight from `transcripts.db` (read-only sqlite) and git; `--mark` records a reflect run |
 | `fanout [--fanout N]` | Resolve the fan-out width: flag, else `OKF_WIKI_FANOUT`, else 4; error outside 1-16 |
 
 ## Flows
@@ -164,11 +165,11 @@ Stdlib only; the final stdout line is a stable status line (pr-flow convention).
    → silent exit. Else `index`, `validate` (one loud line on errors), `digest`; inject digest
    plus the rule "consult before non-trivial work; capture durable non-obvious findings",
    wrapped as reference data, not instructions. When the digest is not enough, main
-   dispatches `recall` with the question; it reads concepts, runs `fresh`, returns a cited
+   dispatches the `reader` agent with the question; it reads concepts, runs `fresh`, returns a cited
    answer with `concept:<id>` citations, `STALE: <id>` flags and `GAP:` when unanswered.
 2. **Capture.** Trigger: injected rule or Stop nudge. Main applies the capture bar and briefs
    `scribe` (type, claim, why, evidence, suggested anchor), in the background where
-   supported. Scribe: `new` (or edit the flagged duplicate) → fill template → `anchor` until
+   supported (Claude: background agent; dsh: `delegate_agent` with `run_in_background: true`). Scribe: `new` (or edit the flagged duplicate) → fill template → `anchor` until
    confirmed → `stamp` → `validate` → returns `created|updated <id>` or `rejected: <reason>`.
    Main prints `wiki: +<type>/<id>`. Writes land on the current branch, so knowledge ships in
    the PR that taught it.
@@ -198,7 +199,10 @@ Stdlib only; the final stdout line is a stable status line (pr-flow convention).
   concepts. Both tested.
 - Never block work: internal failures exit 0 with one stderr line
   `okf-wiki: <what> — <fix>`. Exit 2 is never used.
-- Stop (`gate`): no-op when `stop_hook_active` or when the child-session env marker is set;
+- Child sessions: both hooks no-op when stdin carries `agent_id` (Claude's own subagent
+  marker; the dsh hook runner adds it for `origin: subagent` sessions; pi children load no
+  extensions at all).
+- Stop: no-op when `stop_hook_active`;
   otherwise block once with the nudge when `HEAD` moved since the last nudge, or the tree
   first became dirty this session (untracked files included). State lives at
   `$XDG_STATE_HOME/okf-wiki/<repo-hash>/<session_id>`, pruned after 7 days — never in the
@@ -280,22 +284,26 @@ most `fanout` in flight, then merges in the main agent.
 | SessionStart digest | system context | `nextTurn` custom message (may be lost to compaction) | persistent `systemPrompt.context` |
 | Stop nudge | blocks once per gate | once per session, as a user message (runner latch) | `agent.steer`; on the turn's critical path |
 | Agent dispatch | native | after bridge activation on `.wiki/` | native |
-| Background scribe | yes | no — foreground | if the provider supports continuation (to verify) |
-| Cheap models | native aliases | alias → local fast/large models | inherits parent until `modelRoutes` configured |
+| Background scribe | yes | no — foreground | yes — `run_in_background: true` (spawn provider is continuable) |
+| Cheap models | native aliases | alias → local fast/large models | `modelRoutes` → litellm fast/large, gated by the session allowlist |
+| Skill arguments | `$ARGUMENTS` substituted | appended after the body as text | substituted by the skills bridge |
 | Fan-out width | `fanout` | `min(fanout, 4)` | `fanout`, provider limits |
 
 ## Paired dotfiles changes (land first)
 
 1. pi `module-agents`: activate `delegate_agent` when cwd contains `.wiki/` (case 6).
-2. dsh hook runner: set a child-session env marker so hooks can skip subagents (case 6).
-3. dsh `modelRoutes` for `haiku` and `sonnet`.
-4. `modules.tsv` row for `okf-wiki` (case 1).
-5. After homelab migration: disable `llm-wiki` in the fleet (double registration, like case 3).
+2. dsh hook runner: add `agent_id` to hook stdin for subagent sessions, plus a hook-contract
+   corpus case (case 5/6).
+3. `modules.tsv` row for `okf-wiki` (case 1).
+4. After homelab migration: disable `llm-wiki` in the fleet (`claude/settings.json`,
+   `llm-wiki@public-skills`).
+
+(dsh `modelRoutes` already exist since 2026-09-14; no change needed.)
 
 ## Repo docs touched
 
-- `.agents/skills/adding-a-module/SKILL.md`: record the okf-wiki model-alias exception.
-- `agent-contract/README.md:71`: dsh background row is stale.
+- `agent-contract/README.md:71`: dsh background row is stale (dsh runs continuable children).
+- `docs/authoring.md:51`: says pi expands `$ARGUMENTS` natively; it appends arguments instead.
 - `docs/planning/wiki/README.md`: point at this spec as superseding `decisions.md`.
 
 ## Testing
@@ -309,7 +317,9 @@ most `fanout` in flight, then merges in the main agent.
   anchor file.
 - Hooks: time budgets, silence without `.wiki/`, gate states (dirty, commit, repeat,
   `stop_hook_active`, child marker), fail-open.
-- Cross-harness smoke (`tests/smoke/`): digest delivered and Stop nudge delivered per harness.
+- Hook delivery on pi/dsh is harness-side foundation (`tests/smoke/pi.sh` header) and is not
+  exercised from this repo; the dotfiles hook-contract corpus and dsh e2e specs cover it,
+  plus a manual per-harness check at rollout (digest arrives, nudge arrives).
 - Manual value check at rollout: ~10 questions over the migrated homelab bundle, with vs
   without the wiki.
 
@@ -321,15 +331,23 @@ most `fanout` in flight, then merges in the main agent.
 4. `ingest` with migration on homelab → first real `.wiki/` and the value check.
 5. Retire `llm-wiki`.
 
-## To verify during planning
+## Verified during planning
 
-- dsh `spawn` provider: does `run_in_background` continue or fall back to foreground?
-- pi hook runner: does `session_start` awaiting a child process risk the known deadlock?
-- The child-session marker mechanism on each harness (Claude: is `agent_id`/equivalent on
-  Stop stdin sufficient?).
-- Whether `transcript-query` exposes enough (message text search, session cwd) for `stats`.
-- Whether a skill invocation argument (`--fanout N`) reaches the skill body identically on all
-  three harnesses (`$ARGUMENTS` handling).
+- dsh `spawn` provider is continuable; `run_in_background: true` really backgrounds.
+- pi awaits hook child processes in `session_start`; a fast python process is safe (the
+  documented deadlock is for awaiting model work there).
+- Claude fires `SubagentStop`, not `Stop`, for subagents and sets `agent_id`; pi children load
+  no extensions; dsh children fire the runner's events and carry `origin: subagent` in the
+  session header → the `agent_id` stdin change above.
+- `$ARGUMENTS` differs per harness (table above): skills use `$ARGUMENTS` only, never `$N`,
+  and phrase the sentence so it reads correctly unexpanded.
+- `transcripts.db` has `sessions.cwd` and an FTS5 index over message text; FTS drops
+  punctuation, so marker matches need an `instr()` post-filter.
+- Homelab's 217-concept bundle is 116 gotcha, 61 reference, 18 runbook, 8 convention,
+  5 decision, 6 `concept`, 2 other → `reference` joins the closed set; `concept` and the
+  rest map by hand at migration. Its `## Verify` sections are free-form (grep commands,
+  prose), so `migrate` converts what parses and keeps the rest under `## Legacy verification`.
+- pi's bridge caps concurrency at 4 (`MAX_CONCURRENCY`, not configurable).
 
 ## Out of scope (v1)
 
