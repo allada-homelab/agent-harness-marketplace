@@ -50,11 +50,37 @@ def test_start_refuses_dirty_main_without_carry(repo):
     (root / "new.txt").write_text("new\n")
     r = run("start", "widget", cwd=root)
     assert r.returncode == 2
-    assert "--carry" in r.stderr
+    assert "--carry" in r.stderr and "--leave-dirty" in r.stderr
     assert not (root / ".claude" / "worktrees" / "feat-widget").exists()
     assert (root / "README.md").read_text() == "edited\n"
     assert (root / "new.txt").read_text() == "new\n"
     assert git("stash", "list", cwd=root) == ""
+
+
+def test_start_leave_dirty_leaves_main_untouched(repo):
+    root, _ = repo
+    (root / "README.md").write_text("edited\n")
+    (root / "new.txt").write_text("new\n")
+    r = run("start", "widget", "--leave-dirty", cwd=root)
+    assert r.returncode == 0, r.stderr
+    wt = root / ".claude" / "worktrees" / "feat-widget"
+    assert (wt / "README.md").read_text() == "hello\n"
+    assert not (wt / "new.txt").exists()
+    assert (root / "README.md").read_text() == "edited\n"
+    assert (root / "new.txt").read_text() == "new\n"
+    assert git("stash", "list", cwd=root) == ""
+    assert git("config", "branch.feat/widget.pr-flow-base", cwd=root) == "main"
+    assert "left on main" in r.stderr and "new.txt" in r.stderr
+
+
+def test_start_leave_dirty_conflicts_with_carry(repo):
+    root, _ = repo
+    (root / "README.md").write_text("edited\n")
+    r = run("start", "widget", "--leave-dirty", "--carry", cwd=root)
+    assert r.returncode == 2
+    assert "mutually exclusive" in r.stderr
+    assert not (root / ".claude" / "worktrees" / "feat-widget").exists()
+    assert (root / "README.md").read_text() == "edited\n"
 
 
 def test_start_carry_specific_path(repo):

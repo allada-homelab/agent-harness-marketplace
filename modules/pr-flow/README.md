@@ -5,7 +5,7 @@ One skill (`skills/pr-flow/SKILL.md`), one script beside it (`pr-flow.py`), one
 PostToolUse hook that hints — never blocks — when a tracked file is edited on a
 protected branch in a repo's main checkout.
 
-Verbs: `start <slug> [--base <branch>] [--carry [<path>...]]`, `open`,
+Verbs: `start <slug> [--base <branch>] [--carry [<path>...] | --leave-dirty]`, `open`,
 `watch [--merge]`, `teardown [branch]`, `gc`. `teardown` and `gc` remove the
 worktree and delete the branch locally **and on origin**, and only once it is
 merged — an ancestor of `origin/<base>`, or a merged PR on GitHub (squash and
@@ -17,7 +17,12 @@ Exit codes: 0 green/merged/ok · 10 checks-failed · 11 conflict · 12 review ·
 worktree cannot be created after a `--carry` it restores the carried work to main
 before failing, so no stash entry is ever left behind. It refuses on a dirty main checkout by default — pass `--carry` to move
 every uncommitted change into the new worktree, or `--carry <path>...` for
-specific ones, so another session's edits are never swept up by accident. The
+specific ones, or `--leave-dirty` to branch anyway and leave every one of them
+on main — so another session's edits are never swept up by accident. `open`
+refuses, before pushing, a branch with no commits ahead of its base (usually a
+commit a pre-commit hook rejected). On Claude Code, `bin/pr-flow` puts a bare
+`pr-flow` on the Bash `PATH` while the plugin is enabled; other harnesses run
+`skills/pr-flow/pr-flow.py` with `python3`. The
 `--base` it was started with is recorded (`branch.<name>.pr-flow-base`) and
 used by `open`, `watch`'s conflict hint, and `teardown`'s merged-into check, so
 a worktree started off a non-default base stays consistent through the whole

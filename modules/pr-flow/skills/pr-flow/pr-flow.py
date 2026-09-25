@@ -234,12 +234,19 @@ def cmd_start(a):
     # instead; and a .worktreeinclude-only diff must not trip the "main is dirty" refusal).
     excludes = [f":(exclude){p.as_posix()}" for p in include]
     tag = None
+    if a.leave_dirty and a.carry is not None:
+        raise Fail("--leave-dirty and --carry are mutually exclusive")
     if ctx.is_main:
         dirty = git("status", "--porcelain", "--", ".", *excludes, cwd=root)
-        if dirty:
+        if dirty and a.leave_dirty:
+            # Someone else's in-flight edits: the worktree branches off origin/<base>, so they
+            # neither travel with it nor get touched on main.
+            warn(f"left on main (not carried):\n{dirty}")
+        elif dirty:
             if a.carry is None:
                 raise Fail(f"{dirty}\nmain checkout has uncommitted changes; rerun with --carry to move "
-                           "ALL of them into the new worktree, or --carry <path>... for specific ones")
+                           "ALL of them into the new worktree, --carry <path>... for specific ones, "
+                           "or --leave-dirty to leave them all on main")
             stash_tag = f"pr-flow start {branch} {secrets.token_hex(4)}"
             if a.carry:
                 for p in a.carry:
@@ -650,6 +657,10 @@ def cmd_open(a):
     ctx = repo_ctx(cwd)
     if ctx.branch in PROTECTED:
         raise Fail(f"refusing to open a PR from protected branch {ctx.branch}; run `pr-flow start <slug>` first")
+    base = branch_base(ctx.main_root, ctx.branch)
+    if git("rev-list", "--count", f"origin/{base}..HEAD", cwd=cwd) == "0":
+        raise Fail(f"{ctx.branch} has no commits ahead of origin/{base}; did the commit fail "
+                   "(e.g. a pre-commit hook)? Commit, then open again")
     git("push", "-q", "-u", "origin", ctx.branch, cwd=cwd)
     url, state = pr_url(cwd)
     if state == "MERGED":
@@ -661,7 +672,7 @@ def cmd_open(a):
             warn(f"could not tell whether origin is a fork ({e}); assuming not")
             fork_owner = ""
         head = f"{fork_owner}:{ctx.branch}" if fork_owner else ctx.branch
-        args = ["pr", "create", "--head", head, "--base", branch_base(ctx.main_root, ctx.branch)]
+        args = ["pr", "create", "--head", head, "--base", base]
         args += ["--title", a.title] if a.title else ["--fill"]
         if a.body_file:
             args += ["--body-file", a.body_file]
@@ -719,6 +730,9 @@ def main(argv=None):
     s.add_argument("--carry", nargs="*", default=None,
                     help="move uncommitted main-checkout changes into the worktree: bare for "
                          "all of them, or one or more paths for specific ones")
+    s.add_argument("--leave-dirty", action="store_true",
+                    help="start even though the main checkout has uncommitted changes, leaving them "
+                         "on main untouched (e.g. another session's work)")
     s.set_defaults(fn=cmd_start)
     o = sub.add_parser("open", help="push the branch and open (or reuse) its PR")
     o.add_argument("--title")
