@@ -26,6 +26,8 @@ importers:
 
   modules/feature-dev: {}
 
+  modules/okf-wiki: {}
+
   modules/plan-for-dummies: {}
 
   modules/pr-flow: {}

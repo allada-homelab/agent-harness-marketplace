@@ -48,8 +48,10 @@ Enforced by `bin/lint-skills.py` (run through `bin/check.sh`).
   `/name` on Claude, `/skill:name` on pi (`/name` through the pi harness's
   skill-commands foundation extension) and `/name` on dsh through the
   harness's skills bridge.
-- **Substitutions**: `$ARGUMENTS` and `$N` only. Claude and pi expand them
-  natively; dsh expands them only through the harness's skills bridge, so write
+- **Substitutions**: `$ARGUMENTS` and `$N` only. Claude expands them natively
+  (`$N` counts from 0); pi never substitutes in a skill and appends the user's
+  arguments after the body; dsh expands them only through the harness's skills
+  bridge (`$N` counts from 1). Prefer `$ARGUMENTS`, and write
   the body so it still reads correctly with the token unexpanded and the user's
   text following as prose ("Research target: $ARGUMENTS").
 - **Forbidden** in a portable skill: `hooks:`, `effort:`, any `context:` other

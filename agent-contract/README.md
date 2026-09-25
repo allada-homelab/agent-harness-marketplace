@@ -68,7 +68,7 @@ no row is dropped, with one stderr line, so the child's capability set is exact.
 | Tool restriction | `tools` | `--tools` | `toolFilter.allow` | translated set only |
 | Model | alias | alias map or inherit | alias map, gated by the session allowlist, or inherit | inherit unless mapped |
 | Standing cost | one Agent schema | tool inactive until a module skill is invoked or `/agents` | one schema plus a catalog line per agent | pi ~0 while inactive |
-| Background / continuable children | yes | no | not in this version | **degraded** |
+| Background / continuable children | yes | no | yes — `run_in_background: true` when the provider is continuable (the default `spawn` provider is) | **degraded on pi** |
 | `maxTurns`, `skills`, `memory`, `permissionMode`, `isolation` | native | ignored | ignored | **degraded** |
 | Concurrency | harness | 4 in flight, per-child timeout | provider's | pi capped |
 
