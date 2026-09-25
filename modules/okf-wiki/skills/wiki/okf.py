@@ -888,6 +888,107 @@ def cmd_stamp(args) -> int:
     return 0
 
 
+# ---- freshness ----------------------------------------------------------------------
+
+def freshness(root: Path, concepts: list[Concept], timeout: float = 10) -> dict[str, tuple[str, str]]:
+    """id -> (FRESH | STALE | UNANCHORED | UNVERIFIED, detail)."""
+    res: dict[str, tuple[str, str]] = {}
+    pending: dict[str, tuple[set[str], dict]] = {}
+    for c in concepts:
+        if c.error:
+            continue
+        files = {a.path for a in parse_anchors(c.body)[0]}
+        entries = [e for e in _verified_entries(c.meta) if isinstance(e, dict)]
+        last = entries[-1] if entries else None
+        if not files:
+            res[c.id] = ("UNANCHORED", "")
+        elif not last or not last.get("commit"):
+            res[c.id] = ("UNVERIFIED", "no verified commit")
+        else:
+            pending[c.id] = (files, last)
+    if not pending:
+        return res
+    deadline = time.monotonic() + timeout
+
+    def run(*args):
+        return git(root, *args, timeout=max(0.05, deadline - time.monotonic()))
+
+    dirty = set(run("diff", "HEAD", "--name-only").split())
+    dirty |= set(run("ls-files", "--others", "--exclude-standard").split())
+    order = {sha[:12]: i for i, sha in enumerate(run("rev-list", "HEAD").split())}
+    all_files = sorted({f for files, _ in pending.values() for f in files})
+    commits: list[tuple[str, str, set[str]]] = []
+    for line in run("log", "--format=@%H %cI", "--name-only", "HEAD", "--", *all_files).splitlines():
+        if line.startswith("@"):
+            sha, date = line[1:].split(" ", 1)
+            commits.append((sha, date, set()))
+        elif line.strip() and commits:
+            commits[-1][2].add(line.strip())
+    for cid, (files, last) in pending.items():
+        if files & dirty:
+            res[cid] = ("STALE", f"uncommitted change to {sorted(files & dirty)[0]}")
+            continue
+        pos = order.get(str(last["commit"])[:12])
+        at = parse_ts(str(last.get("at", "")))
+        state = ("FRESH", "")
+        for sha, date, touched in commits:
+            hit = files & touched
+            if not hit:
+                continue
+            if pos is not None:
+                after = order[sha[:12]] < pos
+            else:  # the recorded commit left history (rebase): fall back to dates
+                after = at is None or datetime.fromisoformat(date) > at
+            if after:
+                state = ("STALE", f"{sorted(hit)[0]} changed in {sha[:7]}")
+                break
+        res[cid] = state
+    return res
+
+
+def cmd_fresh(args) -> int:
+    root, bundle = _root_and_bundle(args)
+    concepts = load(bundle)
+    if args.ids:
+        concepts = [find(concepts, i) for i in args.ids]
+    res = freshness(root, concepts)
+    for cid in sorted(res):
+        st, detail = res[cid]
+        print(f"{st} {cid}" + (f" ({detail})" if detail else ""))
+    counts = {s: sum(1 for v in res.values() if v[0] == s) for s in ("FRESH", "STALE", "UNANCHORED", "UNVERIFIED")}
+    status("fresh", "ok", ", ".join(f"{n} {s.lower()}" for s, n in counts.items()))
+    return 0
+
+
+def cmd_anchor(args) -> int:
+    root, bundle = _root_and_bundle(args)
+    c = find(load(bundle), args.id)
+    anchors, _, none = parse_anchors(c.body)
+    if not anchors:
+        status("anchor", "none" if none else "missing", args.id)
+        return 0 if none else 1
+    broken = 0
+    for a in anchors:
+        ok, msg = eval_anchor(root, a)
+        broken += not ok
+        print(("OK " if ok else "BROKEN ") + msg)
+    if broken:
+        status("anchor", "broken", f"{args.id} {broken}")
+        return 1
+    status("anchor", "confirmed", args.id)
+    return 0
+
+
+def cmd_digest(args) -> int:
+    root, bundle = _root_and_bundle(args)
+    concepts = load(bundle)
+    fresh = freshness(root, [c for c in concepts if not c.error])
+    stale = {cid for cid, (st, _) in fresh.items() if st == "STALE"}
+    sys.stdout.write(digest(concepts, check_bundle(bundle, concepts), stale, False))
+    status("digest", "ok")
+    return 0
+
+
 # ---- CLI ----------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
@@ -910,6 +1011,9 @@ def main(argv: list[str] | None = None) -> int:
     verb("stamp", cmd_stamp, "id", __by={"required": True},
          __generated={"action": "store_true"}, __verified={"action": "store_true"},
          __human_confirmed={"action": "store_true"})
+    verb("digest", cmd_digest)
+    verb("fresh", cmd_fresh, "ids")
+    verb("anchor", cmd_anchor, "id")
     args = p.parse_args(argv)
     try:
         return args.fn(args)
