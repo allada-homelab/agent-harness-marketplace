@@ -22,7 +22,10 @@ on main — so another session's edits are never swept up by accident. `open`
 refuses, before pushing, a branch with no commits ahead of its base (usually a
 commit a pre-commit hook rejected). On Claude Code, `bin/pr-flow` puts a bare
 `pr-flow` on the Bash `PATH` while the plugin is enabled; other harnesses run
-`skills/pr-flow/pr-flow.py` with `python3`. The
+`skills/pr-flow/pr-flow.py` with `python3`. Every fetch names an explicit
+`+refs/heads/<b>:refs/remotes/origin/<b>` refspec, so a single-branch clone (fetch
+refspec covering only the default branch) still gets the tracking refs that `start
+--base`, `watch`'s pushed-head check and `teardown`'s merged check read. The
 `--base` it was started with is recorded (`branch.<name>.pr-flow-base`) and
 used by `open`, `watch`'s conflict hint, and `teardown`'s merged-into check, so
 a worktree started off a non-default base stays consistent through the whole

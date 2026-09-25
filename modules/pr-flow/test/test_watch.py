@@ -204,6 +204,24 @@ def test_stale_pr_head_after_push_keeps_polling(repo):
     assert sum(1 for c in calls if c[:2] == ["pr", "view"]) == 2
 
 
+def test_stale_pr_head_detected_in_single_branch_clone(repo):
+    # A clone whose fetch refspec covers only main: `git fetch origin <branch>` writes just
+    # FETCH_HEAD, so watch must fetch into the tracking ref itself or it cannot see the push.
+    root, wt = opened(repo)
+    git("config", "--replace-all", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main", cwd=root)
+    (wt / "f").write_text("x\n")
+    git("add", "f", cwd=wt)
+    git("commit", "-q", "-m", "c", cwd=wt)
+    git("push", "-q", "-u", "origin", "feat/w", cwd=wt)
+    git("update-ref", "-d", "refs/remotes/origin/feat/w", cwd=wt)
+    pushed = git("rev-parse", "HEAD", cwd=wt)
+    r = run("watch", "--interval", "0", cwd=wt,
+            replay={"pr_view": [pr(checks=[check("SUCCESS")], head="stale"), pr(checks=[check("SUCCESS")], head=pushed)]})
+    assert r.returncode == 0, r.stderr
+    assert "not checking the PR head" not in r.stderr
+    assert "stale" in r.stderr and pushed[:7] in r.stderr
+
+
 def test_stale_pr_head_but_merged_or_closed_is_still_terminal(repo):
     root, wt = opened(repo)
     (wt / "f").write_text("x\n")
