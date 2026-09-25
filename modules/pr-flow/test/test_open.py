@@ -20,6 +20,17 @@ def test_open_pushes_and_creates_pr(repo):
     assert any(c[:2] == ["pr", "create"] for c in gh_calls(wt))
 
 
+def test_open_refuses_branch_with_no_commits(repo):
+    root, origin = repo
+    assert run("start", "widget", cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / "feat-widget"
+    r = run("open", cwd=wt, replay={"pr_url": ""})
+    assert r.returncode == 2
+    assert "no commits ahead of origin/main" in r.stderr
+    assert not git("ls-remote", "--heads", str(origin), "feat/widget", cwd=root)  # nothing pushed
+    assert not (wt / ".gh-log").exists()  # gh never called
+
+
 def test_open_reuses_existing_pr(repo):
     root, _ = repo
     assert run("start", "widget", cwd=root).returncode == 0
