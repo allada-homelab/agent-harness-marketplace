@@ -340,6 +340,19 @@ modules:
     tags: []
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
+- name: okf-wiki
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  - pi
+  - dsh
+  description: 'A per-repo, self-healing agent wiki in Open Knowledge Format: a session-start digest,
+    background capture and re-verification on cheap models, and a reflect loop that measures whether it
+    helps.'
+  skills: []
 - name: plan-for-dummies
   version: 0.3.1
   kinds:
