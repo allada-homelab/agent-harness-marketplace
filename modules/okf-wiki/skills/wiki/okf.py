@@ -1147,6 +1147,136 @@ def cmd_migrate(args) -> int:
     return 0
 
 
+# ---- reflect bookkeeping and stats --------------------------------------------------
+
+def state_dir(root: Path) -> Path:
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "okf-wiki" / hashlib.sha1(str(root).encode()).hexdigest()[:12]
+
+
+def _reflect_file(root: Path) -> Path:
+    return state_dir(root) / "reflect.json"
+
+
+def reflect_tick(root: Path) -> bool:
+    """Count one session; True when a reflect run is due."""
+    f = _reflect_file(root)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    st = json.loads(f.read_text()) if f.exists() else {"last": None, "sessions": 0}
+    st["sessions"] += 1
+    f.write_text(json.dumps(st))
+    if st["sessions"] >= REFLECT_SESSIONS:
+        return True
+    last = parse_ts(st["last"]) if st["last"] else None
+    return last is not None and (datetime.now(timezone.utc) - last).days >= REFLECT_DAYS
+
+
+def reflect_mark(root: Path) -> None:
+    f = _reflect_file(root)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"last": now_utc(), "sessions": 0}))
+
+
+def transcripts_db() -> Path:
+    if os.environ.get("AGENT_TRANSCRIPT_DIR"):
+        base = Path(os.environ["AGENT_TRANSCRIPT_DIR"]).expanduser()
+    else:
+        cache = os.environ.get("XDG_CACHE_HOME")
+        base = (Path(cache).expanduser() if cache else Path.home() / ".cache") / "agent-transcripts"
+    return base / "transcripts.db"
+
+
+CITE_RE = re.compile(r"concept:([a-z0-9][a-z0-9/-]*)")
+RECEIPT_RE = re.compile(r"wiki: ([+~✗])")
+
+
+def transcript_stats(root: Path, days: int) -> dict:
+    import sqlite3
+
+    db = transcripts_db()
+    if not db.exists():
+        return {"available": False, "reason": f"no transcript index at {db}; run the agent-transcripts ingest skill"}
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    since = datetime.now(timezone.utc).timestamp() - days * 86400
+    since_iso = datetime.fromtimestamp(since, timezone.utc).isoformat()
+    like = str(root).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"
+    sessions = {sid for (sid,) in conn.execute(
+        "SELECT id FROM sessions WHERE kind = 'main' AND (cwd = ? OR cwd LIKE ? ESCAPE '\\') "
+        "AND (started_at IS NULL OR started_at >= ?)", (str(root), like, since_iso))}
+
+    def hits(fts: str, needle: str) -> list[tuple[int, str]]:
+        rows = conn.execute(
+            "SELECT m.session_id, m.text FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid "
+            "WHERE messages_fts MATCH ? AND instr(m.text, ?) > 0", (fts, needle))
+        return [(sid, text) for sid, text in rows if sid in sessions]
+
+    digest_rows = hits('"okf wiki digest"', "okf-wiki:digest")
+    cite_rows = hits('"concept"', "concept:")
+    gap_rows = hits('"GAP"', "GAP:")
+    receipt_rows = hits('"wiki"', "wiki: ")
+    read_sessions = {sid for (sid,) in conn.execute(
+        "SELECT DISTINCT m.session_id FROM tool_calls t JOIN messages m ON m.id = t.message_id "
+        "WHERE instr(t.arguments, ?) > 0", (f"{BUNDLE}/",)) if sid in sessions}
+    cited: dict[str, int] = {}
+    for _, text in cite_rows:
+        for cid in CITE_RE.findall(text):
+            cited[cid] = cited.get(cid, 0) + 1
+    receipts = {"+": 0, "~": 0, "✗": 0}
+    for _, text in receipt_rows:
+        for kind in RECEIPT_RE.findall(text):
+            receipts[kind] += 1
+    digest_sessions = {sid for sid, _ in digest_rows}
+    consulted = ({sid for sid, _ in cite_rows} | read_sessions) & (digest_sessions or sessions)
+    return {
+        "available": True,
+        "sessions": len(sessions),
+        "digest_sessions": len(digest_sessions),
+        "digest_visible": bool(digest_sessions) or not sessions,
+        "consulted_sessions": len(consulted),
+        "cited": cited,
+        "gaps": sum(text.count("GAP:") for _, text in gap_rows),
+        "receipts": {"created_or_updated": receipts["+"], "healed": receipts["~"], "failed": receipts["✗"]},
+    }
+
+
+def git_stats(root: Path, days: int) -> dict:
+    def names(flt: str) -> list[str]:
+        out = git(root, "log", f"--since={days}.days", f"--diff-filter={flt}", "--name-only",
+                  "--format=", "--", f"{BUNDLE}/", check=False)
+        return sorted({Path(p).with_suffix("").as_posix()[len(BUNDLE) + 1:]
+                       for p in out.split() if p.endswith(".md") and not p.endswith("index.md")})
+
+    return {"added": names("A"), "deleted": names("D")}
+
+
+def stats(root: Path, bundle: Path, days: int) -> dict:
+    concepts = load(bundle)
+    fresh = freshness(root, concepts)
+    by_state: dict[str, int] = {}
+    for st, _ in fresh.values():
+        by_state[st] = by_state.get(st, 0) + 1
+    t = transcript_stats(root, days)
+    ids = [c.id for c in _indexable(concepts) if c.meta.get("status") != "deprecated"]
+    return {
+        "window_days": days,
+        "concepts": len(ids),
+        "deprecated": sum(1 for c in concepts if c.meta.get("status") == "deprecated"),
+        "freshness": by_state,
+        "git": git_stats(root, days),
+        "transcripts": t,
+        "never_cited": sorted(set(ids) - set(t.get("cited", {}))) if t.get("available") else None,
+    }
+
+
+def cmd_stats(args) -> int:
+    root, bundle = _root_and_bundle(args)
+    print(json.dumps(stats(root, bundle, args.days), indent=2, sort_keys=True))
+    if args.mark:
+        reflect_mark(root)
+    status("stats", "ok", "marked" if args.mark else "")
+    return 0
+
+
 # ---- CLI ----------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
@@ -1174,6 +1304,7 @@ def main(argv: list[str] | None = None) -> int:
     verb("anchor", cmd_anchor, "id")
     verb("mv", cmd_mv, "old", "new")
     verb("migrate", cmd_migrate, "source", __dry_run={"action": "store_true"})
+    verb("stats", cmd_stats, __days={"type": int, "default": 60}, __mark={"action": "store_true"})
     args = p.parse_args(argv)
     try:
         return args.fn(args)
