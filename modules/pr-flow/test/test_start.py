@@ -83,6 +83,16 @@ def test_start_leave_dirty_conflicts_with_carry(repo):
     assert (root / "README.md").read_text() == "edited\n"
 
 
+def test_start_base_outside_single_branch_refspec(repo):
+    root, _ = repo
+    git("push", "-q", "origin", "main:release", cwd=root)
+    git("config", "--replace-all", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main", cwd=root)
+    git("update-ref", "-d", "refs/remotes/origin/release", cwd=root)
+    r = run("start", "widget", "--base", "release", cwd=root)
+    assert r.returncode == 0, r.stderr
+    assert git("config", "branch.feat/widget.pr-flow-base", cwd=root) == "release"
+
+
 def test_start_carry_specific_path(repo):
     root, _ = repo
     (root / "README.md").write_text("edited\n")

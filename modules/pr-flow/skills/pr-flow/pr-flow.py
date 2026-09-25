@@ -50,6 +50,12 @@ def gh(*args, cwd=None, **kw):
     return sh(GH, *args, cwd=cwd, **kw)
 
 
+def fetch_tracking(branch, cwd, **kw):
+    # Explicit refspec: in a single-branch clone `git fetch origin <branch>` writes only
+    # FETCH_HEAD, leaving refs/remotes/origin/<branch> missing or stale.
+    git("fetch", "-q", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}", cwd=cwd, **kw)
+
+
 def warn(msg):
     print(f"pr-flow: {msg}", file=sys.stderr)
 
@@ -222,7 +228,7 @@ def cmd_start(a):
         warn(f"worktree for {branch} already exists")
         print(existing)
         return done("start", "ok", existing)
-    git("fetch", "-q", "origin", base, cwd=root)
+    fetch_tracking(base, root)
     if subprocess.run([GIT, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], cwd=root,
                       capture_output=True).returncode == 0:
         raise Fail(f"branch {branch} already exists locally but has no worktree; delete it or pick another slug")
@@ -335,7 +341,7 @@ def pushed_head(cwd, branch):
     calling a commit green before its CI has even been registered.
     """
     try:
-        git("fetch", "-q", "origin", branch, cwd=cwd, timeout=120)
+        fetch_tracking(branch, cwd, timeout=120)
         return git("rev-parse", f"refs/remotes/origin/{branch}", cwd=cwd)
     except (Fail, subprocess.TimeoutExpired) as e:
         warn(f"could not read origin/{branch} ({e}); not checking the PR head against it")
@@ -489,7 +495,7 @@ def teardown(ctx, branch, dry_run=False):
         if dirty:
             raise Fail(f"worktree {wt} is dirty; commit or discard first:\n{dirty}")
     base = branch_base(root, branch)
-    git("fetch", "-q", "origin", base, cwd=root)
+    fetch_tracking(base, root)
     merged = subprocess.run([GIT, "merge-base", "--is-ancestor", branch, f"origin/{base}"], cwd=root).returncode == 0
     # A squash or rebase merge lands the change as new commits, so the branch head is never an
     # ancestor of the base; GitHub's own merged state is the proof then.
