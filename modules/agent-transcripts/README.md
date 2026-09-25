@@ -49,8 +49,11 @@ notifications, hook output, runtime-context snapshots — replaced by a `[stripp
 and every line labelled with its message ord, and `record` validates the verdict: all
 thirteen rubric categories answered, and every `present` finding carrying an ord and a quote
 that really occurs in that message. A quote a model invented is rejected, so a small local
-model reading one view at a time can do the judging. `rollup` counts what accumulated, by
-category, tool, project or week.
+model reading one view at a time can do the judging. The session's final report — the last
+assistant text and a subagent's `SubagentHandback` arguments — is shown in full and never
+elided, and `grep` searches one whole session, elided messages included, so a claim is checked
+against its evidence rather than against what fit the budget. `rollup` counts what
+accumulated, by category, tool, project or week.
 
 Both passes write `findings.db`, a small sqlite database beside the index in the cache root,
 keyed by `(harness, native_id)` so findings survive rebuilding the index. Like the index it

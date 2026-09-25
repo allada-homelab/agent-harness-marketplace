@@ -53,12 +53,27 @@ text the session contained. `ERR` marks a failed call, `×N` means the same call
 same result* repeated N times in a row, and `... [elided K messages] ...` means messages were
 cut to fit the budget. `ERR`, `×N` and `…` are markers, never part of a quote.
 
+The session's **final report** is exempt from those line caps and is never elided: the last
+`ASSISTANT` text and the last `CALL SubagentHandback` (a subagent's report arrives as that
+call's arguments) are shown in full, up to 6000 characters each. That report is what the
+session claims; read all of it before judging a claim unverified.
+
 If the sweep flagged this session, the header lists `anchors` — the ords of the flagged
 errors — and the view keeps the messages around each of them, so an elision never hides the
 errors you are being asked about.
 
-Judge only what this view shows you. Elided messages are not evidence, and you do not get to
-go looking for them.
+Judge from this view. The one exception is checking a claim: the evidence for "the suite
+passed" may sit in a tool result the budget elided. Search the whole session for it —
+elided messages included — with:
+
+```bash
+uv run --script ./review.py grep <native_id> '<regex>'
+```
+
+It prints one `[ord] ROLE snippet` line per matching message or call (case-insensitive,
+20 lines and 160 characters around each match by default), searching tool results and call
+arguments as well as text. Search for the specific evidence a claim needs — `113 match`,
+`conclusion.*success`, the test count — not to browse the session.
 
 ### 3. Answer the rubric
 
@@ -88,6 +103,12 @@ message. The script checks the quote against the database and rejects the whole 
 is not there. A trailing `…` you copied from a truncated line is fine; drop it or keep it.
 When `present` is 0, `evidence_ord` and `quote` must both be `null` — nothing else is
 accepted.
+
+`unverified_claim` may be `present: 1` only if (a) the view shows no
+`... [elided K messages] ...` gap, or (b) you ran `grep` over the session for the evidence the
+claim needs and found none. An elided message is not missing evidence, and a report that
+explains why something is still red or left over is not an unverified claim. Say in the
+`note` which of (a) or (b) applied and, for (b), the pattern you searched.
 
 Write the whole thing to a file, all 13 categories, in this shape:
 
@@ -150,6 +171,11 @@ uv run --script ./review.py rollup
 `--by tool`, `--by project` and `--by week` regroup the same findings. Report the table and
 stop.
 
+Any combined report — across several reviewers, shards or batches — is generated from
+`review.py rollup`, which reads every recorded finding from `findings.db`. Never assemble one
+by hand from per-shard notes: that is how recorded sessions go missing from the report.
+`rollup` prints counts, not a per-session list; do not fill that gap by hand either.
+
 ## Hard rules
 
 - **One session at a time.** Never hold two views in your head; never batch verdicts.
@@ -160,5 +186,6 @@ stop.
 - **When unsure, `present: 0` with `confidence: low`.** A wrong yes poisons every rollup; a
   cautious no costs one session.
 - **Do not open raw transcripts**, do not query the index yourself, and do not read more of a
-  session than the view gives you. The caps exist because this is the user's private history.
+  session than the view gives you — except `grep` for the evidence of one specific claim. The
+  caps exist because this is the user's private history.
 - **Read-only except for the findings database.** The view and the queue never write anything.
