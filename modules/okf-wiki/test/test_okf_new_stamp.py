@@ -1,4 +1,4 @@
-from okf_testlib import GOOD_BODY, GOOD_META, concept, okf, run
+from okf_testlib import GOOD_BODY, GOOD_META, concept, git, okf, run
 
 
 def test_new_scaffolds_a_template_that_fails_validate_until_filled(repo):
@@ -75,3 +75,22 @@ def test_stamp_preserves_unknown_keys(repo):
     assert run(repo, "stamp", "x", "--by", "okf-wiki/haiku", "--generated").returncode == 0
     meta = okf.load(repo / ".wiki")[0].meta
     assert meta["team"] == "platform" and meta["generated"]["by"] == "okf-wiki/haiku"
+
+
+def test_new_check_reports_without_writing(repo):
+    concept(repo, "pnpm-peer-trap")
+    r = run(repo, "new", "gotcha", "cache-trap", "--check")
+    assert r.returncode == 0 and r.stdout.splitlines()[-1] == "okf: new available cache-trap"
+    assert not (repo / ".wiki" / "cache-trap.md").exists()
+    r = run(repo, "new", "gotcha", "pnpm-peer-deps", "--title", "pnpm peer deps vanish", "--check")
+    assert r.returncode == 3 and "DUPLICATE? pnpm-peer-trap" in r.stdout
+
+
+def test_refusal_is_one_line_even_when_git_says_more(tmp_path):
+    r = tmp_path / "empty"
+    r.mkdir()
+    git(r, "init", "-q")
+    (r / ".wiki").mkdir()
+    concept(r, "a", body="\n## Verify\n\n- none: x\n")
+    out = run(r, "stamp", "a", "--by", "okf-wiki/haiku", "--verified").stdout.splitlines()
+    assert len(out) == 1 and out[0].startswith("okf: stamp refused git rev-parse HEAD failed")

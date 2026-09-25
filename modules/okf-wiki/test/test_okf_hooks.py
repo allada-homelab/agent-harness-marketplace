@@ -159,3 +159,40 @@ def test_stop_sees_untracked_files_with_spaces(repo):
     stop(repo)
     (repo / "my notes.txt").write_text("x")
     assert stop(repo)["decision"] == "block"
+
+
+def start(repo, sid="s1"):
+    r = hook(repo, "hook-session-start", {"session_id": sid, "cwd": str(repo)})
+    assert r.returncode == 0 and r.stderr == "", r.stderr
+
+
+def test_a_tree_dirty_before_the_session_does_not_nudge_until_it_changes(repo):
+    concept(repo, "a")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "wiki")
+    (repo / "src/app.py").write_text("someone else's edit\n")
+    start(repo)
+    assert stop(repo) is None                       # a question-only session
+    (repo / "src/app.py").write_text("this session's edit\n")
+    assert stop(repo)["decision"] == "block"
+
+
+def test_a_commit_in_the_first_turn_nudges(repo):
+    concept(repo, "a")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "wiki")
+    start(repo)
+    (repo / "src/app.py").write_text("fixed\n")
+    git(repo, "commit", "-qam", "fix")
+    assert stop(repo)["decision"] == "block"
+
+
+def test_corrupt_state_files_do_not_break_the_hooks(repo, tmp_path):
+    concept(repo, "a")
+    start(repo)
+    for f in (tmp_path / "state" / "okf-wiki").rglob("*.json"):
+        f.write_text("{trunc")
+    r = hook(repo, "hook-session-start", {"session_id": "s1", "cwd": str(repo)})
+    assert r.stderr == "" and ctx(r).startswith("okf-wiki:digest v1")
+    (repo / "src/app.py").write_text("changed\n")
+    assert stop(repo)["decision"] == "block"

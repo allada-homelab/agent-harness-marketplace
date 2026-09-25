@@ -9,6 +9,7 @@ argument-hint: "[finding to capture, or: re-verify <id>]"
 
 Arguments, if any: $ARGUMENTS (on some harnesses they arrive as text after this skill
 instead). Read `../wiki/SKILL.md` first if you have not this session.
+Let `<okf>` be the absolute path of `../wiki/okf.py`.
 
 ## 1. Decide (you, not the scribe)
 
@@ -17,7 +18,8 @@ from the wiki contract. Drop anything a grep would find. Several findings are se
 concepts; one finding is one concept even if it touched many files.
 
 Check whether an existing concept already covers it: the session digest lists them, and
-`python3 <okf> new <type> <slug>` exits 3 with the near-duplicates. Updating beats creating.
+`python3 <okf> new <type> <slug> --check` exits 3 with the near-duplicates and writes
+nothing; never probe with plain `new`, which creates the file. Updating beats creating.
 
 ## 2. Brief
 

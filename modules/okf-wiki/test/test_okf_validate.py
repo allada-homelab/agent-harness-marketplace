@@ -119,3 +119,10 @@ def test_bom_and_crlf_files_load_cleanly(repo):
 def test_non_utf8_file_is_an_error_not_a_crash(repo):
     (repo / ".wiki" / "latin.md").write_bytes(b"---\ntype: gotcha\ntitle: caf\xe9\n---\n")
     assert any(e.startswith("latin: frontmatter:") for e in msgs(repo, "error"))
+
+
+def test_identifiers_and_env_lookups_are_not_secrets(repo):
+    body = GOOD_BODY + ('\n`token = os.getenv("GH_TOKEN")` and `secret: app-db-credentials` and '
+                        '`api_key=settings.OPENAI_KEY` and `password: ${DB_PASSWORD}`\n')
+    concept(repo, "code", body=body)
+    assert not any("secret" in e for e in msgs(repo, "error"))

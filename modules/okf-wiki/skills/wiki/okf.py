@@ -473,9 +473,9 @@ def parse_anchors(body: str) -> tuple[list[Anchor], list[str], bool]:
         if not s or s.startswith("<!--"):
             continue
         if m := ANCHOR_SYMBOL.match(s):
-            anchors.append(Anchor(m[1], "symbol", m[2]))
+            anchors.append(Anchor(os.path.normpath(m[1]), "symbol", m[2]))
         elif m := ANCHOR_COUNT.match(s):
-            anchors.append(Anchor(m[1], "count", m[2], int(m[3])))
+            anchors.append(Anchor(os.path.normpath(m[1]), "count", m[2], int(m[3])))
         elif ANCHOR_NONE.match(s):
             none = True
         else:
@@ -522,8 +522,11 @@ SECRETS = [(name, re.compile(rx)) for name, rx in (
     ("sk-style-api-key", r"\bsk-[A-Za-z0-9_\-]{20,}"),
     ("slack-token", r"\bxox[abposr]-[A-Za-z0-9-]{10,}"),
     ("private-key", r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    # A value with both letters and digits and no dots or calls: code like
+    # `token = os.getenv("GH_TOKEN")` and k8s names like `secret: app-db-credentials` are not secrets.
     ("credential-assignment",
-     r"(?i)\b(password|passwd|secret|token|api[_-]?key)\s*[:=]\s*['\"]?(?![<$({])[^\s'\"<>`]{8,}"),
+     r"(?i)\b(password|passwd|secret|token|api[_-]?key)\s*[:=]\s*['\"]?(?![<$({])"
+     r"(?=[^\s'\"<>`().]*\d)(?=[^\s'\"<>`().]*[a-z])[^\s'\"<>`().]{8,}(?![\w.(])"),
 )]
 FOOTNOTE_RE = re.compile(r"\[\^([\w-]+)\](?!:)")  # [\w-] so regex classes like [^\s] never match
 LINK_RE = re.compile(r"(\[[^\]]*\])\(([^)\s]+)\)")
@@ -872,6 +875,9 @@ def cmd_new(args) -> int:
             print(f"DUPLICATE? {d}")
         status("new", "duplicate", " ".join(dups))
         return 3
+    if args.check:
+        status("new", "available", args.slug)
+        return 0
     meta, body = template(args.type, args.title or "")
     c = Concept(args.slug, path, meta, body)
     write(c)
@@ -890,10 +896,20 @@ def cmd_stamp(args) -> int:
 
 # ---- freshness ----------------------------------------------------------------------
 
+def _names(out: str) -> set[str]:
+    return {line.strip().strip('"') for line in out.splitlines() if line.strip()}
+
+
 def freshness(root: Path, concepts: list[Concept], timeout: float = 10) -> dict[str, tuple[str, str]]:
-    """id -> (FRESH | STALE | UNANCHORED | UNVERIFIED, detail)."""
+    """id -> (FRESH | STALE | UNANCHORED | UNVERIFIED, detail).
+
+    STALE when a commit in `<verified commit>..HEAD` (ancestry, not dates: a merged branch's
+    older commits count) touches an anchor file, or one was edited after verification and not
+    yet committed. A commit that also touches the concept is the concept being written
+    alongside the code, not drift.
+    """
     res: dict[str, tuple[str, str]] = {}
-    pending: dict[str, tuple[set[str], dict]] = {}
+    pending: dict[str, tuple[set[str], dict, str]] = {}
     for c in concepts:
         if c.error:
             continue
@@ -905,44 +921,55 @@ def freshness(root: Path, concepts: list[Concept], timeout: float = 10) -> dict[
         elif not last or not last.get("commit"):
             res[c.id] = ("UNVERIFIED", "no verified commit")
         else:
-            pending[c.id] = (files, last)
+            pending[c.id] = (files, last, Path(os.path.relpath(c.path, root)).as_posix())
     if not pending:
         return res
     deadline = time.monotonic() + timeout
 
-    def run(*args):
-        return git(root, *args, timeout=max(0.05, deadline - time.monotonic()))
+    def run(*args, check: bool = True):
+        return git(root, *args, check=check, timeout=max(0.05, deadline - time.monotonic()))
 
-    dirty = set(run("diff", "HEAD", "--name-only").split())
-    dirty |= set(run("ls-files", "--others", "--exclude-standard").split())
-    order = {sha[:12]: i for i, sha in enumerate(run("rev-list", "HEAD").split())}
-    all_files = sorted({f for files, _ in pending.values() for f in files})
-    commits: list[tuple[str, str, set[str]]] = []
-    for line in run("log", "--format=@%H %cI", "--name-only", "HEAD", "--", *all_files).splitlines():
-        if line.startswith("@"):
-            sha, date = line[1:].split(" ", 1)
-            commits.append((sha, date, set()))
-        elif line.strip() and commits:
-            commits[-1][2].add(line.strip())
-    for cid, (files, last) in pending.items():
-        if files & dirty:
-            res[cid] = ("STALE", f"uncommitted change to {sorted(files & dirty)[0]}")
-            continue
-        pos = order.get(str(last["commit"])[:12])
-        at = parse_ts(str(last.get("at", "")))
-        state = ("FRESH", "")
-        for sha, date, touched in commits:
-            hit = files & touched
-            if not hit:
+    def touches(*rev_and_paths) -> list[tuple[str, str, set[str]]]:
+        commits: list[tuple[str, str, set[str]]] = []
+        for line in run("log", "--format=@%H %cI", "--name-only", *rev_and_paths).splitlines():
+            if line.startswith("@"):
+                sha, date = line[1:].split(" ", 1)
+                commits.append((sha, date, set()))
+            elif line.strip() and commits:
+                commits[-1][2].add(line.strip().strip('"'))
+        return commits
+
+    dirty = _names(run("diff", "HEAD", "--name-only")) | _names(run("ls-files", "--others", "--exclude-standard"))
+    groups: dict[str, list[str]] = {}
+    for cid, (_, last, _) in pending.items():
+        groups.setdefault(str(last["commit"]), []).append(cid)
+    for commit, cids in groups.items():
+        paths = sorted(set().union(*({*pending[c][0], pending[c][2]} for c in cids)))
+        r = subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", commit, "HEAD"],
+                           capture_output=True, timeout=max(0.05, deadline - time.monotonic()))
+        in_history = r.returncode == 0
+        # A commit that left history (rebase, squash) falls back to committer dates.
+        commits = touches(f"{commit}..HEAD", "--", *paths) if in_history else touches("HEAD", "--", *paths)
+        for cid in cids:
+            files, last, me = pending[cid]
+            at = parse_ts(str(last.get("at", "")))
+            # An uncommitted anchor file is drift only if edited after verification; `at` is
+            # whole seconds, so "after" means a later second than the stamp's.
+            edited = sorted(f for f in files & dirty if (root / f).exists() and (
+                at is None or (root / f).stat().st_mtime >= at.timestamp() + 1))
+            if edited:
+                res[cid] = ("STALE", f"uncommitted change to {edited[0]}")
                 continue
-            if pos is not None:
-                after = order[sha[:12]] < pos
-            else:  # the recorded commit left history (rebase): fall back to dates
-                after = at is None or datetime.fromisoformat(date) > at
-            if after:
+            state = ("FRESH", "")
+            for sha, date, touched in commits:
+                hit = files & touched
+                if not hit or me in touched:
+                    continue
+                if not in_history and at is not None and datetime.fromisoformat(date) <= at:
+                    continue
                 state = ("STALE", f"{sorted(hit)[0]} changed in {sha[:7]}")
                 break
-        res[cid] = state
+            res[cid] = state
     return res
 
 
@@ -1158,13 +1185,29 @@ def _reflect_file(root: Path) -> Path:
     return state_dir(root) / "reflect.json"
 
 
+def _load_state(f: Path) -> dict | None:
+    """None when absent or unreadable: a truncated state file must not disable the hooks."""
+    try:
+        st = json.loads(f.read_text())
+    except (OSError, ValueError):
+        return None
+    return st if isinstance(st, dict) else None
+
+
+def _save_state(f: Path, st: dict) -> None:
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_name(f"{f.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(st))
+    os.replace(tmp, f)
+
+
 def reflect_tick(root: Path) -> bool:
     """Count one session; True when a reflect run is due."""
     f = _reflect_file(root)
-    f.parent.mkdir(parents=True, exist_ok=True)
-    st = json.loads(f.read_text()) if f.exists() else {"last": None, "sessions": 0}
-    st["sessions"] += 1
-    f.write_text(json.dumps(st))
+    st = _load_state(f) or {}
+    st = {"last": st.get("last") if isinstance(st.get("last"), str) else None,
+          "sessions": (st.get("sessions") if isinstance(st.get("sessions"), int) else 0) + 1}
+    _save_state(f, st)
     if st["sessions"] >= REFLECT_SESSIONS:
         return True
     last = parse_ts(st["last"]) if st["last"] else None
@@ -1172,9 +1215,7 @@ def reflect_tick(root: Path) -> bool:
 
 
 def reflect_mark(root: Path) -> None:
-    f = _reflect_file(root)
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps({"last": now_utc(), "sessions": 0}))
+    _save_state(_reflect_file(root), {"last": now_utc(), "sessions": 0})
 
 
 def transcripts_db() -> Path:
@@ -1308,6 +1349,9 @@ def hook_session_start(ev: dict) -> str | None:
     except (OkfError, subprocess.TimeoutExpired):
         stale = None
     text = digest(concepts, findings, stale, reflect_tick(root))
+    sf = _session_file(root, ev)
+    if _load_state(sf) is None:  # a resume keeps the baseline its session started from
+        _save_state(sf, _tree_state(root))
     return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                               "additionalContext": text}})
 
@@ -1319,6 +1363,29 @@ def _porcelain_path(line: str) -> str:
     return p.strip().strip('"')
 
 
+def _session_file(root: Path, ev: dict) -> Path:
+    sid = re.sub(r"[^A-Za-z0-9_.-]", "_", str(ev.get("session_id") or "unknown"))
+    return state_dir(root) / f"session-{sid}.json"
+
+
+def _tree_state(root: Path) -> dict:
+    """HEAD plus a fingerprint of the non-wiki dirt; fp is "" for a clean tree."""
+    head = git(root, "rev-parse", "HEAD", check=False).strip()
+    porcelain = git(root, "status", "--porcelain", "--untracked-files=all", check=False)
+    parts = []
+    for line in sorted(porcelain.splitlines()):
+        path = _porcelain_path(line)
+        if not line.strip() or path.startswith(BUNDLE + "/"):
+            continue
+        try:  # size+mtime: editing a file that was already dirty keeps its porcelain line
+            s = (root / path).stat()
+            parts.append(f"{line}\0{s.st_size}\0{s.st_mtime_ns}")
+        except OSError:
+            parts.append(line)
+    fp = hashlib.sha1("\n".join(parts).encode()).hexdigest() if parts else ""
+    return {"head": head, "fp": fp, "dirty_nudged": False}
+
+
 def hook_stop(ev: dict) -> str | None:
     if ev.get("agent_id") or ev.get("stop_hook_active"):
         return None
@@ -1327,25 +1394,20 @@ def hook_stop(ev: dict) -> str | None:
         return None
     bundle = root / BUNDLE
     write_indexes(bundle, load(bundle))
-    head = git(root, "rev-parse", "HEAD", check=False).strip()
-    porcelain = git(root, "status", "--porcelain", "--untracked-files=all", check=False)
-    dirty = any(not _porcelain_path(line).startswith(BUNDLE + "/")
-                for line in porcelain.splitlines() if line.strip())
-    sdir = state_dir(root)
-    sdir.mkdir(parents=True, exist_ok=True)
+    now = _tree_state(root)
+    sf = _session_file(root, ev)
     cutoff = time.time() - STATE_TTL_DAYS * 86400
-    for old in sdir.glob("session-*.json"):
+    for old in sf.parent.glob("session-*.json"):
         if old.stat().st_mtime < cutoff:
             old.unlink(missing_ok=True)
-    sid = re.sub(r"[^A-Za-z0-9_.-]", "_", str(ev.get("session_id") or "unknown"))
-    sf = sdir / f"session-{sid}.json"
-    st = json.loads(sf.read_text()) if sf.exists() else {"head": head, "dirty_nudged": False}
+    # No baseline (no SessionStart seen, or it was unreadable): judge against a clean tree.
+    st = _load_state(sf) or {**now, "fp": ""}
     nudge = False
-    if head and head != st["head"]:
-        nudge, st["head"] = True, head
-    elif dirty and not st["dirty_nudged"]:
+    if now["head"] and now["head"] != st.get("head"):
+        nudge, st = True, {**now, "dirty_nudged": False}
+    elif now["fp"] and now["fp"] != st.get("fp") and not st.get("dirty_nudged"):
         nudge, st["dirty_nudged"] = True, True
-    sf.write_text(json.dumps(st))
+    _save_state(sf, st)
     return json.dumps({"decision": "block", "reason": NUDGE}) if nudge else None
 
 
@@ -1378,7 +1440,8 @@ def main(argv: list[str] | None = None) -> int:
     verb("fanout", cmd_fanout, __fanout={"type": int})
     verb("validate", cmd_validate, "ids")
     verb("index", cmd_index)
-    verb("new", cmd_new, "type", "slug", __title={}, __force={"action": "store_true"})
+    verb("new", cmd_new, "type", "slug", __title={}, __force={"action": "store_true"},
+         __check={"action": "store_true"})
     verb("stamp", cmd_stamp, "id", __by={"required": True},
          __generated={"action": "store_true"}, __verified={"action": "store_true"},
          __human_confirmed={"action": "store_true"})
@@ -1394,8 +1457,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.fn(args)
     except OkfError as e:
-        print(f"okf: {args.verb} refused {e}", file=sys.stderr)
-        status(args.verb, "refused", str(e))
+        msg = " ".join(str(e).split())  # one line: skills act on the last line (git errors wrap)
+        print(f"okf: {args.verb} refused {msg}", file=sys.stderr)
+        status(args.verb, "refused", msg)
         return 2
 
 
