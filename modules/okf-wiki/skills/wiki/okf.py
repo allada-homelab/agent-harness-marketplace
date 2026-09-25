@@ -399,6 +399,265 @@ def read_text(p: Path) -> str:
     return p.read_text(encoding="utf-8").lstrip("\ufeff").replace("\r\n", "\n")
 
 
+# ---- bundle -------------------------------------------------------------------------
+
+@dataclass
+class Concept:
+    id: str
+    path: Path
+    meta: dict = field(default_factory=dict)
+    body: str = ""
+    error: str | None = None
+
+
+def load(bundle: Path) -> list[Concept]:
+    concepts = []
+    for p in sorted(bundle.rglob("*.md")):
+        rel = p.relative_to(bundle)
+        if any(part.startswith(".") for part in rel.parts) or p.name in ("index.md", "log.md"):
+            continue
+        c = Concept(rel.with_suffix("").as_posix(), p)
+        try:
+            fm, c.body = split(read_text(p))
+            c.meta = parse_frontmatter(fm)
+        except (FrontmatterError, UnicodeDecodeError) as e:
+            c.error = str(e)
+        concepts.append(c)
+    return concepts
+
+
+def find(concepts: list[Concept], cid: str) -> Concept:
+    for c in concepts:
+        if c.id == cid:
+            return c
+    raise OkfError(f"no concept {cid!r}")
+
+
+def write(c: Concept) -> None:
+    c.path.parent.mkdir(parents=True, exist_ok=True)
+    c.path.write_text(render(c.meta, c.body), encoding="utf-8")
+
+
+# ---- anchors ------------------------------------------------------------------------
+
+@dataclass
+class Anchor:
+    path: str
+    kind: str  # "symbol" | "count"
+    needle: str
+    count: int = 0
+
+
+ANCHOR_SYMBOL = re.compile(r"^- `([^`]+)` :: `([^`]+)`\s*$")
+ANCHOR_COUNT = re.compile(r"^- `([^`]+)` :: /(.+)/ => (\d+)\s*$")
+ANCHOR_NONE = re.compile(r"^- none: \S")
+
+
+def verify_section(body: str) -> str | None:
+    m = re.search(r"^## Verify\s*$", body, re.M)
+    if not m:
+        return None
+    rest = body[m.end():]
+    nxt = re.search(r"^## ", rest, re.M)
+    return rest[: nxt.start()] if nxt else rest
+
+
+def parse_anchors(body: str) -> tuple[list[Anchor], list[str], bool]:
+    """(anchors, unparsed lines, has a `- none:` line)."""
+    sec = verify_section(body)
+    if sec is None:
+        return [], [], False
+    anchors, bad, none = [], [], False
+    for line in sec.splitlines():
+        s = line.strip()
+        if not s or s.startswith("<!--"):
+            continue
+        if m := ANCHOR_SYMBOL.match(s):
+            anchors.append(Anchor(m[1], "symbol", m[2]))
+        elif m := ANCHOR_COUNT.match(s):
+            anchors.append(Anchor(m[1], "count", m[2], int(m[3])))
+        elif ANCHOR_NONE.match(s):
+            none = True
+        else:
+            bad.append(s)
+    return anchors, bad, none
+
+
+def eval_anchor(root: Path, a: Anchor) -> tuple[bool, str]:
+    base = root.resolve()
+    p = (base / a.path).resolve()
+    if base not in p.parents:
+        return False, f"{a.path} is outside the repository"
+    if not p.is_file():
+        return False, f"{a.path} does not exist"
+    if p.stat().st_size > 2_000_000:
+        return False, f"{a.path} is too large to check"
+    text = p.read_text(encoding="utf-8", errors="replace")
+    if a.kind == "symbol":
+        ok = a.needle in text
+        return ok, f"`{a.needle}` {'found' if ok else 'not found'} in {a.path}"
+    try:
+        n = len(re.findall(a.needle, text, re.M))
+    except re.error as e:
+        return False, f"bad regex /{a.needle}/: {e}"
+    return n == a.count, f"/{a.needle}/ matched {n}x in {a.path} (expected {a.count})"
+
+
+# ---- validate -----------------------------------------------------------------------
+
+@dataclass
+class Finding:
+    level: str  # "error" | "warn"
+    id: str
+    msg: str
+
+    def __str__(self) -> str:
+        return f"{self.level.upper()} {self.id}: {self.msg}"
+
+
+SECRETS = [(name, re.compile(rx)) for name, rx in (
+    ("aws-access-key", r"\bAKIA[0-9A-Z]{16}\b"),
+    ("gcp-api-key", r"\bAIza[0-9A-Za-z_\-]{35}\b"),
+    ("github-token", r"\b(gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"),
+    ("sk-style-api-key", r"\bsk-[A-Za-z0-9_\-]{20,}"),
+    ("slack-token", r"\bxox[abposr]-[A-Za-z0-9-]{10,}"),
+    ("private-key", r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    ("credential-assignment",
+     r"(?i)\b(password|passwd|secret|token|api[_-]?key)\s*[:=]\s*['\"]?(?![<$({])[^\s'\"<>`]{8,}"),
+)]
+FOOTNOTE_RE = re.compile(r"\[\^([\w-]+)\](?!:)")  # [\w-] so regex classes like [^\s] never match
+LINK_RE = re.compile(r"(\[[^\]]*\])\(([^)\s]+)\)")
+URL_RE = re.compile(r"^[a-z][a-z0-9+.-]*:")
+
+
+def _strings(v):
+    if isinstance(v, dict):
+        for x in v.values():
+            yield from _strings(x)
+    elif isinstance(v, list):
+        for x in v:
+            yield from _strings(x)
+    else:
+        yield str(v)
+
+
+def _verified_entries(meta: dict) -> list:
+    v = meta.get("verified")
+    return [v] if isinstance(v, dict) else (v if isinstance(v, list) else [])
+
+
+def check_concept(c: Concept) -> list[Finding]:
+    out: list[Finding] = []
+
+    def err(m):
+        out.append(Finding("error", c.id, m))
+
+    def warn(m):
+        out.append(Finding("warn", c.id, m))
+
+    for seg in c.id.split("/"):
+        if not SEGMENT_RE.match(seg):
+            err(f"id segment {seg!r} must match [a-z0-9][a-z0-9-]*")
+    if c.error:
+        err(f"frontmatter: {c.error}")
+        return out
+    m = c.meta
+    texts = [c.body, *_strings(m)]
+    t = m.get("type")
+    if not isinstance(t, str) or not t.strip():
+        err("`type` is required")
+    elif t not in TYPES:
+        err(f"type {t!r} is not one of: {', '.join(TYPES)}")
+    if any("<fill:" in s for s in texts):
+        err("unfilled `<fill: ...>` placeholder from the template")
+    for name, rx in SECRETS:
+        if any(rx.search(s) for s in texts):
+            err(f"looks like a secret ({name}); never store credentials, not even as examples")
+    for key in ("title", "description"):
+        if not isinstance(m.get(key), str) or not m[key].strip():
+            warn(f"`{key}` is missing")
+    d = m.get("description")
+    if isinstance(d, str) and len(d) > DESC_MAX:
+        warn(f"description is {len(d)} chars; keep it one claim of at most {DESC_MAX}")
+    if "status" in m and m["status"] not in ("draft", "stable", "deprecated"):
+        warn(f"status {m['status']!r} is not draft, stable or deprecated")
+    gen = m.get("generated")
+    if gen is not None:
+        if not isinstance(gen, dict) or not gen.get("by"):
+            err("`generated` must be a mapping with `by`")
+        elif "at" in gen and not TS_RE.match(str(gen["at"])):
+            err(f"generated.at {gen['at']!r} is not an ISO 8601 datetime with an offset")
+    if "verified" in m:
+        entries = _verified_entries(m)
+        if not entries or not all(isinstance(e, dict) and e.get("by") for e in entries):
+            err("`verified` must be a mapping or a list of mappings, each with `by`")
+        else:
+            for e in entries:
+                if "at" in e and not TS_RE.match(str(e["at"])):
+                    err(f"verified.at {e['at']!r} is not an ISO 8601 datetime with an offset")
+    if "stale_after" in m and not TS_RE.match(str(m["stale_after"])):
+        err(f"stale_after {m['stale_after']!r} is not an ISO 8601 datetime with an offset")
+    src = m.get("sources", [])
+    ids: set[str] = set()
+    if not isinstance(src, list) or not all(isinstance(s, dict) and s.get("resource") for s in src):
+        err("`sources` must be a list of mappings, each with `resource`")
+    else:
+        ids = {s["id"] for s in src if "id" in s}
+    for fid in FOOTNOTE_RE.findall(c.body):
+        if fid not in ids:
+            warn(f"footnote [^{fid}] has no matching sources[].id")
+    anchors, bad, none = parse_anchors(c.body)
+    if verify_section(c.body) is None:
+        warn("no `## Verify` section")
+    elif not anchors and not none:
+        warn("`## Verify` has no anchor and no `- none: <reason>` line")
+    for line in bad:
+        warn(f"unparsed Verify line: {line}")
+    words = len(c.body.split())
+    if words > WORDS_MAX:
+        warn(f"body is {words} words; trim or split below {WORDS_MAX}")
+    for _, target in LINK_RE.findall(c.body):
+        if URL_RE.match(target) or target.startswith("#"):
+            continue
+        if target.startswith("/"):
+            warn(f"link {target} is bundle-absolute; use a relative ./ link")
+        elif not (c.path.parent / target.split("#", 1)[0]).exists():
+            warn(f"broken link {target}")
+    return out
+
+
+def check_bundle(bundle: Path, concepts: list[Concept]) -> list[Finding]:
+    findings = [f for c in concepts for f in check_concept(c)]
+    idx = bundle / "index.md"
+    if idx.exists():
+        try:
+            text = read_text(idx)
+            if text.startswith("---\n"):
+                fm = parse_frontmatter(split(text)[0])
+                if set(fm) - {"okf_version"}:
+                    findings.append(Finding("error", "index", "root index.md frontmatter may only carry okf_version"))
+        except FrontmatterError as e:
+            findings.append(Finding("error", "index", f"index.md: {e}"))
+    return findings
+
+
+def cmd_validate(args) -> int:
+    _, bundle = _root_and_bundle(args)
+    concepts = load(bundle)
+    if args.ids:
+        concepts = [find(concepts, i) for i in args.ids]
+    findings = check_bundle(bundle, concepts) if not args.ids else [f for c in concepts for f in check_concept(c)]
+    for f in findings:
+        print(f)
+    errors = sum(1 for f in findings if f.level == "error")
+    warns = len(findings) - errors
+    if errors:
+        status("validate", "errors", f"{errors} errors, {warns} warnings in {len(concepts)} concepts")
+        return 1
+    status("validate", "ok", f"{len(concepts)} concepts, {warns} warnings")
+    return 0
+
+
 # ---- CLI ----------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
@@ -415,6 +674,7 @@ def main(argv: list[str] | None = None) -> int:
         s.set_defaults(fn=fn)
 
     verb("fanout", cmd_fanout, __fanout={"type": int})
+    verb("validate", cmd_validate, "ids")
     args = p.parse_args(argv)
     try:
         return args.fn(args)
