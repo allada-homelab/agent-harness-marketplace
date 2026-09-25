@@ -195,7 +195,7 @@ Stdlib only; the final stdout line is a stable status line (pr-flow convention).
 }}
 ```
 
-- Budget: <50 ms with no `.wiki/` (hooks run in every repo on the fleet); <500 ms at 250
+- Budget: <100 ms with no `.wiki/` (hooks run in every repo on the fleet; Python start-up alone is ~40 ms); <500 ms at 250
   concepts. Both tested.
 - Never block work: internal failures exit 0 with one stderr line
   `okf-wiki: <what> — <fix>`. Exit 2 is never used.

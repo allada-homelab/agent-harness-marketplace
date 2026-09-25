@@ -1,11 +1,11 @@
-# wiki module — planning notes
+# wiki module — planning notes (superseded)
 
-Status: **planning, nothing shippable yet.** This directory holds research
-for a content-only module that creates, recalls, updates and maintains an
-Open Knowledge Format (OKF) v0.2 knowledge bundle for a directory, usually a
-git repo, from Claude Code, pi and dsh.
-
-Greenfield. No prior implementation is being ported.
+Superseded by `docs/superpowers/specs/2026-09-25-okf-wiki-design.md`, which the
+`okf-wiki` module implements. Kept as the OKF research record: the spec summary,
+the upstream reference implementation review and the vendored `acme_retail`
+sample that `modules/okf-wiki/test/test_okf_frontmatter.py` parses. The
+decision log below predates the design and its "no hooks, no scripts" premise was
+wrong: modules may ship `hooks/hooks.json` with command scripts.
 
 | File | What |
 |---|---|

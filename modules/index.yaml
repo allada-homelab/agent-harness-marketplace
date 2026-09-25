@@ -345,6 +345,7 @@ modules:
   kinds:
   - skills
   - dsh-plugin
+  - hooks
   harness:
   - claude
   - pi
@@ -352,7 +353,72 @@ modules:
   description: 'A per-repo, self-healing agent wiki in Open Knowledge Format: a session-start digest,
     background capture and re-verification on cheap models, and a reflect loop that measures whether it
     helps.'
-  skills: []
+  skills:
+  - name: capture
+    path: modules/okf-wiki/skills/capture/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: true
+    summary: Save a durable, non-obvious finding to this repo's .wiki/ — or re-verify a stale concept
+      — by briefing the cheap okf-wiki scribe agent in the background and printing a one-line receipt.
+  - name: ingest
+    path: modules/okf-wiki/skills/ingest/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: true
+    summary: Bootstrap or grow this repo's .wiki/ from its history — fix and revert commits, PR descriptions,
+      the gotcha sections of CLAUDE.md and docs, and existing OKF or llm-wiki bundles — by fanning out
+      okf-wiki explorer agents and landing the concepts that pass the capture bar.
+  - name: recall
+    path: modules/okf-wiki/skills/recall/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: true
+    summary: Answer a question from this repo's .wiki/ with cited, freshness-checked concepts, using the
+      cheap okf-wiki reader agent in an isolated context.
+  - name: reflect
+    path: modules/okf-wiki/skills/reflect/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: true
+    summary: Measure whether this repo's .wiki/ and its prompting actually help — consult rate, hits versus
+      gaps, rediscovery of things the wiki already said, capture precision and misses — from the agent-transcripts
+      index and git, then fix the wiki's content and draft evidence-backed proposals for the okf-wiki
+      module's prompts.
+  - name: tend
+    path: modules/okf-wiki/skills/tend/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: true
+    summary: Health report for this repo's .wiki/ — validation errors and warnings, stale, unanchored
+      and unverified concepts, orphans nothing links to, and likely duplicates — with an offer to heal
+      the stale ones in one batch.
+  - name: wiki
+    path: modules/okf-wiki/skills/wiki/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: false
+    summary: The contract for this repo's agent wiki at .wiki/ (Open Knowledge Format v0.2) — what belongs
+      in it, the six concept types and their templates, the frontmatter and Verify-anchor rules, the okf.py
+      script that does every deterministic step, and the receipt lines.
 - name: plan-for-dummies
   version: 0.3.1
   kinds:
