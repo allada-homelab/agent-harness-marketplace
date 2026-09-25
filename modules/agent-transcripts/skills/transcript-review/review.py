@@ -29,6 +29,13 @@ SKILL = "transcript-review"
 QUOTE_MAX = 200
 SHORT_USER = 300  # a correction is a short turn; a long one is a new instruction
 CONFIDENCES = ("low", "medium", "high")
+# A session's final report is what an unverified_claim is judged against, and a subagent
+# delivers it as tool-call arguments — the 60-char args cap turned justified reports into
+# "claims with no evidence". It gets its own cap and is always kept by the budget.
+FINAL_REPORT_TOOLS = ("SubagentHandback",)
+FINAL_REPORT_CHARS = 6000
+GREP_LIMIT = 20
+GREP_CONTEXT = 160
 
 # One line each: this is what the model answers, and the whole closed list must be answered.
 RUBRIC = {
@@ -382,6 +389,7 @@ class Unit:
         self.key = key
         self.ord = ord_
         self.repeats = 1
+        self.final = False  # part of the final report: fit_budget always keeps it
 
     @property
     def text(self) -> str:
@@ -413,12 +421,27 @@ def build_units(conn, session, *, assistant_chars, args_chars, result_chars, use
         (cap, session_id),
     ).fetchall()
     calls: dict[int, list] = {}
-    for message_id, name, arguments, is_error in conn.execute(
-        "SELECT t.message_id, t.name, substr(t.arguments, 1, ?), t.is_error FROM tool_calls t"
-        " JOIN messages m ON m.id = t.message_id WHERE m.session_id = ? ORDER BY t.id",
+    for call_id, message_id, name, arguments, is_error in conn.execute(
+        "SELECT t.id, t.message_id, t.name, substr(t.arguments, 1, ?), t.is_error"
+        " FROM tool_calls t JOIN messages m ON m.id = t.message_id WHERE m.session_id = ?"
+        " ORDER BY t.id",
         (args_chars + 1, session_id),
     ):
-        calls.setdefault(message_id, []).append((name, arguments, is_error))
+        calls.setdefault(message_id, []).append((call_id, name, arguments, is_error))
+
+    # The final report, uncapped by the per-unit limits: the last assistant text and the
+    # last final-report tool call's arguments.
+    final_text = conn.execute(
+        "SELECT id, substr(text, 1, ?) FROM messages WHERE session_id = ? AND role = 'assistant'"
+        " AND trim(coalesce(text, '')) != '' ORDER BY ord DESC, id DESC LIMIT 1",
+        (FINAL_REPORT_CHARS + 1, session_id),
+    ).fetchone()
+    final_call = conn.execute(
+        "SELECT t.id, substr(t.arguments, 1, ?) FROM tool_calls t"
+        " JOIN messages m ON m.id = t.message_id WHERE m.session_id = ? AND t.name IN (%s)"
+        " ORDER BY m.ord DESC, t.id DESC LIMIT 1" % ",".join("?" for _ in FINAL_REPORT_TOOLS),
+        (FINAL_REPORT_CHARS + 1, session_id, *FINAL_REPORT_TOOLS),
+    ).fetchone()
 
     units: list[Unit] = []
     stripped_blocks = 0
@@ -431,17 +454,26 @@ def build_units(conn, session, *, assistant_chars, args_chars, result_chars, use
             units.append(Unit(user_lines(ord_, clean, user_chars), ord_=ord_))
         elif role == "assistant":
             lines = []
-            if text.strip():
+            final = False
+            if final_text and final_text[0] == message_id:
+                text, final = final_text[1] or "", True
+                lines.append(f"[{ord_}] ASSISTANT {one_line(text, FINAL_REPORT_CHARS)}")
+            elif text.strip():
                 lines.append(f"[{ord_}] ASSISTANT {one_line(text, assistant_chars)}")
             key = None
-            for name, arguments, is_error in calls.get(message_id, []):
-                snippet = one_line(arguments or "", args_chars)
+            for call_id, name, arguments, is_error in calls.get(message_id, []):
+                if final_call and final_call[0] == call_id:
+                    snippet, final = one_line(final_call[1] or "", FINAL_REPORT_CHARS), True
+                else:
+                    snippet = one_line(arguments or "", args_chars)
                 err = " ERR" if is_error else ""
                 lines.append(f"[{ord_}] CALL {name} {snippet}{err}")
                 key = (name, bool(is_error), snippet)
             if not lines:
                 continue
-            units.append(Unit(lines, key=key if len(lines) == 1 else None, ord_=ord_))
+            unit = Unit(lines, key=key if len(lines) == 1 and not final else None, ord_=ord_)
+            unit.final = final
+            units.append(unit)
         elif role == "tool_result":
             units.append(Unit([f"[{ord_}] RESULT {one_line(text, result_chars)}"], ord_=ord_))
         else:
@@ -554,16 +586,17 @@ def fit_budget(units: list[Unit], budget: int, anchors=()) -> list[int]:
     """Choose the unit indices to show: the head, the tail and a window around each anchor.
 
     Returns the kept indices in order; the caller marks every gap between them. The first
-    unit is the opening user turn — the one thing a reviewer cannot judge the session
-    without — so it is kept even over budget.
+    unit is the opening user turn and the final report is what the session claims — the
+    two things a reviewer cannot judge it without — so both are kept even over budget.
     """
     if not units:
         return []
     if sum(u.size() for u in units) <= budget:
         return list(range(len(units)))
     reserve = len(ELISION) + 8
-    keep = {0}
-    used = units[0].size()
+    final = {i for i, u in enumerate(units) if u.final and i != 0}
+    keep = {0} | final
+    used = units[0].size() + sum(units[i].size() + reserve for i in final)
     for anchor in anchors:
         window = [
             i for i, u in enumerate(units)
@@ -636,6 +669,61 @@ def cmd_view(args) -> int:
         f"\nview: {len(out)} chars, {sum(units[i].messages for i in kept)} messages shown, "
         f"{stripped_blocks} stripped blocks"
     )
+    return 0
+
+
+# --------------------------------------------------------------------- grep
+
+
+def cmd_grep(args) -> int:
+    """Search one whole session — elided messages included — for a claim's evidence.
+
+    Prints `[ord] ROLE snippet`, one line per matching message or call, capped. It exists
+    so an unverified_claim can be checked against what the view elided, not to read the
+    session: the snippets are as short as the view's own lines.
+    """
+    dest = resolve_dest(args.dest)
+    conn = connect(dest)
+    session = resolve_session(conn, args.session)
+    session_id, harness = session[0], session[1]
+    try:
+        pattern = re.compile(args.pattern, re.I)
+    except re.error as exc:
+        print(f"bad pattern {args.pattern!r}: {exc}", file=sys.stderr)
+        return 2
+
+    def fields():
+        for message_id, ord_, role, text in conn.execute(
+            "SELECT id, ord, role, text FROM messages WHERE session_id = ? ORDER BY ord, id",
+            (session_id,),
+        ):
+            if role == "user":  # the same stripping as the view and the quote check
+                text = strip_boilerplate(text or "", harness)[0]
+            yield ord_, role.upper(), text or ""
+            for name, arguments in conn.execute(
+                "SELECT name, arguments FROM tool_calls WHERE message_id = ? ORDER BY id",
+                (message_id,),
+            ):
+                yield ord_, f"CALL {name}", arguments or ""
+
+    shown = total = 0
+    for ord_, label, text in fields():
+        flat = normalize(text)
+        match = pattern.search(flat)
+        if not match:
+            continue
+        total += 1
+        if shown >= args.limit:
+            continue
+        start = max(0, match.start() - args.context_chars // 2)
+        snippet = flat[start:start + args.context_chars]
+        print(f"[{ord_}] {label} {'…' if start else ''}{snippet}"
+              f"{'…' if start + args.context_chars < len(flat) else ''}")
+        shown += 1
+    if not total:
+        print("no matches")
+    elif total > shown:
+        print(f"... {total - shown} more matches not shown (raise --limit or narrow the pattern)")
     return 0
 
 
@@ -1071,6 +1159,15 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--args-chars", type=int, default=60)
     v.add_argument("--result-chars", type=int, default=160)
     v.set_defaults(func=cmd_view)
+
+    g = sub.add_parser("grep", help="search one whole session, elided messages included")
+    g.add_argument("session", help="native id or numeric id")
+    g.add_argument("pattern", help="regular expression, case-insensitive")
+    g.add_argument("--limit", type=int, default=GREP_LIMIT,
+                   help=f"max lines printed (default {GREP_LIMIT})")
+    g.add_argument("--context-chars", type=int, default=GREP_CONTEXT,
+                   help=f"characters shown around each match (default {GREP_CONTEXT})")
+    g.set_defaults(func=cmd_grep)
 
     r = sub.add_parser("record", help="validate a verdict and store it in findings.db")
     r.add_argument("session", nargs="?", help="native id or numeric id")

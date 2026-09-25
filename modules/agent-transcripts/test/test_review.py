@@ -365,6 +365,101 @@ def test_view_budget_elides_the_middle_and_keeps_the_first_user_message(index, t
     assert len(body) < 1500
 
 
+def test_view_renders_the_final_report_in_full(index, tmp_path, capsys):
+    s = index.session("v6")
+    index.user(s, "audit the leftover ids")
+    index.call(s, "Read", '{"path": "' + "x" * 200 + '"}', result="ok")
+    report = "Four ids remain: " + " ".join("id%d is expected because reason %d." % (i, i)
+                                             for i in range(20)) + " END-OF-REPORT"
+    ord_ = index.call(s, "SubagentHandback", json.dumps({"message": report}), result="sent")
+    index.close()
+
+    out = view(tmp_path, capsys, "v6")
+    assert "[%d] CALL SubagentHandback" % ord_ in out
+    assert "END-OF-REPORT" in out            # far past the 60-char args cap
+    assert "id19 is expected because reason 19." in out
+    assert '"' + "x" * 100 not in out           # other calls keep their cap
+
+
+def test_view_renders_the_final_assistant_text_in_full_up_to_its_cap(index, tmp_path, capsys):
+    s = index.session("v7")
+    index.user(s, "summarize")
+    index.assistant(s, "an early reply " * 60)
+    index.assistant(s, "Summary: " + "verified by the suite. " * 40 + "TAIL-MARK")
+    huge = index.session("v8")
+    index.user(huge, "summarize")
+    index.assistant(huge, "y" * (rv.FINAL_REPORT_CHARS + 500))
+    index.close()
+
+    out = view(tmp_path, capsys, "v7")
+    assert "TAIL-MARK" in out
+    assert "an early reply " * 40 not in out    # only the last one is exempt
+    out = view(tmp_path, capsys, "v8")
+    assert "y" * rv.FINAL_REPORT_CHARS + "…" in out
+    assert "y" * (rv.FINAL_REPORT_CHARS + 1) not in out
+
+
+def test_view_budget_always_keeps_the_final_report(index, tmp_path, capsys):
+    s = index.session("v9")
+    index.user(s, "FIRST: run the gate")
+    for i in range(200):
+        index.call(s, "Read", '{"path": "p%d"}' % i, result="body %d" % i)
+    report = "gate result: " + "113 match, 0 discrepancy. " * 40 + "REPORT-END"
+    ord_ = index.call(s, "SubagentHandback", json.dumps({"message": report}), result="sent")
+    index.close()
+
+    out = view(tmp_path, capsys, "v9", "--budget", "1200")
+    assert "FIRST: run the gate" in out
+    assert "elided" in out
+    assert "[%d] CALL SubagentHandback" % ord_ in out and "REPORT-END" in out
+
+
+# ----------------------------------------------------------------------- grep
+
+
+def grep(tmp_path, capsys, session, *extra):
+    code = rv.main(["--dest", str(tmp_path), "grep", session, *extra])
+    return code, capsys.readouterr()
+
+
+def test_grep_finds_evidence_the_view_elided(index, tmp_path, capsys):
+    s = index.session("g1")
+    index.user(s, "<system-reminder>\nsecret conclusion\n</system-reminder>\nrun the check")
+    for i in range(100):
+        index.call(s, "Read", '{"path": "p%d"}' % i, result="body %d" % i)
+    hit = index.call(s, "Bash", '{"command": "verify --all"}',
+                     result="verdicts: 113 match, 0 discrepancy")
+    for i in range(100):
+        index.call(s, "Read", '{"path": "q%d"}' % i, result="tail %d" % i)
+    index.assistant(s, "all verified")
+    index.close()
+
+    assert "113 match" not in view(tmp_path, capsys, "g1", "--budget", "1200")
+    code, cap = grep(tmp_path, capsys, "g1", r"113 MATCH")
+    assert code == 0
+    assert cap.out.splitlines() == ["[%d] TOOL_RESULT verdicts: 113 match, 0 discrepancy"
+                                    % (hit + 1)]
+    code, cap = grep(tmp_path, capsys, "g1", "verify --all")
+    assert cap.out.startswith("[%d] CALL Bash " % hit)
+    # stripped boilerplate is no more searchable than it is quotable
+    assert grep(tmp_path, capsys, "g1", "secret conclusion")[1].out.strip() == "no matches"
+
+
+def test_grep_caps_its_output_and_rejects_a_bad_pattern(index, tmp_path, capsys):
+    s = index.session("g2")
+    for i in range(30):
+        index.assistant(s, "step %d done " % i + "z" * 1000)
+    index.close()
+
+    code, cap = grep(tmp_path, capsys, "g2", "done", "--limit", "5")
+    lines = cap.out.splitlines()
+    assert code == 0 and len(lines) == 6
+    assert lines[-1].startswith("... 25 more matches not shown")
+    assert all(len(line) < rv.GREP_CONTEXT + 40 for line in lines[:5])
+    code, cap = grep(tmp_path, capsys, "g2", "(unclosed")
+    assert code == 2 and "bad pattern" in cap.err
+
+
 # --------------------------------------------------------------------- record
 
 
