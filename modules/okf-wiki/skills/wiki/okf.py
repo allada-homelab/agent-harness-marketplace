@@ -778,6 +778,116 @@ def cmd_index(args) -> int:
     return 0
 
 
+# ---- scaffolding and stamping -------------------------------------------------------
+
+TEMPLATES = {
+    "gotcha": ["Symptom", "What fails", "What works", "Why"],
+    "decision": ["Decision", "Why", "Rejected alternatives", "Revisit when"],
+    "runbook": ["When", "Steps", "Check it worked"],
+    "convention": ["Rule", "Why", "Example"],
+    "architecture": ["Shape", "Why this way", "Boundaries"],
+    "reference": ["What", "Where", "Caveats"],
+}
+
+
+def template(ctype: str, title: str) -> tuple[dict, str]:
+    meta = {
+        "type": ctype,
+        "title": title or "<fill: short title>",
+        "description": "<fill: one-sentence claim plus its reason, at most 200 chars>",
+        "tags": [],
+        "sources": [],
+    }
+    body = [f"\n# {meta['title']}\n"]
+    for section in TEMPLATES[ctype]:
+        body.append(f"## {section}\n\n<fill: {section.lower()}>\n")
+    body.append("## Verify\n\n- `<fill: repo-relative path>` :: `<fill: symbol or literal text>`\n")
+    return meta, "\n".join(body)
+
+
+def _tokens(s: str) -> set[str]:
+    return {w for w in re.split(r"[^a-z0-9]+", s.lower()) if len(w) > 2}
+
+
+def near_duplicates(concepts: list[Concept], slug: str, title: str = "") -> list[str]:
+    q = _tokens(slug.replace("-", " ") + " " + title)
+    hits = []
+    for c in concepts:
+        if c.error:
+            continue
+        tags = c.meta.get("tags") if isinstance(c.meta.get("tags"), list) else []
+        t = _tokens(c.id.split("/")[-1].replace("-", " ") + " " + str(c.meta.get("title", ""))
+                    + " " + " ".join(map(str, tags)))
+        common = q & t
+        if q and t and len(common) >= 2 and len(common) / min(len(q), len(t)) >= 0.6:
+            hits.append(c.id)
+    return hits
+
+
+def head_commit(root: Path) -> str:
+    return git(root, "rev-parse", "HEAD").strip()[:12]
+
+
+def stamp(root: Path, c: Concept, by: str, generated: bool, verified: bool,
+          human_confirmed: bool) -> None:
+    if not (generated or verified):
+        raise OkfError("pass --generated, --verified, or both")
+    if not ACTOR_RE.match(by):
+        raise OkfError(f"actor {by!r} must be okf-wiki/<model>, human:<id> or process:<id>")
+    if by.startswith("human:") and not human_confirmed:
+        raise OkfError("a human: actor needs --human-confirmed, given only after the user confirmed")
+    errors = [f for f in check_concept(c) if f.level == "error"]
+    if errors:
+        raise OkfError("fix validate errors first: " + "; ".join(f.msg for f in errors))
+    at = now_utc()
+    if verified:
+        anchors, _, none = parse_anchors(c.body)
+        if not anchors and not none:
+            raise OkfError("no Verify anchor to confirm; add one or a `- none: <reason>` line")
+        broken = [msg for ok, msg in (eval_anchor(root, a) for a in anchors) if not ok]
+        if broken:
+            raise OkfError("anchors do not hold: " + "; ".join(broken))
+        entries = [e for e in _verified_entries(c.meta) if isinstance(e, dict)]
+        entries.append({"by": by, "at": at, "commit": head_commit(root)})
+        c.meta["verified"] = entries[-VERIFIED_KEEP:]
+    if generated:
+        c.meta["generated"] = {"by": by, "at": at}
+    write(c)
+
+
+def cmd_new(args) -> int:
+    if args.type not in TYPES:
+        raise OkfError(f"type must be one of: {', '.join(TYPES)}")
+    for seg in args.slug.split("/"):
+        if not SEGMENT_RE.match(seg):
+            raise OkfError(f"slug segment {seg!r} must match [a-z0-9][a-z0-9-]*")
+    _, bundle = _root_and_bundle(args, need_bundle=False)
+    concepts = load(bundle) if bundle.is_dir() else []
+    path = bundle / f"{args.slug}.md"
+    if path.exists():
+        raise OkfError(f"{args.slug} already exists; edit it instead")
+    dups = [] if args.force else near_duplicates(concepts, args.slug, args.title or "")
+    if dups:
+        for d in dups:
+            print(f"DUPLICATE? {d}")
+        status("new", "duplicate", " ".join(dups))
+        return 3
+    meta, body = template(args.type, args.title or "")
+    c = Concept(args.slug, path, meta, body)
+    write(c)
+    write_indexes(bundle, load(bundle))
+    status("new", "created", f"{args.slug} {path}")
+    return 0
+
+
+def cmd_stamp(args) -> int:
+    root, bundle = _root_and_bundle(args)
+    c = find(load(bundle), args.id)
+    stamp(root, c, args.by, args.generated, args.verified, args.human_confirmed)
+    status("stamp", "ok", args.id)
+    return 0
+
+
 # ---- CLI ----------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
@@ -796,6 +906,10 @@ def main(argv: list[str] | None = None) -> int:
     verb("fanout", cmd_fanout, __fanout={"type": int})
     verb("validate", cmd_validate, "ids")
     verb("index", cmd_index)
+    verb("new", cmd_new, "type", "slug", __title={}, __force={"action": "store_true"})
+    verb("stamp", cmd_stamp, "id", __by={"required": True},
+         __generated={"action": "store_true"}, __verified={"action": "store_true"},
+         __human_confirmed={"action": "store_true"})
     args = p.parse_args(argv)
     try:
         return args.fn(args)
