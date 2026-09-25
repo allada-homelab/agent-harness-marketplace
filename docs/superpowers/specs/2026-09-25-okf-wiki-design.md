@@ -52,6 +52,7 @@ everything deterministic; models do judgment only.
 | 14 | `log.md` | Not written; `git log -- .wiki/` is the changelog | Every PR prepending to one file guarantees merge conflicts. OKF makes it optional. |
 | 15 | Self-improvement | `reflect`: agent-transcripts + git evidence → scorecard → content fixes auto-applied, prompt fixes as PR proposals | Transcripts are the only place rediscovery is visible; a self-editing fleet-wide prompt is too high-blast. |
 | 16 | Replay eval | v1.1 | Needs real rediscovery cases to build its question set from. |
+| 17 | Fan-out | Parallel subagents, default 4, set per call (`--fanout N`) or per machine (`OKF_WIKI_FANOUT`) | Width is a property of the machine's model capacity (local LLM slots, rate limits), not of the repo, so it is not committed config. |
 
 ## Module layout
 
@@ -155,6 +156,7 @@ Stdlib only; the final stdout line is a stable status line (pr-flow convention).
 | `migrate <path>` | Mechanical conversion of an llm-wiki/OKF bundle: type case, anchor syntax, placeholder actors, key order |
 | `gate` | Stop-hook state machine (below) |
 | `stats` | Deterministic half of the `reflect` scorecard (below) |
+| `fanout [--fanout N]` | Resolve the fan-out width: flag, else `OKF_WIKI_FANOUT`, else 4; error outside 1-16 |
 
 ## Flows
 
@@ -174,7 +176,7 @@ Stdlib only; the final stdout line is a stable status line (pr-flow convention).
    <id>": still true → `anchor` + `stamp`; changed → edit + `stamp`; obsolete →
    `status: deprecated` with reason. Receipt `wiki: ~healed/<id>`.
 4. **Ingest (on request).** Main slices sources (fix/revert commits by date window, PR
-   bodies, docs/CLAUDE.md gotcha sections, existing bundles via `migrate`) → ≤4 parallel
+   bodies, docs/CLAUDE.md gotcha sections, existing bundles via `migrate`) → up to `fanout` parallel
    `explorer` agents → proposed briefs → main dedupes and applies the capture bar → scribe
    lands each → one summary receipt.
 5. **Tend (on request).** `validate` + `fresh` over the bundle, orphans, near-duplicates →
@@ -252,6 +254,25 @@ Evidence is the agent-transcripts index plus git; no new telemetry store.
 `reflect` needs the transcript index: agent-transcripts is off on Claude in the fleet today
 (`modules.tsv`), so it runs from pi/dsh or the row is switched on.
 
+## Fan-out
+
+Every skill that has independent units of work dispatches them as parallel subagents, at
+most `fanout` in flight, then merges in the main agent.
+
+- **Width:** `--fanout N` on the skill invocation, else `OKF_WIKI_FANOUT`, else 4. `okf.py`
+  resolves it (`okf.py fanout [--fanout N]`, validated 1-16) so every skill reads it the
+  same way; an invalid value is an error, never silently clamped.
+- **Where:** `ingest` (one `explorer` per history slice), `tend` heal batch and multi-finding
+  `capture` (one `scribe` per concept), `reflect` (one `auditor` per excerpt sample).
+  `recall` stays single: one forked agent reads a handful of concepts, and splitting it
+  would add a merge step for no gain at v1 bundle sizes.
+- **Safety:** main assigns each parallel scribe a disjoint set of concept ids, so no two
+  write the same file; `index.md` is rebuilt by the hook afterwards, so parallel writers
+  never touch it. More units than `fanout` → dispatched in waves.
+- **Harness caps win:** pi's bridge runs at most 4 children in flight and queues the rest;
+  Claude and dsh use the provider's limits. The effective width is `min(fanout, cap)`, and
+  a receipt reports it when capped (`wiki: fanout 8 → 4 (pi cap)`).
+
 ## Harness fidelity
 
 | Capability | Claude | pi | dsh |
@@ -261,6 +282,7 @@ Evidence is the agent-transcripts index plus git; no new telemetry store.
 | Agent dispatch | native | after bridge activation on `.wiki/` | native |
 | Background scribe | yes | no — foreground | if the provider supports continuation (to verify) |
 | Cheap models | native aliases | alias → local fast/large models | inherits parent until `modelRoutes` configured |
+| Fan-out width | `fanout` | `min(fanout, 4)` | `fanout`, provider limits |
 
 ## Paired dotfiles changes (land first)
 
@@ -306,6 +328,8 @@ Evidence is the agent-transcripts index plus git; no new telemetry store.
 - The child-session marker mechanism on each harness (Claude: is `agent_id`/equivalent on
   Stop stdin sufficient?).
 - Whether `transcript-query` exposes enough (message text search, session cwd) for `stats`.
+- Whether a skill invocation argument (`--fanout N`) reaches the skill body identically on all
+  three harnesses (`$ARGUMENTS` handling).
 
 ## Out of scope (v1)
 
