@@ -1277,6 +1277,89 @@ def cmd_stats(args) -> int:
     return 0
 
 
+# ---- hooks --------------------------------------------------------------------------
+
+NUDGE = ("okf-wiki: before you finish, did this work teach something durable and non-obvious "
+         "(a gotcha, decision, runbook step, convention, architecture or reference fact that "
+         "grepping the code will not reveal)? If yes, use the okf-wiki capture skill, which "
+         "briefs the scribe in the background, and print its receipt. If not, finish normally; "
+         "no reply about the wiki is needed.")
+
+
+def _event_root(ev: dict) -> Path | None:
+    start = ev.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    root = repo_root(Path(start))
+    return root if root and (root / BUNDLE).is_dir() else None
+
+
+def hook_session_start(ev: dict) -> str | None:
+    if ev.get("agent_id"):
+        return None
+    root = _event_root(ev)
+    if root is None:
+        return None
+    bundle = root / BUNDLE
+    concepts = load(bundle)
+    write_indexes(bundle, concepts)
+    findings = check_bundle(bundle, concepts)
+    try:
+        fresh = freshness(root, [c for c in concepts if not c.error], timeout=0.3)
+        stale = {cid for cid, (st, _) in fresh.items() if st == "STALE"}
+    except (OkfError, subprocess.TimeoutExpired):
+        stale = None
+    text = digest(concepts, findings, stale, reflect_tick(root))
+    return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                              "additionalContext": text}})
+
+
+def _porcelain_path(line: str) -> str:
+    p = line[3:]
+    if " -> " in p:
+        p = p.split(" -> ", 1)[1]
+    return p.strip().strip('"')
+
+
+def hook_stop(ev: dict) -> str | None:
+    if ev.get("agent_id") or ev.get("stop_hook_active"):
+        return None
+    root = _event_root(ev)
+    if root is None:
+        return None
+    bundle = root / BUNDLE
+    write_indexes(bundle, load(bundle))
+    head = git(root, "rev-parse", "HEAD", check=False).strip()
+    porcelain = git(root, "status", "--porcelain", "--untracked-files=all", check=False)
+    dirty = any(not _porcelain_path(line).startswith(BUNDLE + "/")
+                for line in porcelain.splitlines() if line.strip())
+    sdir = state_dir(root)
+    sdir.mkdir(parents=True, exist_ok=True)
+    cutoff = time.time() - STATE_TTL_DAYS * 86400
+    for old in sdir.glob("session-*.json"):
+        if old.stat().st_mtime < cutoff:
+            old.unlink(missing_ok=True)
+    sid = re.sub(r"[^A-Za-z0-9_.-]", "_", str(ev.get("session_id") or "unknown"))
+    sf = sdir / f"session-{sid}.json"
+    st = json.loads(sf.read_text()) if sf.exists() else {"head": head, "dirty_nudged": False}
+    nudge = False
+    if head and head != st["head"]:
+        nudge, st["head"] = True, head
+    elif dirty and not st["dirty_nudged"]:
+        nudge, st["dirty_nudged"] = True, True
+    sf.write_text(json.dumps(st))
+    return json.dumps({"decision": "block", "reason": NUDGE}) if nudge else None
+
+
+def run_hook(fn) -> int:
+    try:
+        raw = sys.stdin.read()
+        out = fn(json.loads(raw) if raw.strip() else {})
+        if out:
+            print(out)
+    except Exception as e:  # a hook must never wedge the session: fail open, loudly
+        print(f"okf-wiki: {fn.__name__} failed: {e} (run okf.py validate in this repo)", file=sys.stderr)
+    return 0
+
+
 # ---- CLI ----------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
@@ -1305,6 +1388,8 @@ def main(argv: list[str] | None = None) -> int:
     verb("mv", cmd_mv, "old", "new")
     verb("migrate", cmd_migrate, "source", __dry_run={"action": "store_true"})
     verb("stats", cmd_stats, __days={"type": int, "default": 60}, __mark={"action": "store_true"})
+    verb("hook-session-start", lambda _: run_hook(hook_session_start))
+    verb("hook-stop", lambda _: run_hook(hook_stop))
     args = p.parse_args(argv)
     try:
         return args.fn(args)
