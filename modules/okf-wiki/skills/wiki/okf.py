@@ -989,6 +989,164 @@ def cmd_digest(args) -> int:
     return 0
 
 
+# ---- move and migrate ---------------------------------------------------------------
+
+def _relink(body: str, orig_dir: str, new_dir: str, old_abs: str, new_abs: str) -> tuple[str, int]:
+    count = 0
+
+    def sub(m):
+        nonlocal count
+        target = m.group(2)
+        if URL_RE.match(target) or target.startswith(("#", "/")):
+            return m.group(0)
+        path, _, frag = target.partition("#")
+        dest = os.path.normpath(os.path.join(orig_dir, path))
+        if dest == old_abs:
+            dest = new_abs
+        elif orig_dir == new_dir:
+            return m.group(0)
+        rel = os.path.relpath(dest, new_dir)
+        rel = rel if rel.startswith("../") else "./" + rel
+        count += 1
+        return f"{m.group(1)}({rel}{'#' + frag if frag else ''})"
+
+    return LINK_RE.sub(sub, body), count
+
+
+def move(bundle: Path, concepts: list[Concept], old: str, new: str) -> int:
+    for seg in new.split("/"):
+        if not SEGMENT_RE.match(seg):
+            raise OkfError(f"id segment {seg!r} must match [a-z0-9][a-z0-9-]*")
+    c = find(concepts, old)
+    if c.error:
+        raise OkfError(f"{old} has invalid frontmatter; fix it before moving")
+    new_path = bundle / f"{new}.md"
+    if new_path.exists():
+        raise OkfError(f"{new} already exists")
+    old_abs, new_abs = str(c.path.resolve()), str(new_path.resolve())
+    relinked = 0
+    for other in concepts:
+        if other is c or other.error:
+            continue
+        d = str(other.path.parent.resolve())
+        other.body, n = _relink(other.body, d, d, old_abs, new_abs)
+        if n:
+            write(other)
+            relinked += 1
+    c.body, _ = _relink(c.body, str(c.path.parent.resolve()), str(new_path.parent.resolve()),
+                        old_abs, new_abs)
+    old_path, c.path, c.id = c.path, new_path, new
+    write(c)
+    old_path.unlink()
+    return relinked
+
+
+TYPE_MAP = {"gotcha": "gotcha", "decision": "decision", "runbook": "runbook",
+            "convention": "convention", "architecture": "architecture",
+            "reference": "reference", "howto": "runbook"}
+GREP_RE = re.compile(r"grep(?: -[A-Za-z]+)* [\"']([^\"']+)[\"'] (\S+?)`")
+FILE_SYMBOL_RE = re.compile(r"^`([\w./-]+\.[\w]+):([\w.-]+)`")
+REGEX_CHARS = set(".*+?[](){}|^$\\")
+
+
+def _migrate_verify(body: str) -> str:
+    sec = verify_section(body)
+    if sec is None:
+        return body.rstrip("\n") + "\n\n## Verify\n\n- none: migrated without a verification section\n"
+    anchors, legacy = [], []
+    for line in sec.strip("\n").splitlines():
+        s = line.strip()
+        g = GREP_RE.search(s)
+        f = FILE_SYMBOL_RE.search(s.lstrip("- ").strip())
+        if g and not set(g[1]) & REGEX_CHARS:
+            anchors.append(f"- `{g[2]}` :: `{g[1]}`")
+        elif f:
+            anchors.append(f"- `{f[1]}` :: `{f[2]}`")
+        elif s:
+            legacy.append(line)
+    new = "\n## Verify\n\n" + "\n".join(
+        anchors or ["- none: migrated from llm-wiki; see Legacy verification"]) + "\n"
+    if legacy:
+        new += "\n## Legacy verification\n\n" + "\n".join(legacy) + "\n"
+    start = body.index(sec) - len("## Verify")
+    before = body[:start].rstrip("\n") + "\n"
+    after = body[start + len("## Verify") + len(sec):]
+    return before + new + (("\n" + after.lstrip("\n")) if after.strip() else "")
+
+
+def _fix_actor(by: str) -> str:
+    return "process:okf-wiki-migrate" if by.endswith("/unknown") or not by else by
+
+
+def _fix_ts(s: str) -> str:
+    return s + "T00:00:00Z" if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s) else s
+
+
+def migrate_concept(c: Concept) -> tuple[dict, str, str | None]:
+    """(meta, body, review note or None)."""
+    meta = dict(c.meta)
+    raw = str(meta.get("type", "")).strip().lower()
+    meta["type"] = TYPE_MAP.get(raw, raw)
+    note = None if raw in TYPE_MAP else f"type {raw!r} needs a manual choice among {', '.join(TYPES)}"
+    if not str(meta.get("title", "")).strip():  # llm-wiki often kept the title only as the H1
+        h1 = re.search(r"^# (.+)$", c.body, re.M)
+        meta["title"] = h1.group(1).strip() if h1 else c.id.split("/")[-1].replace("-", " ")
+    gen = meta.get("generated")
+    if isinstance(gen, dict):
+        meta["generated"] = {**gen, "by": _fix_actor(str(gen.get("by", ""))),
+                             **({"at": _fix_ts(str(gen["at"]))} if "at" in gen else {})}
+    else:
+        meta["generated"] = {"by": "process:okf-wiki-migrate", "at": now_utc()}
+    if "verified" in meta:
+        meta["verified"] = [{**e, "by": _fix_actor(str(e.get("by", ""))),
+                             **({"at": _fix_ts(str(e["at"]))} if "at" in e else {})}
+                            for e in _verified_entries(meta) if isinstance(e, dict)]
+    return meta, _migrate_verify(c.body), note
+
+
+def migration_id(cid: str) -> str:
+    return "/".join(re.sub(r"[^a-z0-9-]+", "-", seg.lower()).strip("-") or "x"
+                    for seg in cid.split("/"))
+
+
+def cmd_mv(args) -> int:
+    _, bundle = _root_and_bundle(args)
+    n = move(bundle, load(bundle), args.old, args.new)
+    write_indexes(bundle, load(bundle))
+    status("mv", "ok", f"{args.old} -> {args.new} ({n} files relinked)")
+    return 0
+
+
+def cmd_migrate(args) -> int:
+    _, bundle = _root_and_bundle(args, need_bundle=False)
+    src = Path(args.source).resolve()
+    if not src.is_dir():
+        raise OkfError(f"{src} is not a directory")
+    migrated, review, skipped = 0, 0, 0
+    for c in load(src):
+        if c.error:
+            print(f"SKIPPED {c.id} (invalid frontmatter: {c.error})")
+            skipped += 1
+            continue
+        nid = migration_id(c.id)
+        target = bundle / f"{nid}.md"
+        if target.exists():
+            print(f"SKIPPED {c.id} ({nid} already exists)")
+            skipped += 1
+            continue
+        meta, body, note = migrate_concept(c)
+        if not args.dry_run:
+            write(Concept(nid, target, meta, body))
+        print(f"MIGRATED {c.id} -> {nid}" + (f" (NEEDS REVIEW: {note})" if note else ""))
+        migrated += 1
+        review += note is not None
+    if not args.dry_run and migrated:
+        write_indexes(bundle, load(bundle))
+    status("migrate", "dry-run" if args.dry_run else "ok",
+           f"{migrated} migrated, {review} need review, {skipped} skipped")
+    return 0
+
+
 # ---- CLI ----------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
@@ -1014,6 +1172,8 @@ def main(argv: list[str] | None = None) -> int:
     verb("digest", cmd_digest)
     verb("fresh", cmd_fresh, "ids")
     verb("anchor", cmd_anchor, "id")
+    verb("mv", cmd_mv, "old", "new")
+    verb("migrate", cmd_migrate, "source", __dry_run={"action": "store_true"})
     args = p.parse_args(argv)
     try:
         return args.fn(args)
