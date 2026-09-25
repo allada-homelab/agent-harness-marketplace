@@ -118,6 +118,34 @@ def test_annotate_flags_cross_session_instruction_but_not_results(index):
     conn.close()
 
 
+def test_annotate_does_not_flag_excluded_role_with_matching_text(index):
+    """A tool_result whose text matches a flagged key must stay searchable."""
+    conn = ti.open_db(index)
+    sid = conn.execute(
+        "SELECT id FROM sessions WHERE native_id = 's-13'"
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO messages (session_id, ord, native_id, parent_native_id,"
+        " on_main_path, role, ts, text, model, stop_reason, input_tokens,"
+        " output_tokens, raw, injected, norm_key, harness)"
+        " VALUES (?, 99, NULL, NULL, 1, 'tool_result',"
+        " '2026-01-01T00:00:00.000Z', ?, NULL, NULL, NULL, NULL, '', 0, ?, 'dsh')",
+        (sid, STANDING, ti._norm_key(STANDING)),
+    )
+    conn.commit()
+    conn.close()
+
+    ti.annotate(index)
+    conn = ti.open_db(index)
+    row = conn.execute(
+        "SELECT injected FROM messages WHERE role = 'tool_result' AND text = ?",
+        (STANDING,),
+    ).fetchone()
+    assert row is not None
+    assert row[0] == 0
+    conn.close()
+
+
 # ---------------------------------------------------------------------- search
 
 

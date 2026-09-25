@@ -1239,7 +1239,8 @@ def annotate(
     if exclude_roles:
         role_placeholders = ",".join("?" * len(exclude_roles))
         role_clause = f" AND role NOT IN ({role_placeholders})"
-        params = (*exclude_roles, min_sessions)
+        # Placeholder order: inner group roles, HAVING min_sessions, outer roles.
+        params = (*exclude_roles, min_sessions, *exclude_roles)
     # The norm_key / role / injected covering indexes keep every statement off
     # the big text column.
     conn.execute("UPDATE messages SET injected = 0 WHERE injected = 1")
@@ -1247,13 +1248,15 @@ def annotate(
     flagged = conn.execute(
         f"SELECT count(*) FROM messages WHERE norm_key IN ("
         f" SELECT norm_key FROM messages WHERE norm_key != ''{role_clause}"
-        f" GROUP BY norm_key HAVING COUNT(DISTINCT session_id) >= ?)",
+        f" GROUP BY norm_key HAVING COUNT(DISTINCT session_id) >= ?)"
+        f"{role_clause}",
         params,
     ).fetchone()[0]
     conn.execute(
         f"UPDATE messages SET injected = 1 WHERE norm_key IN ("
         f" SELECT norm_key FROM messages WHERE norm_key != ''{role_clause}"
-        f" GROUP BY norm_key HAVING COUNT(DISTINCT session_id) >= ?)",
+        f" GROUP BY norm_key HAVING COUNT(DISTINCT session_id) >= ?)"
+        f"{role_clause}",
         params,
     )
     conn.commit()
