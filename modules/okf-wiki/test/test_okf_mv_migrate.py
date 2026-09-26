@@ -142,3 +142,14 @@ def test_migrate_title_skips_comment_lines_inside_code_blocks(repo, tmp_path):
     cs = okf.load(repo / ".wiki")
     assert okf.find(cs, "fenced").meta["title"] == "The real heading"
     assert okf.find(cs, "only-code").meta["title"] == "only code"
+
+
+def test_migrate_renames_wikilinks_to_renamed_concepts(repo, tmp_path):
+    src = tmp_path / "old"
+    src.mkdir()
+    (src / "pve-9.2-quirk.md").write_text("---\ntype: gotcha\ntitle: Q\n---\nbody\n")
+    (src / "a.md").write_text("---\ntype: gotcha\ntitle: A\n---\nSee [[pve-9.2-quirk]], [[pve-9.2-quirk|the quirk]],\n"
+                              "[[pve-9.2-quirk#fix]], [[a]] and [[never-existed]].\n")
+    run(repo, "migrate", str(src))
+    body = okf.find(okf.load(repo / ".wiki"), "a").body
+    assert "[[pve-9-2-quirk]], [[pve-9-2-quirk|the quirk]],\n[[pve-9-2-quirk#fix]], [[a]] and [[never-existed]]" in body

@@ -1197,6 +1197,9 @@ def cmd_mv(args) -> int:
     return 0
 
 
+WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)([|#][^\]]*)?\]\]")
+
+
 def _commit_before(root: Path, at: str, cache: dict[str, str]) -> str:
     """The commit HEAD had at `at`: what a verification stamped then was checked against."""
     if at not in cache:
@@ -1213,6 +1216,8 @@ def cmd_migrate(args) -> int:
     concepts = load(src)
     moved = {str(c.path.resolve()): str((bundle / f"{migration_id(c.id)}.md").resolve())
              for c in concepts if not c.error}
+    # llm-wiki linked concepts as [[id]] too; those follow a renamed id like path links do.
+    renamed = {c.id: migration_id(c.id) for c in concepts if not c.error and migration_id(c.id) != c.id}
     commit_at: dict[str, str] = {}
     for c in concepts:
         if c.error:
@@ -1228,6 +1233,7 @@ def cmd_migrate(args) -> int:
         meta, body, note = migrate_concept(c)
         body, _ = _relink(body, str(c.path.parent.resolve()), str(target.parent.resolve()),
                           moved, rebase=False)
+        body = WIKILINK_RE.sub(lambda m: f"[[{renamed.get(m[1], m[1])}{m[2] or ''}]]", body)
         for e in meta.get("verified") or []:
             if not e.get("commit") and e.get("at"):
                 sha = _commit_before(root, str(e["at"]), commit_at)
