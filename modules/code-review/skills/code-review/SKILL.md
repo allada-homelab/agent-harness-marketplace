@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Review a GitHub pull request and post one comment with only the high-confidence issues. Five parallel reviewers (guideline compliance, shallow bug scan, git history, prior pull-request comments, in-code comment guidance) raise candidates, a scorer rates each 0-100 and anything under 80 is dropped, and a second eligibility check runs before the comment is posted. Use when asked to code-review, review or audit a pull request, or when a pull request needs a review comment; not for reviewing an uncommitted local diff. Needs the gh CLI.
+description: Review a GitHub pull request and post one comment with only the high-confidence issues. A small or docs/generated-only change (under 50 changed lines, or every changed path documentation or generated) gets one combined reviewer covering all five lenses with inline scoring; any other change gets five parallel lens reviewers plus one batch scorer that rates every candidate 0-100 and drops anything under 80 from the comment. A second eligibility check runs before the comment is posted. Use when asked to code-review, review or audit a pull request, or when a pull request needs a review comment; not for reviewing an uncommitted local diff. Needs the gh CLI.
 user-invocable: true
 argument-hint: "[pr-number-or-url]"
 tags: [review, github]
@@ -24,9 +24,9 @@ whatever this harness has:
 
 | Type | Job |
 |---|---|
-| `code-review:triage` | eligibility check · guideline-file discovery · change summary |
-| `code-review:reviewer` | one review lens per dispatch |
-| `code-review:scorer` | one confidence score per candidate issue |
+| `code-review:triage` | eligibility check · size · guideline-file discovery · change summary |
+| `code-review:reviewer` | one review lens per dispatch, or (small tier) all five lenses combined with inline scoring |
+| `code-review:scorer` | one batch of confidence scores — every candidate issue of this review, in a single dispatch |
 
 - **Claude Code**: the Agent tool with `subagent_type` set to the type above.
 - **pi and dsh**: the `delegate_agent` tool with `agent_type` set to the type
@@ -48,22 +48,41 @@ Outline these steps as a task list first, then follow them precisely.
    if it answers `SKIP` — the pull request is closed, a draft, needs no review
    (automated, or trivially and obviously fine), or already has a `### Code
    review` comment from an earlier run.
-2. **Guideline files.** Dispatch `code-review:triage` with duty *guideline
-   files*. It returns paths only: the root `CLAUDE.md` / `AGENTS.md` and any
-   in the directories the pull request touches.
-3. **Summary.** Dispatch `code-review:triage` with duty *summary*. Steps 2 and
-   3 do not depend on each other; run them together.
-4. **Five reviewers in parallel.** Dispatch `code-review:reviewer` five times,
-   one lens each — `guidelines`, `bugs`, `history`, `prior-prs`, `comments` —
-   giving every one the pull request reference, the summary from step 3 and
-   the guideline paths from step 2. Collect every candidate issue with the
-   reason it was flagged.
-5. **Score every candidate in parallel.** For each issue dispatch
-   `code-review:scorer` with the pull request reference, the issue exactly as
-   the reviewer returned it, and the guideline paths. The scorer carries the
-   0-100 rubric; do not paraphrase it. Keep the `SCORE` and `WHY` lines.
-6. **Filter.** Drop every issue scoring below 80. If none remain, stop: post
-   nothing.
+2. **Size, guideline files, summary.** Dispatch `code-review:triage` three
+   times — duty *size*, duty *guideline files*, duty *summary* — together;
+   none of the three depends on the others. Size returns `FILES`, `LINES` and
+   `GENERATED_ONLY`; guideline files returns paths only (the root
+   `CLAUDE.md` / `AGENTS.md` and any in the directories the pull request
+   touches); summary returns a short description of the change.
+3. **Pick a tier.** **small** when `LINES` from step 2 is under 50, or
+   `GENERATED_ONLY` is `yes`; **normal** otherwise. Below 50 changed lines
+   there is rarely more than one class of issue for five independent lenses
+   to disagree about, and a docs- or lockfile-only diff has no logic for them
+   to review at all — five reviewers plus a scorer added tool calls with
+   nothing to find. Every other change gets the full fan-out.
+4. **Reviewer(s).**
+   - **small**: dispatch `code-review:reviewer` once with lens `all`, giving
+     it the pull request reference, the summary from step 2 and the guideline
+     paths from step 2. It reviews through every lens itself and scores each
+     issue it keeps inline (`SCORE` and `WHY`) — skip step 5 for this tier.
+   - **normal**: dispatch `code-review:reviewer` five times, one lens each —
+     `guidelines`, `bugs`, `history`, `prior-prs`, `comments` — giving every
+     one the pull request reference, the summary and the guideline paths.
+   Collect every candidate issue with the reason it was flagged.
+5. **Score (normal tier only).** Dispatch `code-review:scorer` **once**, for
+   the whole review, with the pull request reference, the full numbered list
+   of candidate issues exactly as the reviewers returned them, and the
+   guideline paths. The scorer carries the 0-100 rubric; do not paraphrase
+   it. Keep the `SCORE` and `WHY` lines for every issue. Only dispatch a
+   second scorer, in parallel, if the candidate list is large enough that one
+   dispatch would blow past its own tool budget — never one scorer per
+   candidate.
+6. **Filter.** Drop every issue scoring below 80. This threshold gates one
+   thing only: whether the issue is posted in this skill's comment. It says
+   nothing about whether a fix is mandatory — a caller reading the comment
+   (a lead, a merge gate) may treat every posted issue, or some higher band,
+   as required to fix before merge; that decision is the caller's, not this
+   skill's. If none remain, stop: post nothing.
 7. **Re-check eligibility.** Repeat step 1. The pull request may have been
    closed, merged or reviewed while the reviewers ran; if it now says `SKIP`,
    stop.
