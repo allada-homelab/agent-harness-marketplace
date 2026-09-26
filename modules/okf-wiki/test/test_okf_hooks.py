@@ -277,10 +277,8 @@ def test_a_scribes_unfilled_skeleton_is_not_nudged_to_commit(repo):
     assert stop(repo)["reason"].startswith(okf.NUDGE)          # the capture nudge
     skeleton = GOOD_BODY.replace("Import fails at runtime.[^s1]", "<fill: symptom>")
     concept(repo, "b", body=skeleton)                          # the scribe's in-flight skeleton
-    reason = stop(repo)["reason"]
-    assert reason.startswith("okf-wiki: a dirty .wiki/ concept still fails")
-    assert "don't commit, revert or delete" in reason
-    assert stop(repo)["reason"].startswith("okf-wiki: a dirty .wiki/ concept still fails")  # repeats, never silent
+    assert stop(repo) is None                                  # no nudge while it still fails validate
+    assert stop(repo) is None                                  # stays silent, never blocks the turn
     concept(repo, "b")                                         # the scribe finishes filling it in
     reason = stop(repo)["reason"]
     assert reason.startswith("okf-wiki: .wiki/ has uncommitted") and "commit" in reason

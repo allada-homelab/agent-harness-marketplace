@@ -123,7 +123,7 @@ also pass `run_in_background: true` for the scribe. Every brief must include the
 path of `okf.py`. If no agent tool exists, follow the agent's steps yourself.
 
 A backgrounded scribe takes roughly 2–5 minutes. A `.wiki/<id>.md` with an unfilled `<fill:`
-placeholder means its scribe is still writing, not stalled — the Stop hook already skips the
-commit nudge for it and says so. Never interrupt, revert or hand-finish a scribe based on the
-file's on-disk state; wait for its completion notice (the tool call/message returning) and its
-receipt line.
+placeholder means its scribe is still writing, not stalled — the Stop hook already stays quiet
+about it rather than nudging you to commit it. Never interrupt, revert or hand-finish a scribe
+based on the file's on-disk state; wait for its completion notice (the tool call/message
+returning) and its receipt line.

@@ -1425,10 +1425,6 @@ NUDGE = ("okf-wiki: before you finish, did this work teach something durable and
 WIKI_COMMIT = ("okf-wiki: .wiki/ has uncommitted concept changes while the work itself is "
                "committed. Once the scribes' receipts are in, commit .wiki/ on this branch so the "
                "knowledge ships with the work that taught it.")
-SCRIBE_IN_FLIGHT = ("okf-wiki: a dirty .wiki/ concept still fails `okf.py validate` (an unfilled "
-                    "`<fill:` placeholder, most likely) — a scribe in flight, not something to "
-                    "ship yet. Wait for its completion receipt; don't commit, revert or delete "
-                    ".wiki/ files based on this file's current state.")
 WIKI_MISSING = ("okf-wiki: WIKI MISSING — git tracks .wiki/ but this working tree has no .wiki/ "
                 "directory, so the digest and capture nudges are off. Restore it "
                 "(git checkout -- .wiki) or commit its removal.")
@@ -1581,12 +1577,14 @@ def hook_stop(ev: dict) -> str | None:
         reasons.append(NUDGE + (" This session changed anchor files of existing concepts; brief "
                                 f"the scribe to re-verify: {', '.join(ids)}." if ids else ""))
     elif (now["wiki_fp"] and not now["fp"] and now["wiki_fp"] != st.get("wiki_fp")
-          and now["wiki_fp"] != st.get("wiki_nudged")):
-        if _dirty_invalid(root, concepts, dirty):
-            reasons.append(SCRIBE_IN_FLIGHT)
-        else:
-            reasons.append(WIKI_COMMIT)
-            st["wiki_nudged"] = now["wiki_fp"]
+          and now["wiki_fp"] != st.get("wiki_nudged")
+          and not _dirty_invalid(root, concepts, dirty)):
+        # A dirty concept that still fails validate is a scribe mid-write, not something to
+        # nudge about — every harness's Stop hook forces a turn to steer a block, so nudging
+        # here would busy-loop the agent for the scribe's whole 2-5 minute run. Emit nothing;
+        # the nudge fires naturally once the concept validates and its fingerprint moves.
+        reasons.append(WIKI_COMMIT)
+        st["wiki_nudged"] = now["wiki_fp"]
     _save_state(sf, st)
     return json.dumps({"decision": "block", "reason": " ".join(reasons)}) if reasons else None
 
