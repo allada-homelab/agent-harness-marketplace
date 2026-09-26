@@ -191,3 +191,22 @@ def test_a_vanished_verified_commit_still_falls_back_to_dates_beside_a_present_o
             .replace("resolve_peers", "other"))
     res = fresh(repo)
     assert res["squashed"][0] == "STALE" and res["present"][0] == "FRESH"
+
+
+def test_anchor_with_nested_backticks_is_reported_not_skipped(repo):
+    # A symbol anchor cannot contain a backtick; the malformed line must fail loudly
+    # rather than vanish while the other anchor reports "confirmed".
+    body = ("\n## Verify\n\n- `src/app.py` :: `resolve_peers`\n"
+            "- `src/app.py` :: `def `resolve_peers`():`\n")
+    concept(repo, "nested", body=body)
+    r = run(repo, "anchor", "nested")
+    assert r.returncode == 1, r.stdout
+    assert "UNPARSED - `src/app.py` :: `def `resolve_peers`():`" in r.stdout
+    assert r.stdout.splitlines()[-1] == "okf: anchor broken nested 1"
+    concept(repo, "only", body="\n## Verify\n\n- `src/app.py` :: `a `b` c`\n")
+    r = run(repo, "anchor", "only")
+    assert r.returncode == 1 and r.stdout.splitlines()[-1] == "okf: anchor broken only 1"
+    v = run(repo, "validate", "nested")
+    assert v.returncode == 1 and "ERROR nested: malformed Verify anchor" in v.stdout
+    s = run(repo, "stamp", "nested", "--by", "okf-wiki/haiku", "--verified")
+    assert s.returncode == 2 and "malformed Verify anchor" in s.stdout
