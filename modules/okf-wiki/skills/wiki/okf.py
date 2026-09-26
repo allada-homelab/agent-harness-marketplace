@@ -483,10 +483,15 @@ def parse_anchors(body: str) -> tuple[list[Anchor], list[str], bool]:
     return anchors, bad, none
 
 
+def _in_repo(root: Path, path: str) -> bool:
+    base = root.resolve()
+    return base in (base / path).resolve().parents
+
+
 def eval_anchor(root: Path, a: Anchor) -> tuple[bool, str]:
     base = root.resolve()
     p = (base / a.path).resolve()
-    if base not in p.parents:
+    if not _in_repo(root, a.path):
         return False, f"{a.path} is outside the repository"
     if not p.is_file():
         return False, f"{a.path} does not exist"
@@ -735,6 +740,8 @@ def digest(concepts: list[Concept], findings: list[Finding], stale: set[str] | N
     extras = []
     if stale:
         extras.append(f"{len(stale & {c.id for c in usable})} stale ⚠")
+    elif stale is None:
+        extras.append("freshness unchecked")
     if bad:
         extras.append(f"{len(bad)} invalid")
     if warns:
@@ -913,7 +920,8 @@ def freshness(root: Path, concepts: list[Concept], timeout: float = 10) -> dict[
     for c in concepts:
         if c.error:
             continue
-        files = {a.path for a in parse_anchors(c.body)[0]}
+        # Paths outside the repo (migrated container paths) have no git history to judge.
+        files = {a.path for a in parse_anchors(c.body)[0] if _in_repo(root, a.path)}
         entries = [e for e in _verified_entries(c.meta) if isinstance(e, dict)]
         last = entries[-1] if entries else None
         if not files:
@@ -927,49 +935,82 @@ def freshness(root: Path, concepts: list[Concept], timeout: float = 10) -> dict[
     deadline = time.monotonic() + timeout
 
     def run(*args, check: bool = True):
-        return git(root, *args, check=check, timeout=max(0.05, deadline - time.monotonic()))
-
-    def touches(*rev_and_paths) -> list[tuple[str, str, set[str]]]:
-        commits: list[tuple[str, str, set[str]]] = []
-        for line in run("log", "--format=@%H %cI", "--name-only", *rev_and_paths).splitlines():
-            if line.startswith("@"):
-                sha, date = line[1:].split(" ", 1)
-                commits.append((sha, date, set()))
-            elif line.strip() and commits:
-                commits[-1][2].add(line.strip().strip('"'))
-        return commits
+        # The budget is the total: many fast calls never trip a per-call timeout.
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise subprocess.TimeoutExpired("git", timeout)
+        return git(root, *args, check=check, timeout=left)
 
     dirty = _names(run("diff", "HEAD", "--name-only")) | _names(run("ls-files", "--others", "--exclude-standard"))
-    groups: dict[str, list[str]] = {}
-    for cid, (_, last, _) in pending.items():
-        groups.setdefault(str(last["commit"]), []).append(cid)
-    for commit, cids in groups.items():
-        paths = sorted(set().union(*({*pending[c][0], pending[c][2]} for c in cids)))
-        r = subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", commit, "HEAD"],
-                           capture_output=True, timeout=max(0.05, deadline - time.monotonic()))
-        in_history = r.returncode == 0
-        # A commit that left history (rebase, squash) falls back to committer dates.
-        commits = touches(f"{commit}..HEAD", "--", *paths) if in_history else touches("HEAD", "--", *paths)
-        for cid in cids:
-            files, last, me = pending[cid]
-            at = parse_ts(str(last.get("at", "")))
-            # An uncommitted anchor file is drift only if edited after verification; `at` is
-            # whole seconds, so "after" means a later second than the stamp's.
-            edited = sorted(f for f in files & dirty if (root / f).exists() and (
-                at is None or (root / f).stat().st_mtime >= at.timestamp() + 1))
-            if edited:
-                res[cid] = ("STALE", f"uncommitted change to {edited[0]}")
+    paths = set().union(*({*files, me} for files, _, me in pending.values()))
+    graph = [line.split() for line in run("rev-list", "--topo-order", "--parents", "HEAD").splitlines()]
+    by_len: dict[int, dict[str, str]] = {}  # stamps store abbreviated shas (head_commit)
+
+    def resolve(v: str) -> str | None:
+        if len(v) < 7:
+            return None
+        if len(v) not in by_len:
+            by_len[len(v)] = {row[0][:len(v)]: row[0] for row in graph}
+        return by_len[len(v)].get(v)
+
+    known = {v: resolve(v) for v in {str(last["commit"]) for _, last, _ in pending.values()}}
+    present = sorted({sha for sha in known.values() if sha})
+    missing_at = [parse_ts(str(last.get("at", ""))) for _, last, _ in pending.values()
+                  if not known[str(last["commit"])]]
+
+    def touching(*rev: str) -> list[tuple[str, str, set[str]]]:
+        # No pathspec: git matches many literal paths far slower than a set lookup here, and
+        # --no-renames lists both sides of a rename, so a renamed-away anchor file counts.
+        out: list[tuple[str, str, set[str]]] = []
+        for line in run("log", "--no-renames", "--format=@%H %cI", "--name-only", "HEAD", *rev).splitlines():
+            if line.startswith("@"):
+                sha, date = line[1:].split(" ", 1)
+                out.append((sha, date, set()))
+            elif line.strip() and out and line.strip().strip('"') in paths:
+                out[-1][2].add(line.strip().strip('"'))
+        return [c for c in out if c[2]]
+
+    # Nothing a common ancestor of every verified commit holds can be in any <verified>..HEAD.
+    base = run("merge-base", "--octopus", *present, check=False).strip() if present else ""
+    commits = touching(f"^{base}") if base else touching()
+    if base and missing_at:  # verified commits that left history fall back to dates
+        since = min((a for a in missing_at if a), default=None)
+        seen = {c[0] for c in commits}
+        commits += [c for c in (touching(f"--since={since.isoformat()}") if since else touching())
+                    if c[0] not in seen]
+    # contains[x]: bitmask of the touching commits x has in its history (itself included), so
+    # "in <verified>..HEAD" is one mask test per commit instead of a git call per concept.
+    bit = {sha: 1 << i for i, (sha, _, _) in enumerate(commits)}
+    contains: dict[str, int] = {}
+    for sha, *parents in reversed(graph):
+        m = bit.get(sha, 0)
+        for par in parents:
+            m |= contains.get(par, 0)
+        contains[sha] = m
+    for cid, (files, last, me) in pending.items():
+        full = known[str(last["commit"])]
+        mask = contains[full] if full else None
+        at = parse_ts(str(last.get("at", "")))
+        # An uncommitted anchor file is drift only if edited after verification; `at` is
+        # whole seconds, so "after" means a later second than the stamp's.
+        edited = sorted(f for f in files & dirty if (root / f).exists() and (
+            at is None or (root / f).stat().st_mtime >= at.timestamp() + 1))
+        if edited:
+            res[cid] = ("STALE", f"uncommitted change to {edited[0]}")
+            continue
+        state = ("FRESH", "")
+        for sha, date, touched in commits:
+            hit = files & touched
+            if not hit or me in touched:
                 continue
-            state = ("FRESH", "")
-            for sha, date, touched in commits:
-                hit = files & touched
-                if not hit or me in touched:
-                    continue
-                if not in_history and at is not None and datetime.fromisoformat(date) <= at:
-                    continue
-                state = ("STALE", f"{sorted(hit)[0]} changed in {sha[:7]}")
-                break
-            res[cid] = state
+            if mask is not None and mask & bit[sha]:
+                continue  # already in the verified commit's history
+            # A commit that left history (rebase, squash) falls back to committer dates.
+            if mask is None and at is not None and datetime.fromisoformat(date) <= at:
+                continue
+            state = ("STALE", f"{sorted(hit)[0]} changed in {sha[:7]}")
+            break
+        res[cid] = state
     return res
 
 
@@ -1018,7 +1059,9 @@ def cmd_digest(args) -> int:
 
 # ---- move and migrate ---------------------------------------------------------------
 
-def _relink(body: str, orig_dir: str, new_dir: str, old_abs: str, new_abs: str) -> tuple[str, int]:
+def _relink(body: str, orig_dir: str, new_dir: str, moved: dict[str, str],
+            rebase: bool = True) -> tuple[str, int]:
+    """Point links at moved concepts' new paths; `rebase` re-anchors other links to new_dir."""
     count = 0
 
     def sub(m):
@@ -1028,9 +1071,9 @@ def _relink(body: str, orig_dir: str, new_dir: str, old_abs: str, new_abs: str) 
             return m.group(0)
         path, _, frag = target.partition("#")
         dest = os.path.normpath(os.path.join(orig_dir, path))
-        if dest == old_abs:
-            dest = new_abs
-        elif orig_dir == new_dir:
+        if dest in moved:
+            dest = moved[dest]
+        elif not rebase or orig_dir == new_dir:
             return m.group(0)
         rel = os.path.relpath(dest, new_dir)
         rel = rel if rel.startswith("../") else "./" + rel
@@ -1056,12 +1099,12 @@ def move(bundle: Path, concepts: list[Concept], old: str, new: str) -> int:
         if other is c or other.error:
             continue
         d = str(other.path.parent.resolve())
-        other.body, n = _relink(other.body, d, d, old_abs, new_abs)
+        other.body, n = _relink(other.body, d, d, {old_abs: new_abs})
         if n:
             write(other)
             relinked += 1
     c.body, _ = _relink(c.body, str(c.path.parent.resolve()), str(new_path.parent.resolve()),
-                        old_abs, new_abs)
+                        {old_abs: new_abs})
     old_path, c.path, c.id = c.path, new_path, new
     write(c)
     old_path.unlink()
@@ -1144,13 +1187,24 @@ def cmd_mv(args) -> int:
     return 0
 
 
+def _commit_before(root: Path, at: str, cache: dict[str, str]) -> str:
+    """The commit HEAD had at `at`: what a verification stamped then was checked against."""
+    if at not in cache:
+        cache[at] = git(root, "rev-list", "-1", f"--before={at}", "HEAD", check=False).strip()
+    return cache[at]
+
+
 def cmd_migrate(args) -> int:
-    _, bundle = _root_and_bundle(args, need_bundle=False)
+    root, bundle = _root_and_bundle(args, need_bundle=False)
     src = Path(args.source).resolve()
     if not src.is_dir():
         raise OkfError(f"{src} is not a directory")
     migrated, review, skipped = 0, 0, 0
-    for c in load(src):
+    concepts = load(src)
+    moved = {str(c.path.resolve()): str((bundle / f"{migration_id(c.id)}.md").resolve())
+             for c in concepts if not c.error}
+    commit_at: dict[str, str] = {}
+    for c in concepts:
         if c.error:
             print(f"SKIPPED {c.id} (invalid frontmatter: {c.error})")
             skipped += 1
@@ -1162,6 +1216,13 @@ def cmd_migrate(args) -> int:
             skipped += 1
             continue
         meta, body, note = migrate_concept(c)
+        body, _ = _relink(body, str(c.path.parent.resolve()), str(target.parent.resolve()),
+                          moved, rebase=False)
+        for e in meta.get("verified") or []:
+            if not e.get("commit") and e.get("at"):
+                sha = _commit_before(root, str(e["at"]), commit_at)
+                if sha:
+                    e["commit"] = sha[:12]  # the form stamp writes (head_commit)
         if not args.dry_run:
             write(Concept(nid, target, meta, body))
         print(f"MIGRATED {c.id} -> {nid}" + (f" (NEEDS REVIEW: {note})" if note else ""))
@@ -1201,13 +1262,14 @@ def _save_state(f: Path, st: dict) -> None:
     os.replace(tmp, f)
 
 
-def reflect_tick(root: Path) -> bool:
-    """Count one session; True when a reflect run is due."""
+def reflect_tick(root: Path, count: bool = True) -> bool:
+    """Count one session (unless `count` is false); True when a reflect run is due."""
     f = _reflect_file(root)
     st = _load_state(f) or {}
     st = {"last": st.get("last") if isinstance(st.get("last"), str) else None,
-          "sessions": (st.get("sessions") if isinstance(st.get("sessions"), int) else 0) + 1}
-    _save_state(f, st)
+          "sessions": (st.get("sessions") if isinstance(st.get("sessions"), int) else 0) + count}
+    if count:
+        _save_state(f, st)
     if st["sessions"] >= REFLECT_SESSIONS:
         return True
     last = parse_ts(st["last"]) if st["last"] else None
@@ -1327,31 +1389,49 @@ NUDGE = ("okf-wiki: before you finish, did this work teach something durable and
          "no reply about the wiki is needed.")
 
 
+WIKI_COMMIT = ("okf-wiki: .wiki/ has uncommitted concept changes while the work itself is "
+               "committed. Once the scribes' receipts are in, commit .wiki/ on this branch so the "
+               "knowledge ships with the work that taught it.")
+WIKI_MISSING = ("okf-wiki: WIKI MISSING — git tracks .wiki/ but this working tree has no .wiki/ "
+                "directory, so the digest and capture nudges are off. Restore it "
+                "(git checkout -- .wiki) or commit its removal.")
+
+
+def _event_repo(ev: dict) -> Path | None:
+    return repo_root(Path(ev.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()))
+
+
 def _event_root(ev: dict) -> Path | None:
-    start = ev.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
-    root = repo_root(Path(start))
+    root = _event_repo(ev)
     return root if root and (root / BUNDLE).is_dir() else None
 
 
 def hook_session_start(ev: dict) -> str | None:
     if ev.get("agent_id"):
         return None
-    root = _event_root(ev)
+    root = _event_repo(ev)
     if root is None:
         return None
-    bundle = root / BUNDLE
-    concepts = load(bundle)
-    write_indexes(bundle, concepts)
-    findings = check_bundle(bundle, concepts)
-    try:
-        fresh = freshness(root, [c for c in concepts if not c.error], timeout=0.3)
-        stale = {cid for cid, (st, _) in fresh.items() if st == "STALE"}
-    except (OkfError, subprocess.TimeoutExpired):
-        stale = None
-    text = digest(concepts, findings, stale, reflect_tick(root))
-    sf = _session_file(root, ev)
-    if _load_state(sf) is None:  # a resume keeps the baseline its session started from
-        _save_state(sf, _tree_state(root))
+    if not (root / BUNDLE).is_dir():
+        if not git(root, "ls-files", "--", BUNDLE, check=False).strip():
+            return None
+        text = WIKI_MISSING
+    else:
+        bundle = root / BUNDLE
+        concepts = load(bundle)
+        write_indexes(bundle, concepts)
+        findings = check_bundle(bundle, concepts)
+        try:
+            fresh = freshness(root, [c for c in concepts if not c.error], timeout=0.3)
+            stale = {cid for cid, (st, _) in fresh.items() if st == "STALE"}
+        except (OkfError, subprocess.TimeoutExpired):
+            stale = None
+        # A resume or compaction continues a session; it is not a new one to count.
+        due = reflect_tick(root, count=ev.get("source") not in ("resume", "compact"))
+        text = digest(concepts, findings, stale, due)
+        sf = _session_file(root, ev)
+        if _load_state(sf) is None:  # a resume keeps the baseline its session started from
+            _save_state(sf, {**_tree_state(root)[0], "since": int(time.time())})
     return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                               "additionalContext": text}})
 
@@ -1368,22 +1448,56 @@ def _session_file(root: Path, ev: dict) -> Path:
     return state_dir(root) / f"session-{sid}.json"
 
 
-def _tree_state(root: Path) -> dict:
-    """HEAD plus a fingerprint of the non-wiki dirt; fp is "" for a clean tree."""
-    head = git(root, "rev-parse", "HEAD", check=False).strip()
-    porcelain = git(root, "status", "--porcelain", "--untracked-files=all", check=False)
+def _fingerprint(root: Path, lines: list[str]) -> str:
     parts = []
-    for line in sorted(porcelain.splitlines()):
-        path = _porcelain_path(line)
-        if not line.strip() or path.startswith(BUNDLE + "/"):
-            continue
+    for line in sorted(lines):
         try:  # size+mtime: editing a file that was already dirty keeps its porcelain line
-            s = (root / path).stat()
+            s = (root / _porcelain_path(line)).stat()
             parts.append(f"{line}\0{s.st_size}\0{s.st_mtime_ns}")
         except OSError:
             parts.append(line)
-    fp = hashlib.sha1("\n".join(parts).encode()).hexdigest() if parts else ""
-    return {"head": head, "fp": fp, "dirty_nudged": False}
+    return hashlib.sha1("\n".join(parts).encode()).hexdigest() if parts else ""
+
+
+def _tree_state(root: Path) -> tuple[dict, set[str]]:
+    """({head, fp, wiki_fp}, every dirty path); a clean side fingerprints as ""."""
+    head = git(root, "rev-parse", "HEAD", check=False).strip()
+    porcelain = [line for line in git(root, "status", "--porcelain", "--untracked-files=all",
+                                      check=False).splitlines() if line.strip()]
+    wiki = [line for line in porcelain if _porcelain_path(line).startswith(BUNDLE + "/")]
+    work = [line for line in porcelain if line not in wiki]
+    return ({"head": head, "fp": _fingerprint(root, work), "wiki_fp": _fingerprint(root, wiki)},
+            {_porcelain_path(line) for line in porcelain})
+
+
+def _own_commits(root: Path, old: str, new: str, since: int) -> tuple[int, set[str]] | None:
+    """(this session's non-merge commits in old..new, files they touched); None when `new`
+    does not descend from `old` (a checkout or rebase, not work)."""
+    if old and subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", old, new],
+                              capture_output=True).returncode:
+        return None
+    me = git(root, "config", "user.email", check=False).strip()
+    n, files, mine = 0, set(), False
+    for line in git(root, "log", "--no-merges", "--format=@%ce %ct", "--name-only",
+                    f"{old}..{new}" if old else new, check=False).splitlines():
+        if line.startswith("@"):
+            email, _, ct = line[1:].rpartition(" ")
+            mine = email == me and int(ct) >= since
+            n += mine
+        elif line.strip() and mine:
+            files.add(line.strip().strip('"'))
+    return n, files
+
+
+def _reverify(root: Path, concepts: list[Concept], changed: set[str]) -> list[str]:
+    """Concepts whose anchor files changed, unless the concept itself changed with them."""
+    out = []
+    for c in concepts:
+        if c.error or Path(os.path.relpath(c.path, root)).as_posix() in changed:
+            continue
+        if {a.path for a in parse_anchors(c.body)[0]} & changed:
+            out.append(c.id)
+    return sorted(out)
 
 
 def hook_stop(ev: dict) -> str | None:
@@ -1393,22 +1507,37 @@ def hook_stop(ev: dict) -> str | None:
     if root is None:
         return None
     bundle = root / BUNDLE
-    write_indexes(bundle, load(bundle))
-    now = _tree_state(root)
+    concepts = load(bundle)
+    write_indexes(bundle, concepts)
+    if os.environ.get("OKF_WIKI_NUDGE", "").strip().lower() == "off":
+        return None
+    now, dirty = _tree_state(root)
     sf = _session_file(root, ev)
     cutoff = time.time() - STATE_TTL_DAYS * 86400
     for old in sf.parent.glob("session-*.json"):
         if old.stat().st_mtime < cutoff:
             old.unlink(missing_ok=True)
     # No baseline (no SessionStart seen, or it was unreadable): judge against a clean tree.
-    st = _load_state(sf) or {**now, "fp": ""}
-    nudge = False
+    st = _load_state(sf) or {**now, "fp": "", "since": int(time.time())}
+    changed: set[str] | None = None
     if now["head"] and now["head"] != st.get("head"):
-        nudge, st = True, {**now, "dirty_nudged": False}
+        own = _own_commits(root, str(st.get("head") or ""), now["head"], int(st.get("since") or 0))
+        if own and own[0]:
+            changed = own[1] | dirty
+        st.update(head=now["head"], fp=now["fp"], dirty_nudged=False)
     elif now["fp"] and now["fp"] != st.get("fp") and not st.get("dirty_nudged"):
-        nudge, st["dirty_nudged"] = True, True
+        changed, st["dirty_nudged"] = dirty, True
+    reasons = []
+    if changed is not None:
+        ids = _reverify(root, concepts, changed)
+        reasons.append(NUDGE + (" This session changed anchor files of existing concepts; brief "
+                                f"the scribe to re-verify: {', '.join(ids)}." if ids else ""))
+    elif (now["wiki_fp"] and not now["fp"] and now["wiki_fp"] != st.get("wiki_fp")
+          and now["wiki_fp"] != st.get("wiki_nudged")):
+        reasons.append(WIKI_COMMIT)
+        st["wiki_nudged"] = now["wiki_fp"]
     _save_state(sf, st)
-    return json.dumps({"decision": "block", "reason": NUDGE}) if nudge else None
+    return json.dumps({"decision": "block", "reason": " ".join(reasons)}) if reasons else None
 
 
 def run_hook(fn) -> int:

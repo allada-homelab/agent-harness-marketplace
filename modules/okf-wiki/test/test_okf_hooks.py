@@ -1,8 +1,11 @@
 import json
+import os
+import shutil
 import statistics
+import subprocess
 import time
 
-from okf_testlib import concept, git, hook, okf, run
+from okf_testlib import GOOD_BODY, GOOD_META, concept, git, hook, okf, run
 
 
 def ctx(r):
@@ -61,7 +64,7 @@ def test_stop_nudges_once_when_the_tree_gets_dirty(repo):
     assert stop(repo) is None                       # clean tree: nothing to capture
     (repo / "src/app.py").write_text("changed\n")
     out = stop(repo)
-    assert out["decision"] == "block" and out["reason"] == okf.NUDGE
+    assert out["decision"] == "block" and out["reason"].startswith(okf.NUDGE)
     assert stop(repo) is None                       # already nudged for this dirt
 
 
@@ -81,8 +84,8 @@ def test_stop_ignores_wiki_only_changes_loops_and_subagents(repo):
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "wiki")
     stop(repo)
-    concept(repo, "b")                              # the capture itself
-    assert stop(repo) is None
+    concept(repo, "b")                              # the capture itself: no capture nudge,
+    assert stop(repo)["reason"].startswith("okf-wiki: .wiki/ has uncommitted")  # only the commit reminder
     (repo / "src/app.py").write_text("changed\n")
     assert stop(repo, stop_hook_active=True) is None
     assert stop(repo, agent_id="sub") is None
@@ -196,3 +199,91 @@ def test_corrupt_state_files_do_not_break_the_hooks(repo, tmp_path):
     assert r.stderr == "" and ctx(r).startswith("okf-wiki:digest v1")
     (repo / "src/app.py").write_text("changed\n")
     assert stop(repo)["decision"] == "block"
+
+
+def commit_as(repo, email, msg, date=None, path="src/app.py"):
+    env = {"GIT_COMMITTER_DATE": date, "GIT_AUTHOR_DATE": date} if date else {}
+    (repo / path).write_text(msg + "\n")
+    subprocess.run(["git", "-C", str(repo), "-c", f"user.email={email}", "commit", "-qam", msg],
+                   check=True, env={**os.environ, **env})
+
+
+def committed_wiki(repo, *ids):
+    for cid in ids:
+        concept(repo, cid)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "wiki")
+
+
+def test_checkout_and_pull_do_not_nudge(repo):
+    committed_wiki(repo, "a")
+    git(repo, "checkout", "-qb", "feature")
+    commit_as(repo, "t@example.com", "old work", date="2026-01-01T00:00:00Z")
+    git(repo, "checkout", "-q", "main")
+    git(repo, "checkout", "-qb", "upstream")
+    commit_as(repo, "someone@else.io", "their work")
+    git(repo, "checkout", "-q", "main")
+    start(repo)
+    git(repo, "checkout", "-q", "feature")          # a branch with work from before the session
+    assert stop(repo) is None
+    git(repo, "checkout", "-q", "main")
+    git(repo, "merge", "-q", "--ff-only", "upstream")  # a pull of someone else's commit
+    assert stop(repo) is None
+    commit_as(repo, "t@example.com", "mine")        # this session's own commit still nudges
+    assert stop(repo)["decision"] == "block"
+
+
+def test_the_nudge_can_be_switched_off(repo):
+    committed_wiki(repo, "a")
+    start(repo)
+    (repo / "src/app.py").write_text("changed\n")
+    r = hook(repo, "hook-stop", {"session_id": "s1", "cwd": str(repo)}, env={"OKF_WIKI_NUDGE": "off"})
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+def test_the_nudge_names_concepts_whose_anchor_files_this_session_changed(repo):
+    other = GOOD_BODY.replace("src/app.py", "src/other.py")
+    (repo / "src/other.py").write_text("def resolve_peers():\n    return 2\n")
+    concept(repo, "a")
+    concept(repo, "b", body=other)
+    concept(repo, "c")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "wiki")
+    start(repo)
+    (repo / "src/app.py").write_text("def resolve_peers():\n    return 9\n")
+    concept(repo, "c", meta=GOOD_META.replace("Linked modules", "Linked packages"))  # healed alongside
+    reason = stop(repo)["reason"]
+    assert reason.startswith(okf.NUDGE) and reason.endswith("re-verify: a.")  # not b; c healed with it
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "fix")
+    assert stop(repo)["reason"].endswith("re-verify: a.")  # a commit nudges again
+
+
+def test_wiki_left_uncommitted_after_the_work_is_committed_gets_one_reminder(repo):
+    committed_wiki(repo, "a")
+    start(repo)
+    commit_as(repo, "t@example.com", "fix")
+    assert stop(repo)["reason"].startswith(okf.NUDGE)  # the capture nudge
+    concept(repo, "b")                             # the scribe lands after the commit
+    reason = stop(repo)["reason"]
+    assert reason.startswith("okf-wiki: .wiki/ has uncommitted") and "commit" in reason
+    assert stop(repo) is None
+
+
+def test_a_wiki_git_tracks_but_the_tree_lacks_is_loud(repo):
+    committed_wiki(repo, "a")
+    shutil.rmtree(repo / ".wiki")
+    r = hook(repo, "hook-session-start", {"session_id": "s1", "cwd": str(repo)})
+    assert r.returncode == 0 and "WIKI MISSING" in ctx(r)
+
+
+def test_resume_and_compact_do_not_count_toward_reflect(repo):
+    concept(repo, "a")
+    def first(src):
+        return ctx(hook(repo, "hook-session-start", {"cwd": str(repo), "source": src})).splitlines()[0]
+
+    for _ in range(19):
+        assert "reflect due" not in first("startup")
+    for src in ("resume", "compact") * 3:
+        assert "reflect due" not in first(src)
+    assert "reflect due" in first("startup")

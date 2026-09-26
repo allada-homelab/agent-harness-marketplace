@@ -24,5 +24,6 @@ codes: 0 ok · 1 findings · 2 refusal · 3 near-duplicate (`new`).
 
 Parallel work (ingest explorers, heal and capture scribes, reflect auditors) runs at most
 `--fanout N`, else `OKF_WIKI_FANOUT`, else 4 subagents at once; pi's bridge caps it at 4.
+`OKF_WIKI_NUDGE=off` silences the Stop hook's nudges on a machine; the digest stays on.
 
 Design: `docs/superpowers/specs/2026-09-25-okf-wiki-design.md`.
