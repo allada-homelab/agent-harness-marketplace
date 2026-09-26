@@ -1425,6 +1425,10 @@ NUDGE = ("okf-wiki: before you finish, did this work teach something durable and
 WIKI_COMMIT = ("okf-wiki: .wiki/ has uncommitted concept changes while the work itself is "
                "committed. Once the scribes' receipts are in, commit .wiki/ on this branch so the "
                "knowledge ships with the work that taught it.")
+SCRIBE_IN_FLIGHT = ("okf-wiki: a dirty .wiki/ concept still fails `okf.py validate` (an unfilled "
+                    "`<fill:` placeholder, most likely) — a scribe in flight, not something to "
+                    "ship yet. Wait for its completion receipt; don't commit, revert or delete "
+                    ".wiki/ files based on this file's current state.")
 WIKI_MISSING = ("okf-wiki: WIKI MISSING — git tracks .wiki/ but this working tree has no .wiki/ "
                 "directory, so the digest and capture nudges are off. Restore it "
                 "(git checkout -- .wiki) or commit its removal.")
@@ -1533,6 +1537,17 @@ def _reverify(root: Path, concepts: list[Concept], changed: set[str]) -> list[st
     return sorted(out)
 
 
+def _dirty_invalid(root: Path, concepts: list[Concept], dirty: set[str]) -> list[str]:
+    """ids of dirty concepts that still fail `okf.py validate` (an unfilled `<fill:` skeleton
+    mid-write, most often) — a scribe in flight, not something to commit, revert or delete."""
+    out = []
+    for c in concepts:
+        rel = Path(os.path.relpath(c.path, root)).as_posix()
+        if rel in dirty and any(f.level == "error" for f in check_concept(c)):
+            out.append(c.id)
+    return sorted(out)
+
+
 def hook_stop(ev: dict) -> str | None:
     if ev.get("agent_id") or ev.get("stop_hook_active"):
         return None
@@ -1567,8 +1582,11 @@ def hook_stop(ev: dict) -> str | None:
                                 f"the scribe to re-verify: {', '.join(ids)}." if ids else ""))
     elif (now["wiki_fp"] and not now["fp"] and now["wiki_fp"] != st.get("wiki_fp")
           and now["wiki_fp"] != st.get("wiki_nudged")):
-        reasons.append(WIKI_COMMIT)
-        st["wiki_nudged"] = now["wiki_fp"]
+        if _dirty_invalid(root, concepts, dirty):
+            reasons.append(SCRIBE_IN_FLIGHT)
+        else:
+            reasons.append(WIKI_COMMIT)
+            st["wiki_nudged"] = now["wiki_fp"]
     _save_state(sf, st)
     return json.dumps({"decision": "block", "reason": " ".join(reasons)}) if reasons else None
 

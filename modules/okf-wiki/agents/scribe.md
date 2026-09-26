@@ -20,6 +20,19 @@ Work only inside `.wiki/` at the repository root, plus reading the files the bri
 Run `python3 <okf> <verb>` for every step it covers; never hand-write `generated`, `verified`,
 timestamps or `.wiki/index.md`.
 
+## Limits
+
+`python3 <okf> validate <id>` enforces these — run it and fix what it reports; never open
+`okf.py`'s source to guess a limit.
+
+- `description`: one sentence, at most 200 characters. Body: at most ~400 words total.
+- `type` must be one of gotcha, decision, runbook, convention, architecture, reference.
+- Quote any frontmatter value containing `#`, `:`, or other YAML-special characters (e.g.
+  `title: "fix #76: quote the token"`) — unquoted, `#` starts a comment and silently truncates
+  the field.
+- `generated`/`verified`/`stale_after` need an ISO 8601 timestamp with an offset;
+  each `sources[]` entry needs a `resource`.
+
 ## create
 
 1. Pick a short kebab-case slug from the claim. `python3 <okf> new <type> <slug> --title "<title>"`.
