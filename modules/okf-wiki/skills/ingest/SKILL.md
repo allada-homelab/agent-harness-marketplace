@@ -1,8 +1,8 @@
 ---
 name: ingest
-description: Bootstrap or grow this repo's .wiki/ from its history — fix and revert commits, PR descriptions, the gotcha sections of CLAUDE.md and docs, and existing OKF or llm-wiki bundles — by fanning out okf-wiki explorer agents and landing the concepts that pass the capture bar. Use when the wiki is empty, when the digest says "run ingest", or when the user asks to "seed", "bootstrap", "ingest" or "migrate" a wiki.
+description: Bootstrap or grow this repo's .wiki/ from its history — fix and revert commits, PR descriptions, docs and runbooks, and existing OKF or llm-wiki bundles — by fanning out okf-wiki explorer agents and landing the concepts that pass the capture bar. Use when the wiki is empty, when the digest says "run ingest", or when the user asks to "seed", "bootstrap", "ingest" or "migrate" a wiki.
 user-invocable: true
-argument-hint: "[--fanout N] [--since <date>] [<existing bundle dir to migrate>]"
+argument-hint: "[--fanout N] [--max N] [--since <date>] [<existing bundle dir to migrate>]"
 ---
 
 # ingest
@@ -29,8 +29,8 @@ Build independent slices, each small enough for one explorer:
   windows of about 40 commits;
 - merged PR descriptions, when `gh` works: `gh pr list --state merged --limit 200 --json
   number,title,body,url`, split by 40;
-- `CLAUDE.md`, `AGENTS.md`, `docs/` and runbook files that hold warnings or gotchas, split by
-  directory.
+- `docs/` and runbook files that hold warnings or gotchas, split by directory. Skip
+  `CLAUDE.md`, `AGENTS.md` and other always-loaded files: capture bar rule 4.
 
 ## 3. Fan out
 
@@ -42,7 +42,9 @@ instead of duplicates.
 ## 4. Land
 
 Explorers return proposed briefs. Merge duplicates across explorers, apply the capture bar
-yourself, and drop anything weak; fewer strong concepts beat many thin ones. Hand the
-survivors to scribes exactly as the capture skill does (one concept per scribe, at most the
+yourself, and drop anything weak; fewer strong concepts beat many thin ones. Keep at most
+`--max N` (default 15), strongest first: a flood of thin concepts pushes the session digest
+into titles-only mode. Show the user the list (type, id, one-line claim) and land it on a
+yes, dropping any they strike. Hand the survivors to scribes exactly as the capture skill does (one concept per scribe, at most the
 fan-out width in flight). Finish with one summary receipt, `wiki: +<n> concepts (ingest)`,
 followed by the per-concept receipt lines.

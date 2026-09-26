@@ -17,6 +17,9 @@ Write a concept only when **all** hold:
 1. **Not recoverable by grepping the code.** File maps, signatures and restated docs fail.
 2. **Durable.** It will still be true next month, or it records a decision with its reason.
 3. **Actionable.** Its description can change what the next agent does.
+4. **Not already always loaded.** `CLAUDE.md`, `AGENTS.md` and other files a harness injects
+   every session are in context already; a wiki copy costs tokens twice and drifts. Leave
+   such rules there.
 
 Good: a runtime failure mode and its cause, a rejected alternative and why, a deploy step
 that is easy to get wrong, a convention the linter cannot enforce, an external system's

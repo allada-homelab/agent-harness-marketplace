@@ -46,3 +46,9 @@ from the arguments through to `fanout` if the user gave one.
 When a scribe returns, print its receipt line (`wiki: +gotcha/<id>`, `wiki: ~healed/<id>`,
 `wiki: ✗ <id> — <reason>`). Never drop a failure silently. If you could not dispatch, do the
 scribe's steps yourself and mark the receipt ` (inline)`.
+
+## 5. Commit it with the work
+
+Scribes write after you dispatch them, so a commit made before their receipts misses the
+concept. Once every receipt is in, commit `.wiki/` in the commit that carries the change
+that taught it, or on this branch right after, so the knowledge ships in the same PR.

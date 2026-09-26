@@ -341,7 +341,7 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: okf-wiki
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -373,8 +373,8 @@ modules:
     tags: []
     command: true
     summary: Bootstrap or grow this repo's .wiki/ from its history — fix and revert commits, PR descriptions,
-      the gotcha sections of CLAUDE.md and docs, and existing OKF or llm-wiki bundles — by fanning out
-      okf-wiki explorer agents and landing the concepts that pass the capture bar.
+      docs and runbooks, and existing OKF or llm-wiki bundles — by fanning out okf-wiki explorer agents
+      and landing the concepts that pass the capture bar.
   - name: recall
     path: modules/okf-wiki/skills/recall/SKILL.md
     harness:

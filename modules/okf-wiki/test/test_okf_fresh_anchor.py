@@ -1,6 +1,7 @@
+import subprocess
 import time
 
-from okf_testlib import GOOD_BODY, concept, git, okf, run
+from okf_testlib import GOOD_BODY, GOOD_META, concept, git, okf, run
 
 
 def stamped(repo, cid="x", body=GOOD_BODY):
@@ -120,3 +121,73 @@ def test_capturing_code_and_concept_in_one_commit_stays_fresh(repo):
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "fix and capture")
     assert fresh(repo)["x"][0] == "FRESH"
+
+
+def many_commits(repo, n):
+    """n commits, each adding src/mNNN.py, via fast-import: a commit loop is too slow for a test."""
+    stream = []
+    for i in range(n):
+        data = f"def f{i:03d}():\n    return {i}\n"
+        stream += ["commit refs/heads/main", "committer t <t@example.com> 1790000000 +0000", "data 1", "c"]
+        stream += ["from refs/heads/main^0"] if i == 0 else []
+        stream += [f"M 100644 inline src/m{i:03d}.py", f"data {len(data)}", data]
+    subprocess.run(["git", "-C", str(repo), "fast-import", "--quiet"], input="\n".join(stream) + "\n",
+                   text=True, check=True)
+    git(repo, "reset", "-q", "--hard", "main")
+    out = subprocess.run(["git", "-C", str(repo), "rev-list", "--reverse", "main"],
+                         capture_output=True, text=True, check=True).stdout.split()
+    return out[-n:]
+
+
+def test_freshness_of_250_concepts_at_distinct_commits_fits_the_session_start_budget(repo):
+    shas = many_commits(repo, 250)
+    for i, sha in enumerate(shas):
+        concept(repo, f"c{i:03d}", meta=f"type: gotcha\ntitle: T{i}\ndescription: claim {i}\nverified:\n"
+                f"  - {{by: okf-wiki/haiku, at: 2026-09-01T00:00:00Z, commit: {sha[:12]}}}\n",
+                body=f"\nBody.\n\n## Verify\n\n- `src/m{i:03d}.py` :: `f{i:03d}`\n")
+    commit_file = repo / "src" / "m007.py"
+    commit_file.write_text("def f007():\n    return -1\n")
+    git(repo, "commit", "-qam", "change m007")
+    concepts = okf.load(repo / ".wiki")
+    t = time.perf_counter()
+    res = okf.freshness(repo, concepts, timeout=0.3)  # the SessionStart budget
+    # Per-call timeouts never fire on many fast calls; the budget is the total.
+    assert time.perf_counter() - t < 0.3
+    assert [c for c, (s, _) in res.items() if s == "STALE"] == ["c007"]
+    assert sum(s == "FRESH" for s, _ in res.values()) == 249
+
+
+def test_digest_says_when_freshness_was_not_checked(repo):
+    concept(repo, "a")
+    cs = okf.load(repo / ".wiki")
+    assert "freshness unchecked" in okf.digest(cs, [], None, False).splitlines()[0]
+    assert "freshness unchecked" not in okf.digest(cs, [], set(), False).splitlines()[0]
+
+
+def test_anchor_paths_outside_the_repo_do_not_break_freshness(repo):
+    outside = GOOD_BODY.replace("- `src/app.py` :: `resolve_peers`",
+                                "- `/opt/tool/cli.py` :: `main`\n- `../elsewhere.py` :: `x`")
+    both = outside.replace("- `../elsewhere.py` :: `x`", "- `src/app.py` :: `resolve_peers`")
+    meta = GOOD_META + f"verified:\n  - {{by: x/y, at: 2026-01-01T00:00:00Z, commit: {okf.head_commit(repo)}}}\n"
+    concept(repo, "only-outside", meta=meta, body=outside)  # as migrate writes them; stamp refuses these
+    concept(repo, "mixed", meta=meta, body=both)
+    commit_app(repo, "def resolve_peers():\n    return 2\n")
+    res = fresh(repo)
+    assert res["only-outside"][0] == "UNANCHORED"
+    assert res["mixed"][0] == "STALE"
+
+
+def test_a_vanished_verified_commit_still_falls_back_to_dates_beside_a_present_one(repo, monkeypatch):
+    monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-08-01T00:00:00Z")
+    commit_app(repo, "def resolve_peers():\n    return 2\n", "older than the present stamp")
+    monkeypatch.delenv("GIT_COMMITTER_DATE")
+    (repo / "src/other.py").write_text("def other():\n    return 1\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "other")
+    squashed = GOOD_META + "verified:\n  - {by: x/y, at: 2026-07-01T00:00:00Z, commit: deadbeef1234}\n"
+    present = GOOD_META + f"verified:\n  - {{by: x/y, at: 2026-09-01T00:00:00Z, commit: {okf.head_commit(repo)}}}\n"
+    concept(repo, "squashed", meta=squashed)  # anchored on src/app.py, changed after its date
+    concept(repo, "present", meta=present, body=GOOD_BODY.replace("src/app.py", "src/other.py")
+            .replace("resolve_peers", "other"))
+    res = fresh(repo)
+    assert res["squashed"][0] == "STALE" and res["present"][0] == "FRESH"

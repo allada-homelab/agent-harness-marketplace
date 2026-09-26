@@ -202,9 +202,14 @@ Stdlib only; the final stdout line is a stable status line (pr-flow convention).
 - Child sessions: both hooks no-op when stdin carries `agent_id` (Claude's own subagent
   marker; the dsh hook runner adds it for `origin: subagent` sessions; pi children load no
   extensions at all).
-- Stop: no-op when `stop_hook_active`;
-  otherwise block once with the nudge when `HEAD` moved since the last nudge, or the tree
-  first became dirty this session (untracked files included). State lives at
+- Stop: no-op when `stop_hook_active` or `OKF_WIKI_NUDGE=off`; otherwise block once with the
+  nudge when `HEAD` gained a non-merge commit of this session (committer email is
+  `user.email`, committed after SessionStart; a checkout, pull or rebase is not work), or the
+  tree first differs from its SessionStart baseline (untracked files included). The nudge
+  names concepts whose anchor files those changes touched ("re-verify: <ids>") unless the
+  concept changed with them. When the work is committed but `.wiki/` is not, it blocks once
+  with a reminder to commit `.wiki/` on the branch. SessionStart in a repo where git tracks
+  `.wiki/` but the tree lacks it injects `WIKI MISSING` instead of the digest. State lives at
   `$XDG_STATE_HOME/okf-wiki/<repo-hash>/<session_id>`, pruned after 7 days — never in the
   repo, never shared across sessions.
 
