@@ -130,3 +130,15 @@ def test_migrate_backfills_the_verified_commit_from_its_date(repo, tmp_path, mon
     cs = okf.load(repo / ".wiki")
     assert okf.find(cs, "a").meta["verified"][-1]["commit"] == august
     assert "commit" not in okf.find(cs, "b").meta["verified"][-1]  # predates the repo
+
+
+def test_migrate_title_skips_comment_lines_inside_code_blocks(repo, tmp_path):
+    src = tmp_path / "old"
+    src.mkdir()
+    (src / "fenced.md").write_text("---\ntype: gotcha\n---\n```yaml\n# Backups spread across the day:\nx: 1\n```\n\n"
+                                   "# The real heading\n\nBody.\n")
+    (src / "only-code.md").write_text("---\ntype: gotcha\n---\n```sh\n# a shell comment\n```\n")
+    run(repo, "migrate", str(src))
+    cs = okf.load(repo / ".wiki")
+    assert okf.find(cs, "fenced").meta["title"] == "The real heading"
+    assert okf.find(cs, "only-code").meta["title"] == "only code"

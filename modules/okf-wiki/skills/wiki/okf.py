@@ -1152,6 +1152,17 @@ def _fix_ts(s: str) -> str:
     return s + "T00:00:00Z" if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s) else s
 
 
+def _first_h1(body: str) -> str | None:
+    """The first `# ` heading outside fenced code: a `# ` inside a fence is a comment."""
+    fence = False
+    for line in body.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            fence = not fence
+        elif not fence and line.startswith("# ") and line[2:].strip():
+            return line[2:].strip()
+    return None
+
+
 def migrate_concept(c: Concept) -> tuple[dict, str, str | None]:
     """(meta, body, review note or None)."""
     meta = dict(c.meta)
@@ -1159,8 +1170,7 @@ def migrate_concept(c: Concept) -> tuple[dict, str, str | None]:
     meta["type"] = TYPE_MAP.get(raw, raw)
     note = None if raw in TYPE_MAP else f"type {raw!r} needs a manual choice among {', '.join(TYPES)}"
     if not str(meta.get("title", "")).strip():  # llm-wiki often kept the title only as the H1
-        h1 = re.search(r"^# (.+)$", c.body, re.M)
-        meta["title"] = h1.group(1).strip() if h1 else c.id.split("/")[-1].replace("-", " ")
+        meta["title"] = _first_h1(c.body) or c.id.split("/")[-1].replace("-", " ")
     gen = meta.get("generated")
     if isinstance(gen, dict):
         meta["generated"] = {**gen, "by": _fix_actor(str(gen.get("by", ""))),
