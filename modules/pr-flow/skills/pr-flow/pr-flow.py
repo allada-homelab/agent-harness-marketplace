@@ -510,7 +510,8 @@ def teardown(ctx, branch, dry_run=False):
     git("branch", "-D", branch, cwd=root)
     if subprocess.run([GIT, "push", "-q", "origin", "--delete", branch], cwd=root, capture_output=True).returncode:
         warn(f"remote branch {branch} already gone or not deletable; continuing")
-    git("worktree", "prune", cwd=root)
+    # No `git worktree prune`: `remove` already dropped this record, and a global prune deletes
+    # every worktree whose path this process cannot see (a devcontainer's, seen from the host).
     try:
         state_path(ctx, branch).unlink()
     except OSError:
