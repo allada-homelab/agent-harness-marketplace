@@ -122,10 +122,16 @@ _YAML_WORDS = {"true", "false", "yes", "no", "null", "on", "off", "~"}
 
 
 def _strip_comment(s: str) -> str:
-    out, quote = [], None
+    out, quote, skip = [], None, False
     for i, ch in enumerate(s):
-        if quote:
-            if ch == quote:
+        if skip:
+            skip = False  # the escaped half of `\"` or `''` never closes the string
+        elif quote:
+            if ch == quote and quote == "'" and s[i + 1:i + 2] == "'":
+                skip = True
+            elif ch == "\\" and quote == '"':
+                skip = True
+            elif ch == quote:
                 quote = None
         elif ch in "'\"" and s[:i].rstrip()[-1:] in ("", ":", "-", "[", "{", ","):
             quote = ch  # a quote opens a string only where a value starts (it's ≠ 'x')
@@ -325,7 +331,7 @@ def _needs_quote(s: str, flow: bool) -> bool:
         return True
     if s[0] in "-?:,[]{}#&*!|>'\"%@`<":
         return True
-    if ": " in s or " #" in s or s.endswith(":"):
+    if ": " in s or " #" in s or "\t#" in s or s.endswith(":"):
         return True
     return flow and any(c in s for c in ",[]{}")
 
@@ -483,6 +489,11 @@ def parse_anchors(body: str) -> tuple[list[Anchor], list[str], bool]:
     return anchors, bad, none
 
 
+def malformed_anchor(line: str) -> bool:
+    """An unparsed Verify line shaped like an anchor: it was meant to run, so it must fail."""
+    return " :: " in line
+
+
 def _in_repo(root: Path, path: str) -> bool:
     base = root.resolve()
     return base in (base / path).resolve().parents
@@ -620,7 +631,10 @@ def check_concept(c: Concept) -> list[Finding]:
     elif not anchors and not none:
         warn("`## Verify` has no anchor and no `- none: <reason>` line")
     for line in bad:
-        warn(f"unparsed Verify line: {line}")
+        if malformed_anchor(line):
+            err(f"malformed Verify anchor (a `symbol` cannot contain a backtick; use /regex/ => N): {line}")
+        else:
+            warn(f"unparsed Verify line: {line}")
     words = len(c.body.split())
     if words > WORDS_MAX:
         warn(f"body is {words} words; trim or split below {WORDS_MAX}")
@@ -1031,11 +1045,14 @@ def cmd_fresh(args) -> int:
 def cmd_anchor(args) -> int:
     root, bundle = _root_and_bundle(args)
     c = find(load(bundle), args.id)
-    anchors, _, none = parse_anchors(c.body)
-    if not anchors:
+    anchors, bad, none = parse_anchors(c.body)
+    unparsed = [line for line in bad if malformed_anchor(line)]
+    if not anchors and not unparsed:
         status("anchor", "none" if none else "missing", args.id)
         return 0 if none else 1
-    broken = 0
+    for line in unparsed:
+        print(f"UNPARSED {line}")
+    broken = len(unparsed)
     for a in anchors:
         ok, msg = eval_anchor(root, a)
         broken += not ok

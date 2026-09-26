@@ -94,3 +94,39 @@ def test_refusal_is_one_line_even_when_git_says_more(tmp_path):
     concept(r, "a", body="\n## Verify\n\n- none: x\n")
     out = run(r, "stamp", "a", "--by", "okf-wiki/haiku", "--verified").stdout.splitlines()
     assert len(out) == 1 and out[0].startswith("okf: stamp refused git rev-parse HEAD failed")
+
+
+def _meta_with(description, title):
+    return GOOD_META.replace(
+        "description: Linked modules lose peer deps under pnpm; add them to the root package.json because hoisting skips links.",
+        f"description: {description}").replace("title: fix peer deps}", f"title: {title}}}")
+
+
+def test_stamp_round_trips_a_description_with_a_hash_after_an_escaped_quote(repo):
+    # The writer escapes a `"` as `\"`; the comment stripper must honour that escape, or
+    # the next read cuts the value at ` #` and the following stamp writes the stump back.
+    for cid, raw, want in (
+            ("dq", r'"Pin \"uv\" #12 or the cache misses"', 'Pin "uv" #12 or the cache misses'),
+            ("sq", "'It''s the #1 trap, not the second'", "It's the #1 trap, not the second")):
+        concept(repo, cid, meta=_meta_with(raw, "fix peer deps"))
+        for _ in range(2):
+            r = run(repo, "stamp", cid, "--by", "okf-wiki/haiku", "--generated", "--verified")
+            assert r.returncode == 0, r.stdout + r.stderr
+            meta = {c.id: c for c in okf.load(repo / ".wiki")}[cid].meta
+            assert meta["description"] == want
+    assert run(repo, "validate").returncode == 0
+
+
+def test_stamp_round_trips_source_titles_with_commas_quotes_and_hashes(repo):
+    titles = {"plain": ('"fix a, b and c"', "fix a, b and c"),
+              "revert": (r'"Revert \"fix #12, keep peers\""', 'Revert "fix #12, keep peers"')}
+    for cid, (raw, _) in titles.items():
+        concept(repo, cid, meta=_meta_with("d", raw))
+    for cid, (_, want) in titles.items():
+        for _ in range(2):
+            r = run(repo, "stamp", cid, "--by", "okf-wiki/haiku", "--generated", "--verified")
+            assert r.returncode == 0, r.stdout + r.stderr
+            meta = {c.id: c for c in okf.load(repo / ".wiki")}[cid].meta
+            assert meta["sources"] == [{"id": "s1", "resource": "commit:e4132f6", "title": want}]
+    r = run(repo, "validate")
+    assert r.returncode == 0, r.stdout

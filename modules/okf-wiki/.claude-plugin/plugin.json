@@ -1,6 +1,6 @@
 {
   "name": "okf-wiki",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A per-repo, self-healing agent wiki in Open Knowledge Format: a session-start digest, background capture and re-verification on cheap models, and a reflect loop that measures whether it helps.",
   "author": { "name": "David Allada", "email": "davidanilallada@gmail.com" },
   "license": "MIT"

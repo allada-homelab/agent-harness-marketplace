@@ -89,3 +89,9 @@ def test_split_requires_terminated_frontmatter():
         okf.split("---\ntype: x\n")
     with pytest.raises(okf.FrontmatterError, match="must start with ---"):
         okf.split("# no frontmatter\n")
+
+
+@pytest.mark.parametrize("value", ['say "hi" #1', "it's #1", "tab\t#1", 'a "b", c #d', "x \\ #y"])
+def test_dump_then_parse_keeps_values_with_a_comment_marker(value):
+    meta = {"description": value, "sources": [{"id": "s1", "resource": "r", "title": value}]}
+    assert okf.parse_frontmatter(okf.dump_frontmatter(meta)) == meta
