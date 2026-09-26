@@ -55,6 +55,20 @@ def test_teardown_survives_hand_deleted_worktree(repo):
     assert "feat/w" not in git("worktree", "list", cwd=root)
 
 
+
+def test_teardown_leaves_worktrees_it_cannot_see_alone(repo, tmp_path):
+    # A devcontainer and its host share .git but see each other's worktree paths as missing;
+    # tearing down one branch must not prune the other side's worktrees.
+    root, _ = merged_branch(repo)
+    assert run("start", "other", cwd=root).returncode == 0
+    other = root / ".claude" / "worktrees" / "feat-other"
+    hidden = tmp_path / "elsewhere"
+    other.rename(hidden)
+    r = run("teardown", "feat/w", cwd=root)
+    assert r.returncode == 0, r.stderr
+    hidden.rename(other)
+    assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=other).strip() == "feat/other"
+
 def merged_branch_with_base(repo, base, name="d"):
     """Like merged_branch(), but the worktree's recorded base is `base` (not main) and the
     merge lands on origin/<base> instead of origin/main."""
