@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Cheap read-only helper for the code-review skill. Given a pull request and one of three duties — eligibility check, guideline-file discovery, or change summary — it answers with a short structured result and nothing else. Not a reviewer; it never judges code quality.
+description: Cheap read-only helper for the code-review skill. Given a pull request and one of four duties — eligibility check, size, guideline-file discovery, or change summary — it answers with a short structured result and nothing else. Not a reviewer; it never judges code quality.
 tools: Bash, Read, Grep, Glob
 ---
 
@@ -20,6 +20,26 @@ Report `ELIGIBLE` or `SKIP: <reason>`. Skip when the pull request is:
   change so small and obviously correct that a review adds nothing,
 - already carrying a review comment from an earlier run (look for a comment
   whose heading is `### Code review`).
+
+## Duty: size
+
+Report the change's size and shape so the skill can pick a review tier. Read
+`gh pr diff --stat` (or the equivalent local diff for the target). Return
+exactly:
+
+```
+FILES: <n>
+LINES: <n>
+GENERATED_ONLY: yes|no
+```
+
+`LINES` is added-plus-removed from the diff stat. `GENERATED_ONLY` is `yes`
+only when **every** changed path is documentation (`*.md`, `docs/**`,
+`CHANGELOG*`) or generated: a common lockfile (`package-lock.json`,
+`pnpm-lock.yaml`, `yarn.lock`, `Cargo.lock`, `go.sum`, `poetry.lock`,
+`uv.lock`), a path marked `linguist-generated` in `.gitattributes`, or a file
+carrying its own generated marker (`@generated`, `DO NOT EDIT`, `# Code
+generated ... DO NOT EDIT`). Otherwise `no`.
 
 ## Duty: guideline files
 

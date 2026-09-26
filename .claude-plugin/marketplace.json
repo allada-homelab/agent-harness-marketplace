@@ -51,9 +51,9 @@
     },
     {
       "name": "code-review",
-      "description": "Automated pull-request review on every harness: parallel reviewers from five lenses, confidence scoring that drops anything under 80, one comment posted with gh.",
+      "description": "Automated pull-request review on every harness: a size gate sends a small or generated-only change to one combined reviewer, everything else to a five-lens fan-out plus batch scoring; anything under 80 is dropped, one comment posted with gh.",
       "category": "development",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "source": "./modules/code-review"
     },
     {
