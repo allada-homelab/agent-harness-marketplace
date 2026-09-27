@@ -1533,6 +1533,17 @@ def _reverify(root: Path, concepts: list[Concept], changed: set[str]) -> list[st
     return sorted(out)
 
 
+def _dirty_invalid(root: Path, concepts: list[Concept], dirty: set[str]) -> list[str]:
+    """ids of dirty concepts that still fail `okf.py validate` (an unfilled `<fill:` skeleton
+    mid-write, most often) — a scribe in flight, not something to commit, revert or delete."""
+    out = []
+    for c in concepts:
+        rel = Path(os.path.relpath(c.path, root)).as_posix()
+        if rel in dirty and any(f.level == "error" for f in check_concept(c)):
+            out.append(c.id)
+    return sorted(out)
+
+
 def hook_stop(ev: dict) -> str | None:
     if ev.get("agent_id") or ev.get("stop_hook_active"):
         return None
@@ -1566,7 +1577,12 @@ def hook_stop(ev: dict) -> str | None:
         reasons.append(NUDGE + (" This session changed anchor files of existing concepts; brief "
                                 f"the scribe to re-verify: {', '.join(ids)}." if ids else ""))
     elif (now["wiki_fp"] and not now["fp"] and now["wiki_fp"] != st.get("wiki_fp")
-          and now["wiki_fp"] != st.get("wiki_nudged")):
+          and now["wiki_fp"] != st.get("wiki_nudged")
+          and not _dirty_invalid(root, concepts, dirty)):
+        # A dirty concept that still fails validate is a scribe mid-write, not something to
+        # nudge about — every harness's Stop hook forces a turn to steer a block, so nudging
+        # here would busy-loop the agent for the scribe's whole 2-5 minute run. Emit nothing;
+        # the nudge fires naturally once the concept validates and its fingerprint moves.
         reasons.append(WIKI_COMMIT)
         st["wiki_nudged"] = now["wiki_fp"]
     _save_state(sf, st)

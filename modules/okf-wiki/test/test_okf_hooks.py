@@ -270,6 +270,21 @@ def test_wiki_left_uncommitted_after_the_work_is_committed_gets_one_reminder(rep
     assert stop(repo) is None
 
 
+def test_a_scribes_unfilled_skeleton_is_not_nudged_to_commit(repo):
+    committed_wiki(repo, "a")
+    start(repo)
+    commit_as(repo, "t@example.com", "fix")
+    assert stop(repo)["reason"].startswith(okf.NUDGE)          # the capture nudge
+    skeleton = GOOD_BODY.replace("Import fails at runtime.[^s1]", "<fill: symptom>")
+    concept(repo, "b", body=skeleton)                          # the scribe's in-flight skeleton
+    assert stop(repo) is None                                  # no nudge while it still fails validate
+    assert stop(repo) is None                                  # stays silent, never blocks the turn
+    concept(repo, "b")                                         # the scribe finishes filling it in
+    reason = stop(repo)["reason"]
+    assert reason.startswith("okf-wiki: .wiki/ has uncommitted") and "commit" in reason
+    assert stop(repo) is None
+
+
 def test_a_wiki_git_tracks_but_the_tree_lacks_is_loud(repo):
     committed_wiki(repo, "a")
     shutil.rmtree(repo / ".wiki")

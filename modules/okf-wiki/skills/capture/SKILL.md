@@ -50,5 +50,7 @@ scribe's steps yourself and mark the receipt ` (inline)`.
 ## 5. Commit it with the work
 
 Scribes write after you dispatch them, so a commit made before their receipts misses the
-concept. Once every receipt is in, commit `.wiki/` in the commit that carries the change
+concept, and a `.wiki/` file mid-write is not yet valid. Never commit, revert or delete a
+`.wiki/*` file while its scribe's receipt is outstanding — `python3 <okf> validate <id>` must
+pass first. Once every receipt is in, commit `.wiki/` in the commit that carries the change
 that taught it, or on this branch right after, so the knowledge ships in the same PR.
