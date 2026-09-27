@@ -1017,6 +1017,41 @@ def test_an_already_duplicated_database_heals_on_the_next_ingest(tmp_path):
     conn.close()
 
 
+def test_a_native_id_collision_between_different_content_keeps_both_sessions(tmp_path):
+    """A subagent tool can give its own log a generic filename (e.g. a workflow's
+    journal.jsonl), which becomes that file's native_id too — so unrelated
+    workflow runs collide on the SAME native_id despite being genuinely
+    different content. Deduping on native_id alone would silently drop one of
+    them; the content check must tell this apart from a true alias duplicate."""
+    root = tmp_path / "cache"
+    for alias, text in (("wf-a", "hello from workflow A"), ("wf-b", "a different workflow entirely")):
+        d = root / "raw/claude/host/projects" / alias
+        d.mkdir(parents=True)
+        line = {
+            "type": "user",
+            "uuid": "journal",  # same filename -> same native_id in both
+            "parentUuid": None,
+            "timestamp": "2026-01-01T00:00:01.000Z",
+            "cwd": "/tmp/repo",
+            "message": {"role": "user", "content": text},
+        }
+        (d / "journal.jsonl").write_text(json.dumps(line) + "\n")
+
+    errors, conn = _ingested(root)
+    assert errors == 0
+    rows = _rows(
+        conn,
+        "SELECT s.project_key, m.text FROM sessions s JOIN messages m"
+        " ON m.session_id = s.id WHERE s.native_id = 'journal' ORDER BY s.project_key",
+    )
+    # both survive — neither is silently treated as a duplicate of the other
+    assert rows == [
+        ("wf-a", "hello from workflow A"),
+        ("wf-b", "a different workflow entirely"),
+    ]
+    conn.close()
+
+
 # ------------------------------------------------------------------ general
 
 

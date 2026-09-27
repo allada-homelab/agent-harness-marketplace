@@ -1097,28 +1097,65 @@ def _record_file(conn, harness: str, relpath: str, st, status: str, error) -> in
     return cur.lastrowid
 
 
+def _duplicate_session_id(conn, harness: str, native_id: str, parsed: ParsedFile) -> int | None:
+    """The id of an existing (harness, native_id) session whose CONTENT matches
+    `parsed`, if any — same message count and the same first/last raw record.
+
+    A bare native_id match is not enough to call two sessions duplicates: a
+    subagent tool can give its own log a generic filename (e.g. a workflow's
+    `journal.jsonl`), and that filename becomes its native_id too, so unrelated
+    workflow runs collide on it. Treating that collision as a duplicate would
+    silently drop real, distinct content — the opposite of what this function
+    exists to prevent. A byte-identical alias copy (two host project
+    directories aliasing the same repo checkout) matches on all of these; a
+    coincidental id collision between different real content will not.
+    """
+    row = conn.execute(
+        "SELECT id FROM sessions WHERE harness = ? AND native_id = ? LIMIT 1",
+        (harness, native_id),
+    ).fetchone()
+    if row is None:
+        return None
+    session_id = row[0]
+    count = conn.execute(
+        "SELECT count(*) FROM messages WHERE session_id = ?", (session_id,)
+    ).fetchone()[0]
+    if count != len(parsed.messages):
+        return None
+    if count == 0:
+        return session_id  # both empty: nothing to compare, nothing to lose either way
+    first_raw = conn.execute(
+        "SELECT raw FROM messages WHERE session_id = ? ORDER BY ord ASC LIMIT 1",
+        (session_id,),
+    ).fetchone()[0]
+    last_raw = conn.execute(
+        "SELECT raw FROM messages WHERE session_id = ? ORDER BY ord DESC LIMIT 1",
+        (session_id,),
+    ).fetchone()[0]
+    if first_raw == parsed.messages[0].raw and last_raw == parsed.messages[-1].raw:
+        return session_id
+    return None
+
+
 def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool:
     """Insert the parsed session, its messages and tool calls. Returns False (and
-    inserts nothing) when a session for (harness, native_id) already exists under a
-    different file.
+    inserts nothing) when a session with matching CONTENT for (harness, native_id)
+    already exists under a different file — see `_duplicate_session_id`.
 
     Two host project directories can alias the same repo checkout — e.g. a plain
     symlink and a dotted one both pointing at the same clone — each holding a
     byte-identical copy of the same session file, and export has no way to tell
     they are the same repo. `_record_file` has already dropped this file's own
-    prior session via cascade, so
-    any row still present here belongs to another file. Keeping exactly one row per
-    (harness, native_id) is what lets an already-duplicated database heal on the next
-    `ingest` (no `--rebuild` needed): bumping PARSER_VERSION forces every duplicate
-    file to be re-parsed, and whichever one is processed last in this run keeps its
-    session — the two copies are identical content, so which survives does not
-    matter, only that exactly one does.
+    prior session via cascade, so a matching row still present here belongs to
+    another file. Keeping exactly one row per (harness, native_id) for TRUE
+    duplicates is what lets an already-duplicated database heal on the next
+    `ingest` (no `--rebuild` needed): bumping PARSER_VERSION forces every
+    duplicate file to be re-parsed, and whichever one is processed last in this
+    run keeps its session — the two copies are identical content, so which
+    survives does not matter, only that exactly one does.
     """
     s = parsed.session
-    if conn.execute(
-        "SELECT 1 FROM sessions WHERE harness = ? AND native_id = ? LIMIT 1",
-        (harness, s.native_id),
-    ).fetchone():
+    if _duplicate_session_id(conn, harness, s.native_id, parsed) is not None:
         return False
     cur = conn.execute(
         "INSERT INTO sessions (harness, native_id, file_id, cwd, project_key, kind,"
