@@ -691,6 +691,140 @@ def test_dsh_arguments_are_unwrapped_from_their_json_string(dsh_native_cache):
     ]
 
 
+# dsh's bash tool marks a failed run only by appending "[exit code: N]" to the
+# result text; isError/data.error stay unset even on a nonzero exit.
+DSH_BASH_EXIT_CODE_TOOLS = [
+    {
+        "type": "user/message",
+        "seq": 1,
+        "time": 1700000001000,
+        "data": {"id": "bu1", "role": "user", "content": [{"type": "text", "text": "run stuff"}]},
+    },
+    {
+        "type": "assistant/message",
+        "seq": 2,
+        "time": 1700000002000,
+        "data": {
+            "turn": 1,
+            "step": 1,
+            "message": {
+                "id": "ba1",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "running it"}],
+                "source": {"model": "model-epsilon"},
+            },
+        },
+    },
+    {
+        "type": "tool/call",
+        "seq": 3,
+        "time": 1700000003000,
+        "data": {"turn": 1, "step": 1, "callId": "bash-fail", "name": "bash", "arguments": '{"command": "false"}'},
+    },
+    {
+        "type": "tool/result",
+        "seq": 4,
+        "time": 1700000004000,
+        "data": {
+            "turn": 1,
+            "step": 1,
+            "message": {
+                "id": "bres-fail",
+                "role": "toolResult",
+                "content": [
+                    {
+                        "type": "tool-result",
+                        "toolCallId": "bash-fail",
+                        "isError": False,
+                        "content": [{"type": "text", "text": "boom\n[exit code: 1]"}],
+                    }
+                ],
+            },
+        },
+    },
+    {
+        "type": "tool/call",
+        "seq": 5,
+        "time": 1700000005000,
+        "data": {"turn": 1, "step": 2, "callId": "bash-ok", "name": "bash", "arguments": '{"command": "true"}'},
+    },
+    {
+        "type": "tool/result",
+        "seq": 6,
+        "time": 1700000006000,
+        "data": {
+            "turn": 1,
+            "step": 2,
+            "message": {
+                "id": "bres-ok",
+                "role": "toolResult",
+                "content": [
+                    {
+                        "type": "tool-result",
+                        "toolCallId": "bash-ok",
+                        "isError": False,
+                        "content": [{"type": "text", "text": "ok"}],
+                    }
+                ],
+            },
+        },
+    },
+    {
+        "type": "tool/call",
+        "seq": 7,
+        "time": 1700000007000,
+        "data": {"turn": 1, "step": 3, "callId": "read-fail", "name": "read", "arguments": '{"path": "x"}'},
+    },
+    {
+        "type": "tool/result",
+        "seq": 8,
+        "time": 1700000008000,
+        "data": {
+            "turn": 1,
+            "step": 3,
+            "message": {
+                "id": "rres",
+                "role": "toolResult",
+                "content": [
+                    {
+                        "type": "tool-result",
+                        "toolCallId": "read-fail",
+                        "isError": False,
+                        # a non-bash tool's own output can legitimately contain the same
+                        # text; it must not be read as that tool's exit status.
+                        "content": [{"type": "text", "text": "grep hit: '[exit code: 1]'"}],
+                    }
+                ],
+            },
+        },
+    },
+]
+
+
+@pytest.fixture
+def dsh_bash_exit_cache(tmp_path):
+    root = tmp_path / "cache"
+    session = root / "raw/dsh/host/sessions/--tmp-proj--/session-8888"
+    session.mkdir(parents=True)
+    (session / "session.jsonl.zstd").write_bytes(
+        _frame([{**DSH_HEADER, "id": "session-8888"}]) + _frame(DSH_BASH_EXIT_CODE_TOOLS)
+    )
+    return root
+
+
+def test_dsh_bash_is_error_is_derived_from_the_exit_code_marker(dsh_bash_exit_cache):
+    errors, conn = _ingested(dsh_bash_exit_cache)
+    assert errors == 0
+    assert _rows(
+        conn,
+        "SELECT t.call_id, t.name, t.is_error FROM tool_calls t ORDER BY t.call_id",
+    ) == [
+        ("bash-fail", "bash", 1),  # isError absent, but "[exit code: 1]" -> derived error
+        ("bash-ok", "bash", 0),  # no exit-code marker at all -> untouched
+        ("read-fail", "read", 0),  # non-bash tool: the marker text is not interpreted
+    ]
+
+
 # ------------------------------------------------------- claude tool results
 
 
@@ -798,6 +932,89 @@ def test_claude_tool_result_keeps_sibling_text_blocks(tmp_path):
     parsed = tr.parse_claude(path, "raw/claude/host/projects/-tmp-proj/s10.jsonl")
     (result,) = [m for m in parsed.messages if m.role == "tool_result"]
     assert result.text == "the user typed this alongside the result\nwidget-one"
+
+
+# ---------------------------------------------------- native-id dedup (aliasing)
+
+
+DUP_SESSION_LINE = {
+    "type": "user",
+    "uuid": "dup-session",
+    "parentUuid": None,
+    "timestamp": "2026-01-01T00:00:01.000Z",
+    "cwd": "/tmp/repo",
+    "message": {"role": "user", "content": "hello"},
+}
+
+
+def test_duplicate_native_id_across_aliased_project_dirs_keeps_one_session(tmp_path):
+    """Two host project dirs can alias the same repo (e.g. a plain `~/dotfiles`
+    symlink and `~/.dotted-name`), each holding a byte-identical copy of the same
+    session. Ingest must keep exactly one row per (harness, native_id), not one
+    per copy."""
+    root = tmp_path / "cache"
+    body = json.dumps(DUP_SESSION_LINE) + "\n"
+    for alias in ("alias-a", "alias-b"):
+        d = root / "raw/claude/host/projects" / alias
+        d.mkdir(parents=True)
+        # session id is the file stem; both files use the same one on purpose
+        (d / "dup-session.jsonl").write_text(body)
+
+    errors, conn = _ingested(root)
+    assert errors == 0
+    rows = _rows(
+        conn, "SELECT project_key FROM sessions WHERE native_id = 'dup-session'"
+    )
+    assert len(rows) == 1  # only one alias's copy survived
+    conn.close()
+
+
+def test_an_already_duplicated_database_heals_on_the_next_ingest(tmp_path):
+    """Simulates the pre-fix state: two files already indexed as separate sessions
+    under the same native_id, at a stale parser_version. Re-running `ingest` with
+    no `--rebuild` must collapse them to one row — bumping PARSER_VERSION is what
+    forces the stale duplicate to be re-parsed and caught by the dedup check."""
+    root = tmp_path / "cache"
+    body = json.dumps(DUP_SESSION_LINE) + "\n"
+    paths = {}
+    for alias in ("alias-a", "alias-b"):
+        d = root / "raw/claude/host/projects" / alias
+        d.mkdir(parents=True)
+        p = d / "dup-session.jsonl"
+        p.write_text(body)
+        paths[alias] = p
+
+    conn = tr.open_db(root)
+    for alias, p in paths.items():
+        st = p.stat()
+        cur = conn.execute(
+            "INSERT INTO files (harness, relpath, size, mtime, parser_version,"
+            " status, parsed_at) VALUES ('claude', ?, ?, ?, ?, 'ok', '')",
+            (
+                p.relative_to(root).as_posix(),
+                st.st_size,
+                int(st.st_mtime),
+                tr.PARSER_VERSION - 1,  # stale: forces a re-parse on next ingest
+            ),
+        )
+        conn.execute(
+            "INSERT INTO sessions (harness, native_id, file_id, kind)"
+            " VALUES ('claude', 'dup-session', ?, 'main')",
+            (cur.lastrowid,),
+        )
+    conn.commit()
+    assert conn.execute(
+        "SELECT count(*) FROM sessions WHERE native_id = 'dup-session'"
+    ).fetchone()[0] == 2  # the fabricated pre-fix duplicated state
+    conn.close()
+
+    tr.ingest(root, rebuild=False)
+
+    conn = tr.open_db(root)
+    assert conn.execute(
+        "SELECT count(*) FROM sessions WHERE native_id = 'dup-session'"
+    ).fetchone()[0] == 1
+    conn.close()
 
 
 # ------------------------------------------------------------------ general

@@ -452,7 +452,7 @@ def export_sources(
 
 # --------------------------------------------------------------- ingest: model
 
-PARSER_VERSION = 3
+PARSER_VERSION = 4
 
 # Migrations keyed on PRAGMA user_version (SQLITE-008). MIGRATIONS[0] is the
 # schema as of 0.6.3, idempotent for a database that already has it.
@@ -943,6 +943,12 @@ _DSH_KEEP = re.compile(
     r'"type":\s*"(?:' + "|".join(re.escape(t) for t in ("session", "session/title", *DSH_EVENTS)) + r')"'
 )
 
+# dsh's own bash tool never sets isError on a nonzero exit (verified against the
+# live cache: 0 of 53,873 dsh bash results had is_error=1); it only appends this
+# marker to the result text, and only on failure (no "[exit code: 0]" was ever
+# observed either) — so it is the only signal for a failed bash command.
+_DSH_BASH_EXIT_RE = re.compile(r"\[exit code:\s*(-?\d+)\]")
+
 
 def _dsh_arguments(value) -> str:
     """dsh writes tool/call arguments as a JSON string; unwrap it once so the column
@@ -1019,10 +1025,21 @@ def parse_dsh(path: Path, relpath: str) -> ParsedFile:
             texts = []
             for b in msg.get("content") or []:
                 if isinstance(b, dict) and b.get("type") in ("tool-result", "toolResult"):
+                    call_id = b.get("toolCallId") or ""
+                    block_text = _blocks_text(b.get("content"))
                     # data.error is the row-level failure; seen only with isError so far
                     is_error = bool(b.get("isError")) or bool(data.get("error"))
-                    results.append((b.get("toolCallId") or "", is_error))
-                    texts.append(_blocks_text(b.get("content")))
+                    if not is_error and last_assistant is not None:
+                        call = next(
+                            (c for c in last_assistant.tool_calls if c.call_id == call_id),
+                            None,
+                        )
+                        if call is not None and call.name == "bash":
+                            codes = _DSH_BASH_EXIT_RE.findall(block_text)
+                            if codes and int(codes[-1]) != 0:
+                                is_error = True
+                    results.append((call_id, is_error))
+                    texts.append(block_text)
             text = "\n".join(t for t in texts if t)
         source = msg.get("source") or {}
         usage = data.get("usage") or {}
@@ -1080,8 +1097,29 @@ def _record_file(conn, harness: str, relpath: str, st, status: str, error) -> in
     return cur.lastrowid
 
 
-def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> None:
+def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool:
+    """Insert the parsed session, its messages and tool calls. Returns False (and
+    inserts nothing) when a session for (harness, native_id) already exists under a
+    different file.
+
+    Two host project directories can alias the same repo checkout — e.g. a plain
+    symlink and a dotted one both pointing at the same clone — each holding a
+    byte-identical copy of the same session file, and export has no way to tell
+    they are the same repo. `_record_file` has already dropped this file's own
+    prior session via cascade, so
+    any row still present here belongs to another file. Keeping exactly one row per
+    (harness, native_id) is what lets an already-duplicated database heal on the next
+    `ingest` (no `--rebuild` needed): bumping PARSER_VERSION forces every duplicate
+    file to be re-parsed, and whichever one is processed last in this run keeps its
+    session — the two copies are identical content, so which survives does not
+    matter, only that exactly one does.
+    """
     s = parsed.session
+    if conn.execute(
+        "SELECT 1 FROM sessions WHERE harness = ? AND native_id = ? LIMIT 1",
+        (harness, s.native_id),
+    ).fetchone():
+        return False
     cur = conn.execute(
         "INSERT INTO sessions (harness, native_id, file_id, cwd, project_key, kind,"
         " parent_native_id, started_at, ended_at, model, title)"
@@ -1144,6 +1182,7 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> None
                 " (SELECT id FROM messages WHERE session_id = ?)",
                 (message_id, int(is_error), call_id, session_id),
             )
+    return True
 
 
 def ingest(dest_root: Path, rebuild: bool) -> int:
@@ -1158,7 +1197,7 @@ def ingest(dest_root: Path, rebuild: bool) -> int:
             "SELECT relpath, size, mtime, parser_version FROM files"
         )
     }
-    parsed_count = unchanged = errors = 0
+    parsed_count = unchanged = errors = duplicates = 0
     for harness, path in iter_raw_files(dest_root):
         relpath = path.relative_to(dest_root).as_posix()
         st = path.stat()
@@ -1175,10 +1214,14 @@ def ingest(dest_root: Path, rebuild: bool) -> int:
             continue
         with conn:
             file_id = _record_file(conn, harness, relpath, st, "ok", None)
-            _insert_parsed(conn, file_id, harness, parsed)
+            if not _insert_parsed(conn, file_id, harness, parsed):
+                duplicates += 1
         parsed_count += 1
     conn.close()
-    print(f"ingest: parsed={parsed_count} unchanged={unchanged} errors={errors}")
+    print(
+        f"ingest: parsed={parsed_count} unchanged={unchanged} errors={errors}"
+        f" duplicates={duplicates}"
+    )
     if parsed_count:
         # The FTS external-content index grows via triggers; a periodic merge
         # keeps searches fast on a large corpus.
