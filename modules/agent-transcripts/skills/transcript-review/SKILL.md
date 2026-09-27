@@ -162,6 +162,27 @@ entry was wrong. Fix that entry and run it again — do not drop the category.
 
 Then go back to step 2 with the next candidate. One session per loop.
 
+## Reviewing a backlog
+
+When there are more candidates than one turn can review, split the queue once, up front —
+never have two reviewers call `queue` independently. `--unreviewed` only excludes sessions
+that are already *recorded*; two independent calls before either has recorded anything hand
+out the same candidates twice.
+
+1. One `queue --unreviewed --json ...` call, run by the parent, with whatever
+   `--harness`/`--issue-threshold`/`--limit` the task needs. That prints a fixed, ordered list
+   of `native_id`s — the backlog.
+2. Partition that list into slices, one per child (by harness when the backlog spans more
+   than one, otherwise contiguous or round-robin chunks), and hand each child its own explicit
+   list of `native_id`s to review — not a `queue` command for it to run itself.
+3. Each child runs the whole loop above — `view` → answer the rubric → `record` — for every
+   id in its slice, one after another, **in a single turn**, then reports back once with how
+   many it reviewed. It never asks the parent whether to continue partway through its slice.
+4. The parent dispatches every child in parallel in one message, then waits on their
+   completion notices. It does not poll `findings.db` for progress, and it does not send a
+   follow-up nudge telling a child to keep going — a child that has not returned yet is still
+   working, not stalled. Run `rollup` once, after every child has reported.
+
 ## When the queue is done
 
 ```bash
