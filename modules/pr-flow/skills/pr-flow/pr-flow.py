@@ -19,6 +19,7 @@ from pathlib import Path
 
 GH = os.environ.get("PR_FLOW_GH", "gh")
 GIT = os.environ.get("PR_FLOW_GIT", "git")
+DEVC = os.environ.get("PR_FLOW_DEVC", "devc")
 PROTECTED = {"main", "master", "dev", "develop", "production", "release"}
 EXIT = {"ok": 0, "green": 0, "merged": 0, "checks-failed": 10, "conflict": 11, "review": 12,
         "closed": 13, "timeout": 14, "attempts-exhausted": 15}
@@ -485,6 +486,23 @@ def pr_merged_on_github(root, branch):
     return p.stdout.strip() not in ("0", "")
 
 
+def devc_down(wt):
+    # Nothing else removes a worktree's dev container, image and volumes once the worktree is
+    # gone, so reclaim them here when devc is installed. Best effort: never blocks teardown.
+    devc = shutil.which(DEVC)
+    if devc is None:
+        return
+    try:
+        p = subprocess.run([devc, "down", str(wt)], text=True, capture_output=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        warn(f"devc down {wt} failed ({e}); continuing")
+        return
+    if p.stdout.strip():
+        print(p.stdout.strip())
+    if p.returncode:
+        warn(f"devc down {wt} failed (rc {p.returncode}): {p.stderr.strip()}; continuing")
+
+
 def teardown(ctx, branch, dry_run=False):
     if branch in PROTECTED:
         raise Fail(f"{branch} is protected")
@@ -506,6 +524,7 @@ def teardown(ctx, branch, dry_run=False):
         print(f"would remove {wt}, delete {branch} locally and delete origin/{branch}")
         return
     if wt is not None:
+        devc_down(wt)
         git("worktree", "remove", "--force", wt, cwd=root)
     git("branch", "-D", branch, cwd=root)
     if subprocess.run([GIT, "push", "-q", "origin", "--delete", branch], cwd=root, capture_output=True).returncode:

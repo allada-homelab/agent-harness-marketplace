@@ -35,7 +35,8 @@ def repo(tmp_path):
 
 def run(*args, cwd, env=None, replay=None):
     """Run pr-flow.py with a fake gh. `replay` is a list of JSON-able dicts the fake returns for successive `gh pr view` calls."""
-    e = dict(os.environ, PR_FLOW_GH=str(FAKE_GH), PR_FLOW_SLEEP="0")
+    # PR_FLOW_DEVC names no executable by default, so teardown never reaches a real devc/docker.
+    e = dict(os.environ, PR_FLOW_GH=str(FAKE_GH), PR_FLOW_SLEEP="0", PR_FLOW_DEVC="pr-flow-test-no-devc")
     if replay is not None:
         import json
         p = cwd / ".gh-replay.json"

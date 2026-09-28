@@ -31,6 +31,53 @@ def test_teardown_removes_worktree_branch_and_state(repo):
     assert last(r) == "pr-flow: teardown ok feat/w"
 
 
+def fake_devc(tmp_path, rc=0):
+    """A devc that logs its argv and whether the worktree still existed when it ran."""
+    log = tmp_path / "devc.log"
+    devc = tmp_path / "devc"
+    devc.write_text(f"#!/bin/sh\n[ -d \"$2\" ] && s=present || s=gone\n"
+                    f"echo \"$* $s\" >> '{log}'\necho 'devc: removed container abc'\n"
+                    f"echo 'devc: boom' >&2\nexit {rc}\n")
+    devc.chmod(0o755)
+    return devc, log
+
+
+def test_teardown_runs_devc_down_before_removing_the_worktree(repo, tmp_path):
+    root, wt = merged_branch(repo)
+    devc, log = fake_devc(tmp_path)
+    r = run("teardown", "feat/w", cwd=root, env={"PR_FLOW_DEVC": str(devc)})
+    assert r.returncode == 0, r.stderr
+    assert log.read_text() == f"down {wt} present\n"
+    assert "devc: removed container abc" in r.stdout
+    assert not wt.exists()
+
+
+def test_teardown_continues_when_devc_down_fails(repo, tmp_path):
+    root, wt = merged_branch(repo)
+    devc, _ = fake_devc(tmp_path, rc=1)
+    r = run("teardown", "feat/w", cwd=root, env={"PR_FLOW_DEVC": str(devc)})
+    assert r.returncode == 0, r.stderr
+    assert "devc down" in r.stderr and "rc 1" in r.stderr and "devc: boom" in r.stderr
+    assert not wt.exists()
+    assert last(r) == "pr-flow: teardown ok feat/w"
+
+
+def test_teardown_without_devc_is_silent_about_it(repo):
+    root, wt = merged_branch(repo)
+    r = run("teardown", "feat/w", cwd=root)
+    assert r.returncode == 0, r.stderr
+    assert "devc" not in r.stderr
+    assert not wt.exists()
+
+
+def test_gc_dry_run_never_calls_devc(repo, tmp_path):
+    root, wt = merged_branch(repo)
+    devc, log = fake_devc(tmp_path)
+    r = run("gc", "--dry-run", cwd=root, env={"PR_FLOW_DEVC": str(devc)}, replay={"merged_branches": ["feat/w"]})
+    assert r.returncode == 0, r.stderr
+    assert not log.exists() and wt.exists()
+
+
 def test_teardown_from_inside_the_worktree_reexecs(repo):
     _, wt = merged_branch(repo)
     r = run("teardown", cwd=wt)

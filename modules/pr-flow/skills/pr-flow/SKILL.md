@@ -92,7 +92,10 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    itself). It removes the worktree, deletes the local branch **and deletes the
    branch on origin**; a branch counts as merged when it is an ancestor of
    `origin/<base>` or GitHub has a merged PR for it (squash and rebase merges
-   leave no ancestor). `pr-flow gc` tears down every worktree whose PR has
+   leave no ancestor). When a `devc` executable is on PATH it first runs
+   `devc down <worktree>` to remove the worktree's dev container, image and
+   per-worktree volumes; a failure there is a warning, never a blocked teardown.
+   `pr-flow gc` tears down every worktree whose PR has
    merged; run it when you notice stale worktrees.
 
 ## Editing on main anyway
