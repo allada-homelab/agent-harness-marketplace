@@ -45,7 +45,12 @@ skills.
   (`main` or `subagent`), `parent_native_id`, `started_at`, `ended_at`, `model`, `title`.
 - `messages` — per session: `ord`, `native_id`, `parent_native_id`, `on_main_path`, `role`
   (`user`, `assistant`, `tool_result`, `system`), `ts`, `text`, `model`, `stop_reason`,
-  token counts, the original record as `raw`, and `injected`. `injected` is `1` for a message
+  token counts, the original record as `raw`, and `injected`. The token counts are
+  `input_tokens`, `output_tokens`, `cache_read_tokens` and `cache_write_tokens`, as the
+  harness reported them: every harness reports `input_tokens` **exclusive** of the prompt
+  cache, so the prompt a turn actually processed is `input_tokens + cache_read_tokens +
+  cache_write_tokens` (`NULL` cache columns mean the harness did not report them).
+  `injected` is `1` for a message
   that is standing-instruction boilerplate — a `system` message, or any non-`tool_result`
   message whose normalized text appears in several distinct sessions (a standing instruction
   the harness prepends to every session). The `annotate` pass computes it; `ingest` runs it
@@ -57,7 +62,10 @@ skills.
   triggers.
 
 `text` holds text blocks only (no tool arguments, no thinking). Re-parsing a file deletes
-its sessions first, so rows never duplicate.
+its sessions first, so rows never duplicate. A file that is no longer in the raw set loses
+its rows on the next `ingest`; that includes a dsh `session.jsonl.zstd` once a
+`session.v3.jsonl.zstd` sits beside it, since dsh's v3 upgrade rewrites the whole history
+into the v3 file.
 
 ## Privacy invariants
 
