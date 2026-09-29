@@ -83,6 +83,19 @@ Main conversations versus subagent transcripts:
 SELECT harness, kind, count(*) FROM sessions GROUP BY 1, 2
 ```
 
+Tokens processed per harness. `input_tokens` excludes the prompt cache on every harness,
+so summing it alone undercounts a cache-heavy session by an order of magnitude; add the
+cache columns (`NULL` where the harness did not report them):
+
+```sql
+SELECT harness, sum(input_tokens) AS uncached, sum(cache_read_tokens) AS cache_read,
+       sum(cache_write_tokens) AS cache_write,
+       sum(coalesce(input_tokens, 0) + coalesce(cache_read_tokens, 0)
+           + coalesce(cache_write_tokens, 0)) AS prompt_processed,
+       sum(output_tokens) AS output
+FROM messages GROUP BY 1
+```
+
 ## Full-text search
 
 The `messages_fts` index searches message text. Search returns **where** something was

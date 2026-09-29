@@ -452,7 +452,7 @@ def export_sources(
 
 # --------------------------------------------------------------- ingest: model
 
-PARSER_VERSION = 4
+PARSER_VERSION = 5
 
 # Migrations keyed on PRAGMA user_version (SQLITE-008). MIGRATIONS[0] is the
 # schema as of 0.6.3, idempotent for a database that already has it.
@@ -511,6 +511,12 @@ MIGRATIONS: list[list[str]] = [
         "CREATE INDEX IF NOT EXISTS messages_injected ON messages(injected)",
         "CREATE INDEX IF NOT EXISTS messages_harness ON messages(harness)",
         "CREATE INDEX IF NOT EXISTS tool_calls_harness ON tool_calls(harness)",
+    ],
+    # v3: prompt-cache token counts. Every harness reports input_tokens exclusive
+    # of the cache; PARSER_VERSION 5 re-parses old rows so these fill in place.
+    [
+        "ALTER TABLE messages ADD COLUMN cache_read_tokens INTEGER",
+        "ALTER TABLE messages ADD COLUMN cache_write_tokens INTEGER",
     ],
 ]
 
@@ -579,7 +585,9 @@ CREATE TABLE IF NOT EXISTS messages (
     raw              TEXT NOT NULL,
     injected         INTEGER NOT NULL DEFAULT 0,
     norm_key         TEXT NOT NULL DEFAULT '',
-    harness          TEXT NOT NULL DEFAULT ''
+    harness          TEXT NOT NULL DEFAULT '',
+    cache_read_tokens  INTEGER,
+    cache_write_tokens INTEGER
 );
 CREATE TABLE IF NOT EXISTS tool_calls (
     id                INTEGER PRIMARY KEY,
@@ -642,6 +650,8 @@ class Message:
     output_tokens: int | None
     raw: str
     injected: bool = False
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)  # assistant only
     results: list[tuple[str, bool]] = field(default_factory=list)  # tool_result only
 
@@ -701,6 +711,14 @@ def iter_raw_files(dest_root: Path) -> list[tuple[str, Path]]:
         ("dsh", "*/sessions/*/*/session*.jsonl.zstd"),
     ):
         found += [(harness, p) for p in (raw / harness).glob(pattern) if p.is_file()]
+    # dsh's v3 upgrade rewrites a session's whole history into session.v3.jsonl.zstd
+    # and leaves the legacy file beside it; indexing both would count it twice.
+    found = [
+        (h, p)
+        for h, p in found
+        if not (h == "dsh" and p.name == "session.jsonl.zstd"
+                and p.with_name("session.v3.jsonl.zstd").is_file())
+    ]
     return sorted(found, key=lambda row: (row[0], str(row[1])))
 
 
@@ -827,6 +845,8 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
                 stop_reason=msg.get("stop_reason"),
                 input_tokens=usage.get("input_tokens"),
                 output_tokens=usage.get("output_tokens"),
+                cache_read_tokens=usage.get("cache_read_input_tokens"),
+                cache_write_tokens=usage.get("cache_creation_input_tokens"),
                 raw=line,
                 tool_calls=calls,
                 results=results,
@@ -901,6 +921,8 @@ def parse_pi(path: Path, relpath: str) -> ParsedFile:
                 stop_reason=msg.get("stopReason"),
                 input_tokens=usage.get("input"),
                 output_tokens=usage.get("output"),
+                cache_read_tokens=usage.get("cacheRead"),
+                cache_write_tokens=usage.get("cacheWrite"),
                 raw=line,
                 tool_calls=calls,
                 results=results,
@@ -1061,6 +1083,8 @@ def parse_dsh(path: Path, relpath: str) -> ParsedFile:
             ),
             input_tokens=usage.get("inputTokens"),
             output_tokens=usage.get("outputTokens"),
+            cache_read_tokens=usage.get("cacheReadTokens"),
+            cache_write_tokens=usage.get("cacheWriteTokens"),
             raw=line,
             tool_calls=calls,
             results=results,
@@ -1181,8 +1205,9 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool
         mcur = conn.execute(
             "INSERT INTO messages (session_id, ord, native_id, parent_native_id,"
             " on_main_path, role, ts, text, model, stop_reason, input_tokens,"
-            " output_tokens, raw, injected, norm_key, harness)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " output_tokens, raw, injected, norm_key, harness, cache_read_tokens,"
+            " cache_write_tokens)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session_id,
                 m.ord,
@@ -1200,6 +1225,8 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool
                 int(m.injected),
                 _norm_key(m.text),
                 harness,
+                m.cache_read_tokens,
+                m.cache_write_tokens,
             ),
         )
         message_id = mcur.lastrowid
@@ -1235,7 +1262,15 @@ def ingest(dest_root: Path, rebuild: bool) -> int:
         )
     }
     parsed_count = unchanged = errors = duplicates = 0
-    for harness, path in iter_raw_files(dest_root):
+    raw_files = iter_raw_files(dest_root)
+    # A row whose file left the indexed set (deleted, or a dsh legacy log now
+    # superseded by its v3 sibling) is stale; the cascade drops its sessions, so an
+    # incremental run ends where --rebuild would.
+    current = {path.relative_to(dest_root).as_posix() for _, path in raw_files}
+    stale = [relpath for relpath in known if relpath not in current]
+    with conn:
+        conn.executemany("DELETE FROM files WHERE relpath = ?", [(r,) for r in stale])
+    for harness, path in raw_files:
         relpath = path.relative_to(dest_root).as_posix()
         st = path.stat()
         if known.get(relpath) == (st.st_size, int(st.st_mtime), PARSER_VERSION):
@@ -1257,7 +1292,7 @@ def ingest(dest_root: Path, rebuild: bool) -> int:
     conn.close()
     print(
         f"ingest: parsed={parsed_count} unchanged={unchanged} errors={errors}"
-        f" duplicates={duplicates}"
+        f" duplicates={duplicates} removed={len(stale)}"
     )
     if parsed_count:
         # The FTS external-content index grows via triggers; a periodic merge

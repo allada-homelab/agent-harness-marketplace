@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -245,6 +246,64 @@ def test_iter_raw_files_finds_dsh_v3_sessions_and_ingest_parses_them(tmp_path):
         ).fetchone()[0]
         == 1
     )
+    conn.close()
+
+
+def _legacy_and_v3_pair(cache) -> tuple[Path, Path]:
+    """One dsh session dir holding both names: dsh's v3 upgrade rewrites the whole
+    history into session.v3.jsonl.zstd and leaves the legacy file beside it."""
+    d = cache / "raw/dsh/host/sessions/--tmp-proj--/session-both"
+    d.mkdir()
+    header = {**DSH_HEADER, "id": "session-both"}
+    legacy = d / "session.jsonl.zstd"
+    legacy.write_bytes(_frame([header]) + _frame(DSH_BODY[:4]))
+    v3 = d / "session.v3.jsonl.zstd"
+    # the v3 copy is a superset: same history plus the later turns
+    v3.write_bytes(_frame([{**header, "version": 3}]) + _frame(DSH_BODY))
+    return legacy, v3
+
+
+def test_iter_raw_files_prefers_v3_over_a_legacy_sibling(tmp_path):
+    cache = build_cache(tmp_path)
+    legacy, v3 = _legacy_and_v3_pair(cache)
+    found = [p for h, p in tr.iter_raw_files(cache) if h == "dsh"]
+    assert v3 in found
+    assert legacy not in found
+
+    tr.ingest(cache, rebuild=False)
+    conn = tr.open_db(cache)
+    assert _rows(
+        conn,
+        "SELECT f.relpath FROM sessions s JOIN files f ON f.id = s.file_id"
+        " WHERE s.native_id = 'session-both'",
+    ) == [(v3.relative_to(cache).as_posix(),)]
+    conn.close()
+
+
+def test_a_legacy_session_already_indexed_is_dropped_once_v3_appears(tmp_path, capsys):
+    """An index built before the v3 file existed holds the legacy copy; the next
+    incremental ingest must replace it, not keep both (their content differs, so
+    the content-match dedupe would not catch it)."""
+    cache = build_cache(tmp_path)
+    legacy, v3 = _legacy_and_v3_pair(cache)
+    v3_bytes = v3.read_bytes()
+    v3.unlink()
+    tr.ingest(cache, rebuild=False)  # indexes the legacy file
+    v3.write_bytes(v3_bytes)
+    capsys.readouterr()
+
+    tr.ingest(cache, rebuild=False)
+    assert "removed=1" in capsys.readouterr().out
+    conn = tr.open_db(cache)
+    assert _rows(
+        conn,
+        "SELECT f.relpath FROM sessions s JOIN files f ON f.id = s.file_id"
+        " WHERE s.native_id = 'session-both'",
+    ) == [(v3.relative_to(cache).as_posix(),)]
+    assert _rows(
+        conn, "SELECT count(*) FROM files WHERE relpath = ?",
+        legacy.relative_to(cache).as_posix(),
+    ) == [(0,)]
     conn.close()
 
 
@@ -932,6 +991,115 @@ def test_claude_tool_result_keeps_sibling_text_blocks(tmp_path):
     parsed = tr.parse_claude(path, "raw/claude/host/projects/-tmp-proj/s10.jsonl")
     (result,) = [m for m in parsed.messages if m.role == "tool_result"]
     assert result.text == "the user typed this alongside the result\nwidget-one"
+
+
+# ------------------------------------------------------------- cache tokens
+
+
+def _write_lines(path: Path, records) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    return path
+
+
+def test_every_harness_stores_cache_read_and_write_tokens(tmp_path):
+    """Every harness reports `input` exclusive of the prompt cache, so the cache
+    reads and writes must land in their own columns or processed volume is lost."""
+    root = tmp_path / "cache"
+    _write_lines(
+        root / "raw/claude/host/projects/-tmp-proj/c1.jsonl",
+        [
+            {
+                "type": "assistant",
+                "uuid": "ca1",
+                "parentUuid": None,
+                "timestamp": "2026-01-01T00:00:01.000Z",
+                "message": {
+                    "role": "assistant",
+                    "usage": {
+                        "input_tokens": 2,
+                        "output_tokens": 3,
+                        "cache_read_input_tokens": 500,
+                        "cache_creation_input_tokens": 70,
+                    },
+                    "content": [{"type": "text", "text": "claude reply"}],
+                },
+            }
+        ],
+    )
+    _write_lines(
+        root / "raw/pi/host/default/2026-01-01T00-00-00-000Z_p1.jsonl",
+        [
+            {"type": "session", "version": 3, "id": "p1", "cwd": "/tmp/proj"},
+            {
+                "type": "message",
+                "id": "pa1",
+                "parentId": None,
+                "timestamp": "2026-01-01T00:00:01.000Z",
+                "message": {
+                    "role": "assistant",
+                    "usage": {"input": 4, "output": 5, "cacheRead": 600, "cacheWrite": 80},
+                    "content": [{"type": "text", "text": "pi reply"}],
+                },
+            },
+        ],
+    )
+    d = root / "raw/dsh/host/sessions/--tmp-proj--/session-tok"
+    d.mkdir(parents=True)
+    body = json.loads(json.dumps(DSH_BODY[:4]))
+    body[3]["data"]["usage"] = {
+        "inputTokens": 6,
+        "outputTokens": 7,
+        "cacheReadTokens": 700,
+        "cacheWriteTokens": 90,
+    }
+    (d / "session.v3.jsonl.zstd").write_bytes(
+        _frame([{**DSH_HEADER, "id": "session-tok", "version": 3}]) + _frame(body)
+    )
+
+    errors, conn = _ingested(root)
+    assert errors == 0
+    assert _rows(
+        conn,
+        "SELECT harness, input_tokens, output_tokens, cache_read_tokens,"
+        " cache_write_tokens FROM messages WHERE role = 'assistant' ORDER BY harness",
+    ) == [
+        ("claude", 2, 3, 500, 70),
+        ("dsh", 6, 7, 700, 90),
+        ("pi", 4, 5, 600, 80),
+    ]
+    conn.close()
+
+
+def test_cache_tokens_stay_null_when_the_harness_omits_them(cache):
+    _, conn = _ingested(cache)
+    assert _rows(
+        conn,
+        "SELECT count(*) FROM messages WHERE role = 'assistant'"
+        " AND (cache_read_tokens IS NOT NULL OR cache_write_tokens IS NOT NULL)",
+    ) == [(0,)]
+    conn.close()
+
+
+def test_a_v2_database_gains_the_cache_columns_and_reparses(tmp_path):
+    """An index from before the cache columns migrates in place, and the parser
+    bump re-parses every file so the new columns fill without `--rebuild`."""
+    root = tmp_path / "cache"
+    root.mkdir()
+    conn = sqlite3.connect(root / "transcripts.db")
+    conn.execute("PRAGMA journal_mode=WAL")
+    for step in tr.MIGRATIONS[:2]:
+        for statement in step:
+            conn.execute(statement)
+    conn.execute("PRAGMA user_version = 2")
+    conn.commit()
+    conn.close()
+
+    conn = tr.open_db(root)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+    assert {"cache_read_tokens", "cache_write_tokens"} <= cols
+    assert tr.PARSER_VERSION > 4  # rows written by version 4 lack the cache columns
+    conn.close()
 
 
 # ---------------------------------------------------- native-id dedup (aliasing)

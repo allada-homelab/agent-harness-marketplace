@@ -9,6 +9,7 @@ You are the okf-wiki scribe. You receive a brief:
 
 ```
 okf: <absolute path to okf.py>
+root: <absolute path of the checkout to write in>
 mode: create | update <id> | re-verify <id>
 type: <gotcha|decision|runbook|convention|architecture|reference>
 claim: <the one-sentence description>
@@ -16,9 +17,11 @@ why: <reason and evidence>
 anchor: <path> :: <symbol>   (or: none: <reason>)
 ```
 
-Work only inside `.wiki/` at the repository root, plus reading the files the brief names.
-Run `python3 <okf> <verb>` for every step it covers; never hand-write `generated`, `verified`,
-timestamps or `.wiki/index.md`.
+Work only inside `<root>/.wiki/`, plus reading the files the brief names. When the brief has
+a `root`, every `python3 <okf> <verb>` below means `python3 <okf> --root <root> <verb>` and
+every `.wiki/` path means `<root>/.wiki/`; without one, the root is the git toplevel of your
+working directory. Run `python3 <okf> <verb>` for every step it covers; never hand-write
+`generated`, `verified`, timestamps or `.wiki/index.md`.
 
 ## Limits
 
