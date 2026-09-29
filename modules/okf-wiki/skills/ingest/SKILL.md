@@ -39,6 +39,10 @@ slice, at most that many in flight, each with: the slice (the exact command or f
 `okf: <okf>`, and the current concept ids from `.wiki/index.md` so it proposes updates
 instead of duplicates.
 
+The capture skill's stall rule holds for explorers too: an explorer that has not answered
+within minutes is cold-starting or reading history, not wedged. Never interrupt one, or do its
+slice yourself, before about 30 minutes of wall-clock time without a reply.
+
 ## 4. Land
 
 Explorers return proposed briefs. Merge duplicates across explorers, apply the capture bar
@@ -46,5 +50,7 @@ yourself, and drop anything weak; fewer strong concepts beat many thin ones. Kee
 `--max N` (default 15), strongest first: a flood of thin concepts pushes the session digest
 into titles-only mode. Show the user the list (type, id, one-line claim) and land it on a
 yes, dropping any they strike. Hand the survivors to scribes exactly as the capture skill does (one concept per scribe, at most the
-fan-out width in flight). Finish with one summary receipt, `wiki: +<n> concepts (ingest)`,
-followed by the per-concept receipt lines.
+fan-out width in flight), adding the `root:` line to each explorer brief, and follow its
+stall rule and its commit rules: commit in `<root>` only after every receipt, and never
+create stubs yourself or delete a concept file in a shared checkout. Finish with one summary
+receipt, `wiki: +<n> concepts (ingest)`, followed by the per-concept receipt lines.

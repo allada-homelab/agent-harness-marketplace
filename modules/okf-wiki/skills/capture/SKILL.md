@@ -23,10 +23,11 @@ nothing; never probe with plain `new`, which creates the file. Updating beats cr
 
 ## 2. Brief
 
-One brief per concept, three to six lines:
+One brief per concept, three to seven lines:
 
 ```
 okf: <absolute path of ../wiki/okf.py>
+root: <absolute path of the checkout the change lives in — your task's worktree>
 mode: create | update <id> | re-verify <id>
 type: gotcha
 claim: <one sentence, the description to write>
@@ -34,12 +35,23 @@ why: <the reason, the evidence you saw: commits, files, error text>
 anchor: <path> :: <symbol>   (or: none: <reason>)
 ```
 
+`root` is not optional when you work in a worktree: without it the scribe writes into the
+`.wiki/` of whatever checkout its own working directory is in, which can be the shared main
+checkout another session is using.
+
 ## 3. Dispatch
 
 Send each brief to `okf-wiki:scribe` in the background (see "Dispatching" in the wiki
 contract). For several briefs run `python3 <okf> fanout` and keep at most that many scribes
 in flight; give each a different concept so no two write the same file. Pass `--fanout N`
 from the arguments through to `fanout` if the user gave one.
+
+**Stall rule.** A scribe that has not answered is working, not wedged: a cold start alone can
+take minutes with nothing on disk. Do not interrupt, re-dispatch or hand-write its concept
+before about 30 minutes of wall-clock time since dispatch, and not even then without evidence
+of no progress — no receipt, and its `.wiki/<id>.md` absent or with an mtime unchanged for
+that whole stretch. Past that bar, stop that one scribe first, then redo its concept (a new
+scribe, or inline with ` (inline)`), so two writers never share a file.
 
 ## 4. Receipt
 
@@ -51,6 +63,9 @@ scribe's steps yourself and mark the receipt ` (inline)`.
 
 Scribes write after you dispatch them, so a commit made before their receipts misses the
 concept, and a `.wiki/` file mid-write is not yet valid. Never commit, revert or delete a
-`.wiki/*` file while its scribe's receipt is outstanding — `python3 <okf> validate <id>` must
-pass first. Once every receipt is in, commit `.wiki/` in the commit that carries the change
-that taught it, or on this branch right after, so the knowledge ships in the same PR.
+`.wiki/*` file while its scribe's receipt is outstanding — `python3 <okf> --root <root>
+validate <id>` must pass first. Once every receipt is in, commit `.wiki/` in `<root>`, in the
+commit that carries the change that taught it or on this branch right after, so the knowledge
+ships in the same PR. Never `rm` or otherwise delete a concept file in a shared checkout (the
+main checkout while you work in a worktree): another session's scribe may be writing it. To
+drop a concept of your own, remove it on your branch after its receipt.
