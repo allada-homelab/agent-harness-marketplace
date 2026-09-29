@@ -25,7 +25,7 @@
       "name": "agent-transcripts",
       "description": "Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a derived sqlite database.",
       "category": "development",
-      "version": "0.6.9",
+      "version": "0.7.0",
       "source": "./modules/agent-transcripts"
     },
     {
@@ -74,7 +74,7 @@
       "name": "okf-wiki",
       "description": "A per-repo, self-healing agent wiki in Open Knowledge Format: a session-start digest, background capture and re-verification on cheap models, and a reflect loop that measures whether it helps.",
       "category": "development",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "source": "./modules/okf-wiki"
     }
   ]

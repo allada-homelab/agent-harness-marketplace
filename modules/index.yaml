@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: agent-transcripts
-  version: 0.6.9
+  version: 0.7.0
   kinds:
   - skills
   - dsh-plugin
@@ -342,7 +342,7 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: okf-wiki
-  version: 0.1.4
+  version: 0.1.5
   kinds:
   - skills
   - dsh-plugin
