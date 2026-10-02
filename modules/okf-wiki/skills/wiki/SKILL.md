@@ -101,7 +101,8 @@ with `python3` from anywhere inside the repository. The last line is always
 | `fanout [--fanout N]` | parallel width: flag, else `OKF_WIKI_FANOUT`, else 4 |
 | `stats [--mark]` | effectiveness counts for the reflect skill |
 
-Never edit `.wiki/index.md` by hand; the hooks rebuild it. There is no `log.md`: history is
+Never edit `.wiki/index.md` by hand; `new`, `stamp`, `mv` and the hooks rebuild it, and
+`validate` fails a stale one (fix: `okf.py index`). There is no `log.md`: history is
 `git log -- .wiki/`.
 
 ## Receipts

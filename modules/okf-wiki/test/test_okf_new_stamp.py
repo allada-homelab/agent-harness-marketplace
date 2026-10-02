@@ -130,3 +130,14 @@ def test_stamp_round_trips_source_titles_with_commas_quotes_and_hashes(repo):
             assert meta["sources"] == [{"id": "s1", "resource": "commit:e4132f6", "title": want}]
     r = run(repo, "validate")
     assert r.returncode == 0, r.stdout
+
+
+def test_stamp_refreshes_the_index_after_the_scribe_fills_the_skeleton(repo):
+    # The scribe's sequence: `new` indexes the skeleton, it fills the file by hand, then stamps.
+    assert run(repo, "new", "gotcha", "pnpm-peer-trap", "--title", "x").returncode == 0
+    concept(repo, "pnpm-peer-trap")
+    assert run(repo, "stamp", "pnpm-peer-trap", "--by", "okf-wiki/haiku", "--generated").returncode == 0
+    index = (repo / ".wiki" / "index.md").read_text()
+    assert "<fill:" not in index
+    assert "add them to the root package.json" in index
+    assert run(repo, "validate").returncode == 0

@@ -126,3 +126,12 @@ def test_identifiers_and_env_lookups_are_not_secrets(repo):
                         '`api_key=settings.OPENAI_KEY` and `password: ${DB_PASSWORD}`\n')
     concept(repo, "code", body=body)
     assert not any("secret" in e for e in msgs(repo, "error"))
+
+
+def test_stale_index_is_an_error(repo):
+    concept(repo, "a")
+    assert run(repo, "index").returncode == 0
+    assert msgs(repo, "error") == []
+    idx = repo / ".wiki" / "index.md"
+    idx.write_text(idx.read_text().replace("add them to", "<fill: one-sentence claim>"))
+    assert "index: index.md is out of date; run `okf.py index`" in msgs(repo, "error")

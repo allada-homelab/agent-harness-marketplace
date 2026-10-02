@@ -660,6 +660,10 @@ def check_bundle(bundle: Path, concepts: list[Concept]) -> list[Finding]:
                     findings.append(Finding("error", "index", "root index.md frontmatter may only carry okf_version"))
         except FrontmatterError as e:
             findings.append(Finding("error", "index", f"index.md: {e}"))
+    for path, text in build_indexes(bundle, concepts).items():
+        if path.exists() and path.read_bytes() != text.encode("utf-8"):
+            rel = path.relative_to(bundle).as_posix()
+            findings.append(Finding("error", "index", f"{rel} is out of date; run `okf.py index`"))
     return findings
 
 
@@ -911,6 +915,8 @@ def cmd_stamp(args) -> int:
     root, bundle = _root_and_bundle(args)
     c = find(load(bundle), args.id)
     stamp(root, c, args.by, args.generated, args.verified, args.human_confirmed)
+    # `new` indexed the unfilled skeleton; stamp is the scribe's last write, so refresh here.
+    write_indexes(bundle, load(bundle))
     status("stamp", "ok", args.id)
     return 0
 
