@@ -476,6 +476,23 @@ def do_merge(ctx, cwd, pr):
     return "merged"
 
 
+def paths_outside(ctx, cwd, head, prefix):
+    """Paths the PR changes at `head` that are not under `prefix` — None when git cannot list them.
+
+    Diffed against the exact commit watch saw green, not the PR's current file list, so a push
+    after that poll cannot sneak a file outside `prefix` past the check."""
+    base = branch_base(ctx.main_root, ctx.branch)
+    try:
+        fetch_tracking(base, cwd)
+        changed = git("diff", "--name-only", f"origin/{base}...{head}", cwd=cwd).splitlines()
+    except Fail:
+        return None
+    if not changed:
+        return None
+    root = prefix.strip("/") + "/"
+    return [p for p in changed if not p.startswith(root)]
+
+
 def pr_merged_on_github(root, branch):
     """True/False from `gh pr list --state merged`, None when gh cannot answer."""
     p = subprocess.run([GH, "pr", "list", "--head", branch, "--state", "merged", "--json", "number", "--jq", "length"],
@@ -661,12 +678,19 @@ def cmd_watch(a):
             base = branch_base(ctx.main_root, ctx.branch)
             print(f"head is behind origin/{base}; a repo that requires up-to-date branches will refuse the merge "
                   f"— in the worktree: git fetch origin && git merge origin/{base}, push, watch again")
-    if verdict == "green" and a.merge:
+    if verdict == "green" and (a.merge or a.merge_if_only):
         if grace_expired:
             print("this head's checks are unverified (none reported, or the PR head lagged the push); "
                   "refusing --merge — merge by hand once you have evidence")
         else:
-            verdict = do_merge(ctx, cwd, pr)
+            outside = paths_outside(ctx, cwd, pr.get("headRefOid"), a.merge_if_only) if a.merge_if_only else []
+            if outside is None:
+                print(f"could not list the files this PR changes; not merging under --merge-if-only {a.merge_if_only}")
+            elif outside:
+                print(f"PR changes {len(outside)} path(s) outside {a.merge_if_only} (e.g. {outside[0]}); "
+                      "not merging — it needs the user's approval")
+            else:
+                verdict = do_merge(ctx, cwd, pr)
     if verdict == "merged" and not ctx.is_main:
         # Ruling 1: a PR merged by someone else may not yet be an ancestor of the base in
         # this worktree — teardown failing here must never turn a merged verdict into exit 2.
@@ -766,7 +790,11 @@ def main(argv=None):
     o.add_argument("--draft", action="store_true")
     o.set_defaults(fn=cmd_open)
     w = sub.add_parser("watch", help="poll the PR until a terminal verdict")
-    w.add_argument("--merge", action="store_true", help="merge (merge commit) when green; only when the user said so")
+    m = w.add_mutually_exclusive_group()
+    m.add_argument("--merge", action="store_true", help="merge (merge commit) when green; only when the user said so")
+    m.add_argument("--merge-if-only", metavar="PREFIX",
+                   help="merge when green only if every changed path is under PREFIX (e.g. .wiki/); "
+                        "for a class of PR the user standing-approved")
     w.add_argument("--timeout", type=float, default=3600)
     w.add_argument("--interval", type=float, default=60)
     w.add_argument("--interval-max", type=float, default=300)
