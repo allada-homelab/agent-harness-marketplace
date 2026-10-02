@@ -330,3 +330,50 @@ def test_watch_merge_failure_names_the_real_causes(repo):
     r = run("watch", "--merge", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head)], "merge_fails": True})
     assert r.returncode == 2
     assert "boom" in r.stderr and "merge commits" in r.stderr and "branch-protection" in r.stderr
+
+
+def pushed_pr_branch(repo, name, files):
+    """Start, commit `files` (relative paths), push; return (worktree, head sha)."""
+    root, _ = repo
+    assert run("start", name, cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / f"feat-{name}"
+    for rel in files:
+        (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wt / rel).write_text("x\n")
+        git("add", rel, cwd=wt)
+    git("commit", "-q", "-m", name, cwd=wt)
+    git("push", "-q", "-u", "origin", f"feat/{name}", cwd=wt)
+    return wt, git("rev-parse", "HEAD", cwd=wt)
+
+
+def merge_calls(wt):
+    return [c for c in (json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()) if c[:2] == ["pr", "merge"]]
+
+
+def test_merge_if_only_merges_when_every_path_is_under_prefix(repo):
+    wt, head = pushed_pr_branch(repo, "wo", [".wiki/a.md", ".wiki/index.md"])
+    r = run("watch", "--merge-if-only", ".wiki/", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head)]})
+    assert r.returncode == 0, r.stderr
+    assert last(r).startswith("pr-flow: watch merged")
+
+
+def test_merge_if_only_leaves_a_mixed_pr_green_and_unmerged(repo):
+    wt, head = pushed_pr_branch(repo, "mx", [".wiki/a.md", "code.py"])
+    r = run("watch", "--merge-if-only", ".wiki", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head)]})
+    assert r.returncode == 0, r.stderr
+    assert last(r).startswith("pr-flow: watch green")
+    assert "outside .wiki" in r.stdout and "code.py" in r.stdout
+    assert merge_calls(wt) == [] and wt.exists()
+
+
+def test_merge_if_only_does_not_match_a_lookalike_directory(repo):
+    wt, head = pushed_pr_branch(repo, "lk", [".wikiish/a.md"])
+    r = run("watch", "--merge-if-only", ".wiki", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head)]})
+    assert last(r).startswith("pr-flow: watch green")
+    assert merge_calls(wt) == []
+
+
+def test_merge_and_merge_if_only_are_exclusive(repo):
+    root, _ = repo
+    r = run("watch", "--merge", "--merge-if-only", ".wiki/", cwd=root)
+    assert r.returncode == 2 and "not allowed with" in r.stderr

@@ -66,6 +66,10 @@ concept, and a `.wiki/` file mid-write is not yet valid. Never commit, revert or
 `.wiki/*` file while its scribe's receipt is outstanding — `python3 <okf> --root <root>
 validate <id>` must pass first. Once every receipt is in, commit `.wiki/` in `<root>`, in the
 commit that carries the change that taught it or on this branch right after, so the knowledge
-ships in the same PR. Never `rm` or otherwise delete a concept file in a shared checkout (the
+ships in the same PR. A capture with no work branch to ride on (the work already merged)
+goes up as its own PR; when the user's instructions standing-approve wiki-only PRs, finish it
+with `pr-flow watch --merge-if-only .wiki/` instead of waiting for a per-PR yes — and stage the
+`.wiki/index.md` that `validate` regenerates, or the index drifts from the concept.
+Never `rm` or otherwise delete a concept file in a shared checkout (the
 main checkout while you work in a worktree): another session's scribe may be writing it. To
 drop a concept of your own, remove it on your branch after its receipt.

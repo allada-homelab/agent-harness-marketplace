@@ -32,7 +32,7 @@
       "name": "pr-flow",
       "description": "Work off main on every harness: branch + worktree, PR, watch CI until green, merge only when told, tear down after merge.",
       "category": "development",
-      "version": "0.2.8",
+      "version": "0.2.9",
       "source": "./modules/pr-flow"
     },
     {
@@ -74,7 +74,7 @@
       "name": "okf-wiki",
       "description": "A per-repo, self-healing agent wiki in Open Knowledge Format: a session-start digest, background capture and re-verification on cheap models, and a reflect loop that measures whether it helps.",
       "category": "development",
-      "version": "0.1.5",
+      "version": "0.1.6",
       "source": "./modules/okf-wiki"
     }
   ]

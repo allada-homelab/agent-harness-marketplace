@@ -87,7 +87,11 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
 6. **Merge only when told.** `pr-flow watch --merge` is allowed only when the
    user said, ahead of time and for this task, that the PR may be merged when
    green. Silence means no. A green PR without that permission ends the turn
-   with the URL.
+   with the URL. A standing approval for a class of PR in the user's own
+   instructions (e.g. "wiki-only PRs may merge when green") counts — use
+   `pr-flow watch --merge-if-only <prefix>` (e.g. `.wiki/`): it merges only when
+   every path the PR changes, at the commit it saw green, is under that prefix,
+   and otherwise reports `green` unmerged with the first path outside it.
 7. **Teardown** — `pr-flow teardown` after the PR is merged (`--merge` does it
    itself). It removes the worktree, deletes the local branch **and deletes the
    branch on origin**; a branch counts as merged when it is an ancestor of
