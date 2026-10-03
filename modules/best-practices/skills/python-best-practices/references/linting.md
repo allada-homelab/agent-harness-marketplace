@@ -433,3 +433,55 @@ need it, restructure so the control-flow statement lives outside the
 `finally`.
 
 ---
+
+## PY-094 — Curate ruff's `select`; don't use `select = ["ALL"]` or `preview = true` in long-lived projects
+
+**What.** Keep an explicit list of ruff rule families, and grow it on
+purpose by measuring each candidate family's violation count first.
+Don't select `ALL`, and keep `preview` off, in any project that is
+pinned, tagged, or expected to stay green across ruff upgrades.
+
+**Why.** The ruff docs put it directly: "Enabling `ALL` will
+implicitly enable new rules whenever you upgrade." A routine
+dev-dependency bump then fails CI on code nobody touched, and the fix
+is a scramble of ignores rather than a decision. `preview = true` has
+the same effect for rules and formatter styles that are still
+changing. Measuring before adding replaces guesswork. Across the extra
+families below, a 29-file LangGraph example repo had 6 findings in
+total, while `D` had 167 and `ANN` had 321.
+
+**How.** Measure, then add:
+
+```bash
+ruff check --isolated --select FURB,PERF,PIE,N,DTZ,ERA,LOG,G,BLE,ISC,ICN,ASYNC,TID,SLF,FLY,TRY,C90,PLE,PLW --statistics .
+```
+
+```toml
+[tool.ruff.lint]
+select = ["E", "W", "F", "B", "I", "UP", "S", "SIM", "RUF"]   # PY-021 baseline
+extend-select = [
+    "FURB", "PERF", "PIE", "N", "DTZ", "ERA", "LOG", "G", "BLE", "ISC", "ICN",
+    "ASYNC", "TID", "SLF", "FLY", "TRY", "C90", "PLE", "PLW",
+]
+ignore = ["E501", "TRY003"]   # TRY003 forbids messages at the raise site; usually noise
+
+[tool.ruff.format]
+docstring-code-format = true
+```
+
+Let ruff report formatter conflicts rather than keeping a hand-written
+list: `ruff format` warns when a selected rule may conflict with it.
+On ruff 0.16.10, selecting `ISC`, `Q` and `COM812` together warned
+about **`COM812` only**. `ISC001` no longer needs the blanket ignore
+older guides recommend. `Q` doesn't conflict at default settings, but
+duplicates what the formatter already enforces. For inline CI
+annotations, set `RUFF_OUTPUT_FORMAT=github` in the job environment;
+pre-commit's `ruff check` picks it up with no hook change.
+
+**When NOT to apply.** Throwaway or exploratory repos, where trying
+`ALL` with a long `ignore` list is a quick way to discover which
+families exist. Also a project that pins ruff exactly and reviews
+every upgrade, where `ALL` can't drift without a PR. Even then,
+prefer `extend-select` additions once the useful families are known.
+
+---

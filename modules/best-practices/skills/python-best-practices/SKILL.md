@@ -75,6 +75,8 @@ See [`references/typing.md`](./references/typing.md).
 - **PY-080** — On Python 3.14+, drop `from __future__ import annotations` — deferred annotation evaluation (PEP 649/749) is the default.
 - **PY-081** — Use `TypedDict(closed=True)` / `extra_items=` for strict JSON shapes (PEP 728, Python 3.15+).
 - **PY-082** — Use `TypeForm[T]` (PEP 747) for functions that accept a type expression at runtime, instead of `type[T]` or `Any`.
+- **PY-092** — On basedpyright, start from `typeCheckingMode = "recommended"` (or `"all"`), not `"strict"` — strict leaves every basedpyright-only rule off; downgrade per rule for untyped deps.
+- **PY-093** — Under basedpyright, suppress with `# pyright: ignore[rule]`; pyright ignores the code in `# type: ignore[code]`, so it silences the whole line.
 
 ## Rules — Linting & formatting
 
@@ -88,6 +90,7 @@ See [`references/linting.md`](./references/linting.md).
 - **PY-025** — Enable `RUF100` to flag unused `noqa` directives so suppression comments don't accumulate as dead weight.
 - **PY-088** — Use ruff range suppression (`# ruff: disable[CODE]` / `# ruff: enable[CODE]`, ≥0.15) for multi-line blocks; always name the code.
 - **PY-091** — Never `return` / `break` / `continue` out of a `finally` block (ruff `B012`; PEP 765 makes it a `SyntaxWarning` on 3.14).
+- **PY-094** — Curate ruff `select` (measure each family with `--statistics` first); never `ALL` or `preview = true` in long-lived projects — new rules land on every upgrade.
 
 ## Rules — Testing (pytest 8.x+)
 

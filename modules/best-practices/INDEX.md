@@ -305,6 +305,8 @@ _Use when working with Python projects — `.py` files, `pyproject.toml` (withou
 | [`PY-080`](skills/python-best-practices/references/typing.md#py-080) | On Python 3.14+, drop `from __future__ import annotations` — deferred annotation evaluation (PEP 649/749) is the default. |
 | [`PY-081`](skills/python-best-practices/references/typing.md#py-081) | Use `TypedDict(closed=True)` / `extra_items=` for strict JSON shapes (PEP 728, Python 3.15+). |
 | [`PY-082`](skills/python-best-practices/references/typing.md#py-082) | Use `TypeForm[T]` (PEP 747) for functions that accept a type expression at runtime, instead of `type[T]` or `Any`. |
+| [`PY-092`](skills/python-best-practices/references/typing.md#py-092) | On basedpyright, start from `typeCheckingMode = "recommended"` (or `"all"`), not `"strict"` — strict leaves every basedpyright-only rule off; downgrade per rule for untyped deps. |
+| [`PY-093`](skills/python-best-practices/references/typing.md#py-093) | Under basedpyright, suppress with `# pyright: ignore[rule]`; pyright ignores the code in `# type: ignore[code]`, so it silences the whole line. |
 | [`PY-020`](skills/python-best-practices/references/linting.md#py-020) | Use `ruff` for both linting and formatting; drop `black`, `isort`, `flake8`, `pyupgrade`. Keep `mypy` / `pyright` (ruff isn't a type checker). |
 | [`PY-021`](skills/python-best-practices/references/linting.md#py-021) | Recommended ruff rule selection: `E, W, F, B, I, UP, S, SIM, RUF`. Set `target-version` so `UP` rules respect your Python floor. |
 | [`PY-022`](skills/python-best-practices/references/linting.md#py-022) | Per-file ignores for tests (`S101` asserts OK) and `__init__.py` (`F401` re-exports OK) via `[tool.ruff.lint.per-file-ignores]`. |
@@ -313,6 +315,7 @@ _Use when working with Python projects — `.py` files, `pyproject.toml` (withou
 | [`PY-025`](skills/python-best-practices/references/linting.md#py-025) | Enable `RUF100` to flag unused `noqa` directives so suppression comments don't accumulate as dead weight. |
 | [`PY-088`](skills/python-best-practices/references/linting.md#py-088) | Use ruff range suppression (`# ruff: disable[CODE]` / `# ruff: enable[CODE]`, ≥0.15) for multi-line blocks; always name the code. |
 | [`PY-091`](skills/python-best-practices/references/linting.md#py-091) | Never `return` / `break` / `continue` out of a `finally` block (ruff `B012`; PEP 765 makes it a `SyntaxWarning` on 3.14). |
+| [`PY-094`](skills/python-best-practices/references/linting.md#py-094) | Curate ruff `select` (measure each family with `--statistics` first); never `ALL` or `preview = true` in long-lived projects — new rules land on every upgrade. |
 | [`PY-030`](skills/python-best-practices/references/testing.md#py-030) | pytest config in `pyproject.toml [tool.pytest.ini_options]`; never `setup.cfg`. Set `markers`, `testpaths`, `addopts = "--strict-markers"`. On pytest 9+, prefer the native `[tool.pytest]` table and the `strict = true` mega-option. |
 | [`PY-031`](skills/python-best-practices/references/testing.md#py-031) | Always `@pytest.mark.parametrize` over for-loops in test bodies — separate test IDs, isolated state, individually runnable. |
 | [`PY-032`](skills/python-best-practices/references/testing.md#py-032) | Default fixtures to `function` scope; escalate to `session` only for genuinely expensive resources. Use `yield` for teardown. |
@@ -396,6 +399,7 @@ _Use when working with uv (Astral's Python package and project manager) — `uv 
 | [`UVP-014`](skills/uv-best-practices/references/lockfile.md#uvp-014) | Don't commit `requirements.txt` alongside `uv.lock`; if downstream tooling needs it, generate as a build artifact via `uv export`. |
 | [`UVP-015`](skills/uv-best-practices/references/lockfile.md#uvp-015) | `uv lock --check` (lockfile vs `pyproject.toml`) and `uv sync --check` (env vs lockfile, ≥0.6.10) are composable, not interchangeable — use both at the right gates. |
 | [`UVP-070`](skills/uv-best-practices/references/lockfile.md#uvp-070) | `uv lock --upgrade-group <group>` (≥0.11.4) refreshes one dependency group without touching others. |
+| [`UVP-075`](skills/uv-best-practices/references/lockfile.md#uvp-075) | Set a relative `exclude-newer` (`"7 days"`) as a resolver-side release cooldown; uv locks the span, not a date, so `uv lock --check` stays stable. |
 | [`UVP-020`](skills/uv-best-practices/references/environments.md#uvp-020) | Production sync incantation: `uv sync --locked --no-dev --no-editable`. |
 | [`UVP-021`](skills/uv-best-practices/references/environments.md#uvp-021) | `uv run` over manual `.venv/bin/activate` — it re-checks the lockfile before executing. |
 | [`UVP-022`](skills/uv-best-practices/references/environments.md#uvp-022) | Set `UV_PROJECT_ENVIRONMENT` only to **absolute** paths; relative paths in multi-project repos silently target shared/system environments. |

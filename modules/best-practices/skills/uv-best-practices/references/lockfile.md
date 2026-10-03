@@ -355,3 +355,55 @@ change, or a full `uv lock --upgrade` in a scheduled, reviewed PR.
 `--upgrade-group` is primarily for dev/test maintenance.
 
 ---
+
+## UVP-075 — Set a relative `exclude-newer` as a resolver-side release cooldown
+
+**What.** Set `[tool.uv] exclude-newer` to a relative duration
+(`"7 days"`, `"1 week"`, or ISO 8601 `"P7D"`) so `uv lock` ignores any
+distribution uploaded within that window. uv records the window in
+`uv.lock` as `exclude-newer-span`, not as a computed date, so the lock
+stays valid as time passes. Use `exclude-newer-package` to exempt a
+single package (for example, an urgent security fix) without dropping
+the cooldown for everything else.
+
+**Why.** Malicious and broken releases are usually caught and yanked
+within hours to days of upload. Hijacked-maintainer releases such as
+`ultralytics` 8.3.41 (December 2024) were live for roughly a day.
+A bot cooldown (REPO-002) only delays *the PR the bot opens*. A
+developer running `uv add` or `uv lock --upgrade` by hand still
+resolves to a release minutes old. `exclude-newer` puts the same
+cooldown in the resolver, so every path to a new version honours it.
+A fixed date (`"2026-09-01"`) does the same job but has to be bumped
+by hand, so it becomes a stale cap nobody remembers to move.
+
+**How.**
+
+```toml
+# pyproject.toml
+[tool.uv]
+exclude-newer = "7 days"
+# Escape hatch for a single urgent upgrade; remove once it ages past the window.
+exclude-newer-package = { cryptography = "2026-10-03T00:00:00Z" }
+```
+
+What uv writes to the lockfile (uv 0.12.18):
+
+```toml
+[options]
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer-span = "P7D"
+```
+
+`uv lock --check` passes against that lock while the setting is
+unchanged. Changing the setting (for example to an absolute date)
+makes `--check` fail with "Resolving despite existing lockfile due to
+removal of exclude newer span", so the lockfile gate (UVP-015) catches
+a config edit that wasn't re-locked.
+
+**When NOT to apply.** When a project has to adopt same-day releases
+(for example, it is the first consumer of a sibling package published
+from the same CI run). Exempt that package with `exclude-newer-package`
+rather than dropping the cooldown. Not needed for a project whose
+dependencies are all internal and served from a trusted private index.
+
+---
