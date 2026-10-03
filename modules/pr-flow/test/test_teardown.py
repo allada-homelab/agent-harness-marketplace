@@ -373,6 +373,22 @@ def test_merge_if_only_does_not_match_a_lookalike_directory(repo):
     assert merge_calls(wt) == []
 
 
+def test_merge_if_only_accepts_several_prefixes_and_exact_files(repo):
+    wt, head = pushed_pr_branch(repo, "pin", ["agents/modules.tsv", "dsh/profiles/web/plugins.json"])
+    r = run("watch", "--merge-if-only", "agents/modules.tsv", "--merge-if-only", "dsh/profiles/",
+            cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head)]})
+    assert r.returncode == 0, r.stderr
+    assert last(r).startswith("pr-flow: watch merged")
+
+
+def test_merge_if_only_exact_file_does_not_match_a_lookalike_file(repo):
+    wt, head = pushed_pr_branch(repo, "lf", ["agents/modules.tsv.bak"])
+    r = run("watch", "--merge-if-only", "agents/modules.tsv", cwd=wt,
+            replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head)]})
+    assert last(r).startswith("pr-flow: watch green")
+    assert merge_calls(wt) == []
+
+
 def test_merge_and_merge_if_only_are_exclusive(repo):
     root, _ = repo
     r = run("watch", "--merge", "--merge-if-only", ".wiki/", cwd=root)

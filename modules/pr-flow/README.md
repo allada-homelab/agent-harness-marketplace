@@ -6,10 +6,12 @@ PostToolUse hook that hints — never blocks — when a tracked file is edited o
 protected branch in a repo's main checkout.
 
 Verbs: `start <slug> [--base <branch>] [--carry [<path>...] | --leave-dirty]`, `open`,
-`watch [--merge | --merge-if-only <prefix>]`, `teardown [branch]`, `gc`.
+`watch [--merge | --merge-if-only <prefix>...]`, `teardown [branch]`, `gc`.
 `--merge-if-only` merges only when `git diff origin/<base>...<green head>` lists
-nothing outside `<prefix>` (a directory match, so `.wiki` never matches
-`.wikiish/`), for a PR class the user standing-approved. `teardown` and `gc` remove the
+nothing outside the given prefixes, for a PR class the user standing-approved. Repeat
+it to allow several; each prefix matches itself as an exact file and everything under
+it as a directory, so `.wiki` never matches `.wikiish/` and `a.tsv` never matches
+`a.tsv.bak`. `teardown` and `gc` remove the
 worktree and delete the branch locally **and on origin**, and only once it is
 merged — an ancestor of `origin/<base>`, or a merged PR on GitHub (squash and
 rebase merges). `open` from a fork clone owner-qualifies the head.

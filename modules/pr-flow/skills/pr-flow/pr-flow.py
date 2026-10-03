@@ -476,11 +476,12 @@ def do_merge(ctx, cwd, pr):
     return "merged"
 
 
-def paths_outside(ctx, cwd, head, prefix):
-    """Paths the PR changes at `head` that are not under `prefix` — None when git cannot list them.
+def paths_outside(ctx, cwd, head, prefixes):
+    """Paths the PR changes at `head` that no prefix covers — None when git cannot list them.
 
-    Diffed against the exact commit watch saw green, not the PR's current file list, so a push
-    after that poll cannot sneak a file outside `prefix` past the check."""
+    A prefix covers itself (an exact file) and everything under it as a directory. Diffed
+    against the exact commit watch saw green, not the PR's current file list, so a push after
+    that poll cannot sneak a file outside the prefixes past the check."""
     base = branch_base(ctx.main_root, ctx.branch)
     try:
         fetch_tracking(base, cwd)
@@ -489,8 +490,8 @@ def paths_outside(ctx, cwd, head, prefix):
         return None
     if not changed:
         return None
-    root = prefix.strip("/") + "/"
-    return [p for p in changed if not p.startswith(root)]
+    roots = [prefix.strip("/") for prefix in prefixes]
+    return [p for p in changed if not any(p == r or p.startswith(r + "/") for r in roots)]
 
 
 def pr_merged_on_github(root, branch):
@@ -683,11 +684,12 @@ def cmd_watch(a):
             print("this head's checks are unverified (none reported, or the PR head lagged the push); "
                   "refusing --merge — merge by hand once you have evidence")
         else:
+            allowed = ", ".join(a.merge_if_only or [])
             outside = paths_outside(ctx, cwd, pr.get("headRefOid"), a.merge_if_only) if a.merge_if_only else []
             if outside is None:
-                print(f"could not list the files this PR changes; not merging under --merge-if-only {a.merge_if_only}")
+                print(f"could not list the files this PR changes; not merging under --merge-if-only {allowed}")
             elif outside:
-                print(f"PR changes {len(outside)} path(s) outside {a.merge_if_only} (e.g. {outside[0]}); "
+                print(f"PR changes {len(outside)} path(s) outside {allowed} (e.g. {outside[0]}); "
                       "not merging — it needs the user's approval")
             else:
                 verdict = do_merge(ctx, cwd, pr)
@@ -792,9 +794,9 @@ def main(argv=None):
     w = sub.add_parser("watch", help="poll the PR until a terminal verdict")
     m = w.add_mutually_exclusive_group()
     m.add_argument("--merge", action="store_true", help="merge (merge commit) when green; only when the user said so")
-    m.add_argument("--merge-if-only", metavar="PREFIX",
-                   help="merge when green only if every changed path is under PREFIX (e.g. .wiki/); "
-                        "for a class of PR the user standing-approved")
+    m.add_argument("--merge-if-only", metavar="PREFIX", action="append",
+                   help="merge when green only if every changed path is PREFIX or under it (e.g. .wiki/); "
+                        "repeat for several; for a class of PR the user standing-approved")
     w.add_argument("--timeout", type=float, default=3600)
     w.add_argument("--interval", type=float, default=60)
     w.add_argument("--interval-max", type=float, default=300)

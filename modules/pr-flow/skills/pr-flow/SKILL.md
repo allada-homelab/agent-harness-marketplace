@@ -91,7 +91,9 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    instructions (e.g. "wiki-only PRs may merge when green") counts — use
    `pr-flow watch --merge-if-only <prefix>` (e.g. `.wiki/`): it merges only when
    every path the PR changes, at the commit it saw green, is under that prefix,
-   and otherwise reports `green` unmerged with the first path outside it.
+   and otherwise reports `green` unmerged with the first path outside it. Repeat
+   the flag for a class spanning several paths; a prefix also matches an exact
+   file (`--merge-if-only agents/modules.tsv --merge-if-only dsh/profiles/`).
 7. **Teardown** — `pr-flow teardown` after the PR is merged (`--merge` does it
    itself). It removes the worktree, deletes the local branch **and deletes the
    branch on origin**; a branch counts as merged when it is an ancestor of
