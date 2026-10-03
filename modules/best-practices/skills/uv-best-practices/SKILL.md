@@ -76,6 +76,7 @@ See [`references/lockfile.md`](./references/lockfile.md).
 - **UVP-014** — Don't commit `requirements.txt` alongside `uv.lock`; if downstream tooling needs it, generate as a build artifact via `uv export`.
 - **UVP-015** — `uv lock --check` (lockfile vs `pyproject.toml`) and `uv sync --check` (env vs lockfile, ≥0.6.10) are composable, not interchangeable — use both at the right gates.
 - **UVP-070** — `uv lock --upgrade-group <group>` (≥0.11.4) refreshes one dependency group without touching others.
+- **UVP-075** — Set a relative `exclude-newer` (`"7 days"`) as a resolver-side release cooldown; uv locks the span, not a date, so `uv lock --check` stays stable.
 
 ## Rules — Environments & sync
 

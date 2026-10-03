@@ -150,6 +150,9 @@ strict = true
 typeCheckingMode = "strict"
 ```
 
+On basedpyright, `"strict"` is weaker than its default `"recommended"`;
+see PY-092.
+
 For a more granular approach, mypy's `strict` flag is equivalent to
 (the list `mypy --help` prints under `--strict`):
 
@@ -456,6 +459,8 @@ import os  # noqa
 mypy's `warn_unused_ignores = true` (part of strict mode, PY-012)
 catches `# type: ignore` lines that no longer have an error — but
 only when the code is included. Bare ignores escape this check.
+The bracketed codes are mypy's; pyright ignores them, so under
+pyright/basedpyright use `# pyright: ignore[rule]` instead (PY-093).
 
 **How.**
 
@@ -760,5 +765,111 @@ validate(int | None, x)        # accepted; type[T] would reject the union
 **When NOT to apply.** Parameters that only ever receive a concrete
 class (not a union or special form) — `type[T]` is the right, narrower
 type there.
+
+---
+
+## PY-092 — On basedpyright, start from `typeCheckingMode = "recommended"` (or `"all"`), not `"strict"`
+
+**What.** Configure basedpyright in `[tool.basedpyright]` with
+`typeCheckingMode = "recommended"` (basedpyright's own default) or
+`"all"`. Then switch off, rule by rule, only the diagnostics a
+dependency you don't control makes unfixable. Don't set `"strict"`:
+it is pyright's strict preset and leaves every basedpyright-only rule
+off.
+
+**Why.** On basedpyright, `"strict"` is a *downgrade*. `"recommended"`
+and `"all"` turn on every rule, including the basedpyright-only ones
+`"strict"` never enables: `reportAny`, `reportExplicitAny`,
+`reportUnusedCallResult`, `reportImplicitOverride`,
+`reportUnannotatedClassAttribute`, `reportIgnoreCommentWithoutRule` and
+`reportUnnecessaryTypeIgnoreComment`. They also default
+`strictGenericNarrowing` and `deprecateTypingAliases` on. The two
+presets differ only in severity. `"recommended"` keeps the newer rules
+at warning but sets `failOnWarnings = true`, so CI still fails;
+`"all"` makes them errors. Measured on a LangGraph example project
+(basedpyright 1.40.1, 11 files): `"strict"` reported 0 diagnostics,
+while `"recommended"` reported 1 error and 227 warnings. Of those,
+`reportAny` (103), `reportExplicitAny` (89) and
+`reportUnusedCallResult` (24) were noise from untyped dependencies.
+The rest were real: two stale `# pyright: ignore` comments, nine
+unannotated class attributes, and a suppression `"strict"` had been
+honouring with the wrong syntax (PY-093).
+
+**How.**
+
+```toml
+[tool.basedpyright]
+typeCheckingMode = "recommended"
+pythonVersion = "3.14"
+# Per-rule downgrades, each justified by a dependency gap, not by this code:
+reportMissingTypeStubs = "none"      # library ships no stubs
+reportUnknownMemberType = "none"     # library's overloads leak Unknown
+reportAny = "none"                   # library returns Any; noise is not this code's fault
+reportExplicitAny = "none"           # deliberate dict[str, Any] at a JSON boundary
+reportUnusedCallResult = "none"      # `_ = ...` on every fire-and-forget call hurts readability
+# Already reported by ruff (F401, F841, ARG) — don't report twice:
+reportUnusedImport = "none"
+reportUnusedVariable = "none"
+reportUnusedParameter = "none"
+```
+
+To adopt this on an existing codebase without fixing everything first,
+run `basedpyright --writebaseline`. It records current diagnostics in
+`.basedpyright/baseline.json`, so only new ones fail; commit that file
+and let it shrink. basedpyright prints GitHub Actions annotations
+(`::error file=…`) on its own when `GITHUB_ACTIONS=true`, and
+`--gitlabcodequality <file>` writes a GitLab Code Quality report.
+
+**When NOT to apply.** Projects on plain `pyright` or Pylance:
+`"recommended"` and `"all"` don't exist there, so `"strict"` (PY-012)
+is the strongest preset. Also hold off where a codebase leans so
+heavily on `Any`-returning libraries that only `reportAny` and
+`reportExplicitAny` would remain switched off. `"recommended"` still
+adds `reportUnnecessaryTypeIgnoreComment` and
+`reportIgnoreCommentWithoutRule`, so turn those two on individually
+under `"strict"` instead.
+
+---
+
+## PY-093 — Under basedpyright, suppress with `# pyright: ignore[rule]`, not `# type: ignore[code]`
+
+**What.** In a project type-checked by basedpyright, write
+suppressions as `# pyright: ignore[reportRuleName]`. Keep
+`enableTypeIgnoreComments = false` (basedpyright's default under
+`"recommended"`/`"all"`) so mypy-style `# type: ignore` comments are
+not honoured.
+
+**Why.** Pyright accepts `# type: ignore[...]` but ignores whatever is
+inside the brackets, so `# type: ignore[arg-type]` silences *every*
+diagnostic on the line. It is a bare ignore wearing a rule code
+(PY-016), and `reportUnnecessaryTypeIgnoreComment` can only flag it
+once the line has no errors at all. Verified on basedpyright 1.40.1:
+`x: int = "a"  # type: ignore[nonsense-code]` is silenced, while
+`# pyright: ignore[reportUnusedVariable]` on the same error lets it
+through *and* flags the ignore as unnecessary. Observed in practice: a
+`cur.execute(sql, …)  # type: ignore[arg-type]` passed under
+`"strict"`, then failed under `"recommended"` with "Argument of type
+`str` cannot be assigned to parameter `query` of type
+`QueryNoTemplate`". The comment had been hiding a real `reportArgumentType`
+error that pyright's own syntax would have named.
+
+**How.**
+
+```python
+await cur.execute(sql, (thread_id,))  # pyright: ignore[reportArgumentType]  # psycopg wants LiteralString/Composed; sql is a module constant
+```
+
+```toml
+[tool.basedpyright]
+enableTypeIgnoreComments = false            # default under "recommended"/"all"; explicit under "strict"
+reportIgnoreCommentWithoutRule = "error"    # no bare `# pyright: ignore`
+reportUnnecessaryTypeIgnoreComment = "error"
+```
+
+**When NOT to apply.** Code that is type-checked by *both* mypy and
+pyright (for example, a library with a mypy CI job plus pyright
+users). There, keep `# type: ignore[mypy-code]` for mypy and add the
+pyright form on the same line only where pyright also reports an
+error.
 
 ---
