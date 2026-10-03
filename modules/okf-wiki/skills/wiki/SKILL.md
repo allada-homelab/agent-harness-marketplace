@@ -62,6 +62,9 @@ sources:
 - **Never type `generated` or `verified` yourself.** `okf.py stamp` writes them with the real
   time and commit.
 - `human:<id>` appears in `verified` only after the user explicitly confirmed the concept.
+- `tags` are lowercase-kebab topics that link a concept to its neighbours. Run `okf.py tags`
+  first and reuse an existing tag over coining a variant; never tag the concept's type or the
+  repository's name, which every concept here shares.
 - Cite claims with footnotes `[^s1]` that match a `sources[].id`. A source is a repo path, a
   `commit:<sha>`, a full PR or issue URL, or a short description of where it came from.
 - Link other concepts with relative links, `[<how it relates>](./<id>.md)`, and let the link
@@ -96,6 +99,8 @@ with `python3` from anywhere inside the repository. The last line is always
 | `anchor <id>` | evaluate the Verify anchors |
 | `fresh [ids]` | FRESH / STALE / UNANCHORED / UNVERIFIED from git |
 | `mv <old> <new>` | rename and rewrite every inbound link |
+| `tags [tag...] [--suggest]` | every tag by use count; with tags, the concepts carrying each; `--suggest` lists spelling and plural variants to merge, redundant and malformed tags |
+| `retag <old> <new>`, `retag <old> --drop` | rename or merge a tag across every concept, or remove it |
 | `index`, `digest` | rebuild `index.md`, print the session digest (hooks do both) |
 | `migrate <dir> [--dry-run]` | import another OKF or llm-wiki bundle |
 | `fanout [--fanout N]` | parallel width: flag, else `OKF_WIKI_FANOUT`, else 4 |
@@ -112,6 +117,8 @@ After any wiki change, print exactly one line per concept so the user can see an
 - `wiki: +<type>/<id>` created or updated
 - `wiki: ~healed/<id>` re-verified or fixed after going stale
 - `wiki: -deprecated/<id>` retired
+- `wiki: #<old> -> <new> (N concepts)` or `wiki: #<old> dropped (N concepts)` a tag
+  retagged across the bundle; one line per `retag`, not per concept
 - `wiki: ✗ <id> — <reason>` a write that failed or was rejected
 - add ` (inline)` when you did the scribe's work yourself because no agent tool was available
 

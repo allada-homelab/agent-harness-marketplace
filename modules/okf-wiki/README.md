@@ -18,7 +18,7 @@ learns in the background on cheap models.
   (from the agent-transcripts index and git) and proposes fixes.
 
 Everything deterministic is one stdlib script, `skills/wiki/okf.py`: `validate`, `index`,
-`digest`, `new`, `stamp`, `fresh`, `anchor`, `mv`, `migrate`, `fanout`, `stats` and the two
+`digest`, `new`, `stamp`, `fresh`, `anchor`, `mv`, `tags`, `retag`, `migrate`, `fanout`, `stats` and the two
 hook entry points. The final stdout line is always `okf: <verb> <verdict> [detail]`. Exit
 codes: 0 ok · 1 findings · 2 refusal · 3 near-duplicate (`new`).
 
