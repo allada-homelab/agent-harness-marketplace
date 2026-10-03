@@ -828,7 +828,7 @@ def test_read_hides_an_ordinary_result_behind_its_size(index, tmp_path, capsys):
     index.close()
 
     out = read(tmp_path, capsys, "r1")
-    assert f"[{call + 1}] RESULT ok 5,500 chars" in out
+    assert f"[{call + 1}] RESULT of Bash [{call}] ok 5,500 chars" in out
     assert "secret-ish" not in out
 
 
@@ -838,7 +838,8 @@ def test_read_shows_the_start_of_a_failed_result(index, tmp_path, capsys):
                       result="permission denied: /etc/shadow")
     index.close()
 
-    assert f"[{call + 1}] RESULT ERR permission denied: /etc/shadow" in read(tmp_path, capsys, "r2")
+    out = read(tmp_path, capsys, "r2")
+    assert f"[{call + 1}] RESULT of Bash [{call}] ERR permission denied: /etc/shadow" in out
 
 
 def test_read_shows_a_subagent_report(index, tmp_path, capsys):
@@ -846,7 +847,15 @@ def test_read_shows_a_subagent_report(index, tmp_path, capsys):
     index.call(s, "Agent", '{"prompt": "run the suite"}', result="all 12 tests pass")
     index.close()
 
-    assert "RESULT all 12 tests pass" in read(tmp_path, capsys, "r3")
+    assert "RESULT of Agent [1] all 12 tests pass" in read(tmp_path, capsys, "r3")
+
+
+def test_read_shows_a_short_result_in_full(index, tmp_path, capsys):
+    s = index.session("r3b")
+    call = index.call(s, "Bash", '{"command": "git commit"}', result="[main 1a2b3c] fix")
+    index.close()
+
+    assert f"[{call + 1}] RESULT of Bash [{call}] [main 1a2b3c] fix" in read(tmp_path, capsys, "r3b")
 
 
 def test_read_caps_call_arguments_and_says_how_long_they_were(index, tmp_path, capsys):
@@ -1086,6 +1095,25 @@ def test_themes_groups_problems_by_category_and_label(index, store, tmp_path, ca
     out = capsys.readouterr().out
     assert "sessions analyzed: 2" in out
     assert "repeat_failing_approach  reinstall-loop  2      2" in out
+
+
+def test_themes_shows_a_problem_seen_in_one_session_by_default(index, store, tmp_path, capsys):
+    bad = analyzed_session(index)
+    run_id = fi.start_run(store[0], "transcript-analyze", "m", "{}")
+    read_all(tmp_path, capsys, "a1", run_id)
+    record_analysis(tmp_path, "a1", analysis(bad, "npm ERR! peer dep missing"), run_id)
+    capsys.readouterr()
+
+    rv.main(["--dest", str(tmp_path), "themes"])
+    assert "reinstall-loop" in capsys.readouterr().out
+
+
+def test_themes_run_id_scopes_to_one_batch(index, store, tmp_path, capsys):
+    two_analyzed_sessions(index, store, tmp_path, capsys)
+    other = fi.start_run(store[0], "transcript-analyze", "m", "{}")
+
+    rv.main(["--dest", str(tmp_path), "themes", "--run-id", str(other)])
+    assert "no recorded analyses in this scope" in capsys.readouterr().out
 
 
 def test_themes_counts_expansions_per_session(index, store, tmp_path, capsys):

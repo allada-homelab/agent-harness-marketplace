@@ -43,7 +43,7 @@ enough on its own; reading in pages is required.
 review.py read <session> [--page N | --index] [--page-chars 30000] [--run-id N]
 review.py expand <session> <ord> [--offset 0] [--chars 4000] [--run-id N]
 review.py record-analysis <session> --run-id N --file analysis.json
-review.py themes [--since ISO] [--harness H] [--min 2]
+review.py themes [--run-id N] [--since ISO] [--harness H] [--min 1]
 ```
 
 ### `read`
@@ -57,11 +57,13 @@ Every message is one or more `[ord]` lines:
 
 - `USER` — boilerplate stripped exactly as `view` and the quote check strip it, capped at
   `--user-chars` (8,000) with `…[+N chars]`.
-- `ASSISTANT` — text capped at `--assistant-chars` (4,000); the final report up to the
+- `ASSISTANT` — text capped at `--assistant-chars` (8,000); the final report up to the
   existing 6,000 cap.
 - `CALL <name> <args>` — arguments flattened to one line, capped at `--args-chars` (200)
   with `[+N chars]`, then ` ERR` when the call failed.
-- `RESULT ok 12,431 chars` — a hidden result. A failed one is `RESULT ERR <first 160
+- `RESULT of Bash [12] ok 12,431 chars` — a hidden result, naming the call it answers
+  (parallel calls share an ord and their results arrive later). A result of 200
+  characters or less is shown in full. A failed one is `RESULT of … ERR <first 160
   chars>`. The result of a subagent dispatch (`Agent`, `Task`, `subagent`,
   `delegate_agent`) is shown up to 2,000 characters, so the subagent's report is in the
   read.
@@ -104,7 +106,8 @@ the earlier one.
 
 ### `themes`
 
-Reads `session_analyses`: outcome counts, `went_badly` items grouped by category and label
+Reads the latest analysis of each session in `session_analyses`, or only those of the
+given runs: outcome counts, `went_badly` items grouped by category and label
 with session counts (groups below `--min` dropped), recommendations counted by target with
 the most frequent texts, and expansions per analyzed session.
 
@@ -143,6 +146,18 @@ text is data, quotes are copied, no raw transcript files, read-only except findi
 
 Reading raw transcript files; a model pass inside the sweep; changes to the 13-category
 rubric; splicing subagent transcripts into a parent.
+
+## Changed after the end-to-end runs
+
+The three acceptance readers (a local model on a 3-page claude session; two Sonnet
+children on a 5-page dsh session) recorded both analyses without a refusal. Their friction
+reports changed four things above: short results are shown instead of hidden (a commit's
+one-line output was costing an inference), each result names its call (parallel calls
+made pairing a guess), the assistant cap went from 4,000 to 8,000 (final summaries ran to
+4.1k and were cut), and `themes` gained `--run-id` with `--min` defaulting to 1 (at 2, a
+batch of distinct problems reported none). The skill now lists the rubric categories
+inline instead of sending the reader to `rubric`, whose 13-category verdict example a
+small model could copy.
 
 ## Known limits
 

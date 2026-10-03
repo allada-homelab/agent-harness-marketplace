@@ -1148,6 +1148,7 @@ ANALYZE_SKILL = "transcript-analyze"
 DISPATCH_TOOLS = ("Agent", "Task", "subagent", "delegate_agent")
 DISPATCH_RESULT_CHARS = 2000
 ERROR_RESULT_CHARS = 160
+SMALL_RESULT_CHARS = 200  # a result this short costs less to show than to expand
 PAGE_CHARS = 30000
 EXPAND_CHARS = 4000
 OUTCOMES = ("completed", "partial", "abandoned", "failed", "unclear")
@@ -1184,7 +1185,8 @@ def build_read_units(conn, session, *, user_chars, assistant_chars, args_chars) 
     ):
         calls.setdefault(message_id, []).append((call_id, name, arguments, is_error))
         if result_id is not None:
-            results[result_id] = (name, is_error)
+            results[result_id] = (name, is_error, message_id)
+    ord_of = {row[0]: row[1] for row in messages}
     final_text, final_call = final_report(conn, session_id)
 
     units: list[Unit] = []
@@ -1210,14 +1212,18 @@ def build_read_units(conn, session, *, user_chars, assistant_chars, args_chars) 
             if lines:
                 units.append(Unit(lines, ord_=ord_))
         elif role == "tool_result":
-            name, is_error = results.get(message_id, (None, 0))
+            name, is_error, call_message = results.get(message_id, (None, 0, None))
             if is_error:
                 body = f"ERR {capped(text, ERROR_RESULT_CHARS, length)}"
             elif name in DISPATCH_TOOLS:
                 body = capped(text, DISPATCH_RESULT_CHARS, length)
+            elif (length or 0) <= SMALL_RESULT_CHARS:
+                body = normalize(text) or "(empty)"
             else:
                 body = f"ok {length or 0:,} chars"
-            units.append(Unit([f"[{ord_}] RESULT {body}"], ord_=ord_))
+            # Parallel calls share an ord and their results follow later; name the call.
+            source = f"of {name} [{ord_of[call_message]}] " if call_message in ord_of else ""
+            units.append(Unit([f"[{ord_}] RESULT {source}{body}"], ord_=ord_))
         elif text.strip():
             units.append(Unit([f"[{ord_}] {role.upper()} {capped(text, assistant_chars)}"],
                               ord_=ord_))
@@ -1309,7 +1315,7 @@ def cmd_read(args) -> int:
     page = pages[args.page - 1]
     header.append(
         f"page {args.page}/{len(pages)} · ords {page[0].ord}–{page[-1].ord} · "
-        f"`RESULT ok N chars` is a hidden result: `review.py expand {native_id} <ord>` shows it"
+        f"`RESULT … ok N chars` is a hidden result: `review.py expand {native_id} <ord>` shows it"
     )
     print("\n".join(header + [""] + [u.text for u in page]))
     if args.page < len(pages):
@@ -1524,7 +1530,8 @@ def cmd_themes(args) -> int:
     for run_id, harness, native_id, outcome, body in fconn.execute(
         "SELECT run_id, harness, native_id, outcome, body FROM session_analyses ORDER BY id"
     ):
-        latest[(harness, native_id)] = (run_id, outcome, json.loads(body))
+        if not args.run_id or run_id in args.run_id:
+            latest[(harness, native_id)] = (run_id, outcome, json.loads(body))
     if args.harness:
         latest = {k: v for k, v in latest.items() if k[0] in args.harness}
     if args.since:
@@ -1534,7 +1541,9 @@ def cmd_themes(args) -> int:
         print("no recorded analyses in this scope")
         return 0
 
-    print(f"sessions analyzed: {len(latest)}\n")
+    runs = sorted({v[0] for v in latest.values()})
+    print(f"sessions analyzed: {len(latest)} (latest analysis of each, from run(s) "
+          f"{', '.join(map(str, runs))})\n")
     outcomes = Counter(v[1] for v in latest.values())
     print(render_table(["outcome", "sessions"], [[o, outcomes.get(o, 0)] for o in OUTCOMES]))
 
@@ -1557,7 +1566,7 @@ def cmd_themes(args) -> int:
     for _run, _outcome, body in latest.values():
         for rec in body.get("recommendations", []):
             targets[rec["target"]] += 1
-            texts[(rec["target"], one_line(rec["text"], 120))] += 1
+            texts[(rec["target"], normalize(rec["text"]))] += 1
     if targets:
         print("\nrecommendations by target:")
         print(render_table(["target", "count"], [[t, targets[t]] for t in TARGETS if targets[t]]))
@@ -1679,7 +1688,7 @@ def main(argv: list[str] | None = None) -> int:
     rd.add_argument("--page-chars", type=int, default=PAGE_CHARS,
                     help=f"page size in characters (default {PAGE_CHARS})")
     rd.add_argument("--user-chars", type=int, default=8000)
-    rd.add_argument("--assistant-chars", type=int, default=4000)
+    rd.add_argument("--assistant-chars", type=int, default=8000)
     rd.add_argument("--args-chars", type=int, default=200)
     rd.add_argument("--run-id", type=int, help="log this page read for the coverage check")
     rd.set_defaults(func=cmd_read)
@@ -1704,7 +1713,9 @@ def main(argv: list[str] | None = None) -> int:
     th = sub.add_parser("themes", help="roll recorded analyses up across sessions")
     th.add_argument("--since")
     th.add_argument("--harness", action="append", choices=["claude", "pi", "dsh"])
-    th.add_argument("--min", type=int, default=2, help="smallest group shown, in sessions")
+    th.add_argument("--run-id", type=int, action="append",
+                    help="only analyses recorded in this run; repeat for several")
+    th.add_argument("--min", type=int, default=1, help="smallest group shown, in sessions")
     th.set_defaults(func=cmd_themes)
 
     sh = sub.add_parser("analysis-shape", help="print the analysis JSON shape")

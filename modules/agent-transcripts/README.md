@@ -61,8 +61,8 @@ accumulated, by category, tool, project or week.
 `transcript-analyze` reads a whole session instead of a budgeted view of it, for the
 questions a rubric cannot answer: what the session set out to do, where it turned, why it
 ended the way it did, and what to change. Tool results are 53–75% of a session's
-characters, so `read` hides them, showing each as its size, except a failed result's first
-160 characters and a subagent's report. It caps call arguments at 200 characters and
+characters, so `read` hides them, showing each as its size, except a short result, a failed
+result's first 160 characters and a subagent's report. It caps call arguments at 200 characters and
 splits the rest into pages of about 30,000 characters, preferring to break at a user turn.
 `expand` shows any hidden text on demand. `record-analysis` refuses an analysis unless the
 run logged a read of every page and every cited quote occurs in its message. `themes`

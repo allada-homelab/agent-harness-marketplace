@@ -51,9 +51,14 @@ Each message starts with its ord, `[42]`:
 
 - `USER` is the human, with injected harness text replaced by `[stripped: …]`.
 - `ASSISTANT` is the agent's text. `CALL <tool> <arguments>` is a tool call; `ERR` at the
-  end means it failed.
-- `RESULT ok 12,431 chars` is a tool result that is **hidden**. Only its size is shown.
-- `RESULT ERR <text>` is a failed result; its first 160 characters are shown.
+  end means the tool reported failure. A shell command that exits non-zero is marked `ERR`
+  even when its output was what the agent wanted (a `grep` that found nothing), so read
+  the next turn before counting it as a failure.
+- Several `CALL` lines on one ord are parallel calls. Their results follow, each naming
+  the call it answers: `[13] RESULT of Bash [12] …`.
+- `RESULT of Bash [12] ok 12,431 chars` is a tool result that is **hidden**. Only its
+  size is shown. A result of 200 characters or less is shown in full instead.
+- `RESULT of Bash [12] ERR <text>` is a failed result; its first 160 characters are shown.
 - A subagent's report (the result of an `Agent`, `Task`, `subagent` or `delegate_agent`
   call) is shown up to 2,000 characters.
 - `…[of N chars]` means that line was cut; N is the full length. It is a marker, never
@@ -77,7 +82,7 @@ cannot see. Do not expand to browse. About ten expansions in a session is plenty
 
 ### 4. Write the analysis
 
-Write a JSON file with exactly these keys:
+Write a JSON file, outside any git repository, with exactly these keys:
 
 ```json
 {
@@ -118,12 +123,16 @@ Write a JSON file with exactly these keys:
 - `summary`: how the session went, start to end, at most 1,500 characters.
 - `turning_points`, `went_well`, `went_badly`: each item has an `ord`, a `quote` of at
   most 200 characters copied character for character from that message, and a `note`
-  saying why it matters. A quote may come from a result you expanded at that ord. Lists
-  may be empty.
-- `went_badly` items also carry a `category`, one of the `transcript-review` rubric
-  categories (`uv run --script ../transcript-review/review.py rubric` lists them) or
-  `other`, and a `label`, a short kebab-case name for the problem. Reuse a label you
-  used for the same problem in another session; `themes` groups by it.
+  saying why it matters. A quote may be any part of the message, including a result you
+  expanded at that ord; line breaks may be written as single spaces. A `"` inside a quote
+  must be written `\"` in the JSON. Lists may be empty.
+- `went_badly` items also carry a `category` and a `label`. The category is one of:
+  `repeat_failing_approach`, `tool_misuse`, `tool_contract_friction`, `user_correction`,
+  `unrequested_scope`, `stopped_short`, `unverified_claim`, `ignored_instruction`,
+  `boundary_workaround`, `wasted_exploration`, `unnecessary_question`, `unresolved_end`,
+  `secret_exposure`, or `other` when none fits. Do not stretch a category to fit; use
+  `other`. The label is a short kebab-case name for the problem. Reuse a label you used
+  for the same problem in another session, because `themes` groups by it.
 - `root_causes`: why the session went the way it did, one string each.
 - `recommendations`: each has a `target` (`doctrine`, `skill`, `tool`, `harness` or
   `prompt`, meaning the user's own request) and a `text` saying what to change.
@@ -133,7 +142,7 @@ Write a JSON file with exactly these keys:
 ### 5. Record it
 
 ```bash
-uv run --script ../transcript-review/review.py record-analysis <native_id> --run-id <run id> --file analysis.json
+uv run --script ../transcript-review/review.py record-analysis <native_id> --run-id <run id> --file <path to the JSON>
 ```
 
 Exit 2 means it was refused and nothing was stored; the message names what was wrong (a
@@ -156,12 +165,14 @@ read the pages yourself; to check one detail, use `expand` or
 ## When the batch is done
 
 ```bash
-uv run --script ../transcript-review/review.py themes
+uv run --script ../transcript-review/review.py themes --run-id <run id>
 ```
 
-It prints outcomes, problems grouped by category and label across sessions, the most
-frequent recommendations, and how often hidden content was expanded. Report that and
-stop. `--harness`, `--since` and `--min` narrow it.
+It prints outcomes, problems grouped by category and label, the most frequent
+recommendations, and how often hidden content was expanded, for the sessions your run
+analyzed. Report that and stop. Without `--run-id` it covers the latest analysis of every
+session ever recorded; `--harness`, `--since` and `--min` (smallest group, in sessions)
+narrow it.
 
 ## Hard rules
 
