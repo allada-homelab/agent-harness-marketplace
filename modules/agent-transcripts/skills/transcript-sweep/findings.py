@@ -24,7 +24,7 @@ from pathlib import Path
 FINDINGS_NAME = "findings.db"
 # Bumped whenever a CREATE TABLE here changes: the statements are IF NOT EXISTS, so an
 # existing file would otherwise keep the old shape forever. Stored in PRAGMA user_version.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 FINDINGS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -63,7 +63,36 @@ CREATE TABLE IF NOT EXISTS review_flags (
     UNIQUE(run_id, harness, native_id, category)
 );
 
+CREATE TABLE IF NOT EXISTS session_analyses (
+    id          INTEGER PRIMARY KEY,
+    run_id      INTEGER NOT NULL REFERENCES runs(id),
+    harness     TEXT NOT NULL,
+    native_id   TEXT NOT NULL,
+    goal        TEXT NOT NULL,
+    outcome     TEXT NOT NULL,
+    summary     TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    UNIQUE(run_id, harness, native_id)
+);
+
+CREATE TABLE IF NOT EXISTS analysis_access (
+    id          INTEGER PRIMARY KEY,
+    run_id      INTEGER NOT NULL REFERENCES runs(id),
+    harness     TEXT NOT NULL,
+    native_id   TEXT NOT NULL,
+    kind        TEXT NOT NULL CHECK(kind IN ('page','expand')),
+    page        INTEGER,
+    page_count  INTEGER,
+    page_chars  INTEGER,
+    ord         INTEGER,
+    "offset"    INTEGER,
+    at          TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS sweep_flags_session ON sweep_flags(harness, native_id);
+CREATE INDEX IF NOT EXISTS analysis_access_session
+    ON analysis_access(run_id, harness, native_id);
 CREATE INDEX IF NOT EXISTS review_flags_session ON review_flags(harness, native_id);
 CREATE INDEX IF NOT EXISTS review_flags_category ON review_flags(category, present);
 CREATE INDEX IF NOT EXISTS review_flags_run ON review_flags(run_id);
@@ -93,12 +122,16 @@ def open_findings(dest: Path, *, readonly: bool = False) -> sqlite3.Connection:
 def migrate(conn: sqlite3.Connection, db: Path) -> None:
     """Bring an older file up to SCHEMA_VERSION, or refuse to touch it.
 
-    The only migration so far drops `review_flags` so the schema below can recreate it with
-    its UNIQUE key. That is destructive, so it only runs while the table is empty; a store
-    that already holds review findings is the user's data and this exits rather than guess.
+    0 → 1 drops `review_flags` so the schema below can recreate it with its UNIQUE key.
+    That is destructive, so it only runs while the table is empty; a store that already
+    holds review findings is the user's data and this exits rather than guess.
+    1 → 2 only adds tables, which the IF NOT EXISTS schema creates; nothing to do here.
     """
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version >= SCHEMA_VERSION:
+        return
+    if version >= 1:
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         return
     existing = conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'review_flags'"

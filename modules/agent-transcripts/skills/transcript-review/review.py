@@ -390,6 +390,7 @@ class Unit:
         self.ord = ord_
         self.repeats = 1
         self.final = False  # part of the final report: fit_budget always keeps it
+        self.user = False  # a user turn: where `read` prefers to break a page
 
     @property
     def text(self) -> str:
@@ -411,6 +412,23 @@ def user_lines(ord_: int, text: str, cap: int) -> list[str]:
     return [f"[{ord_}] USER {lines[0]}"] + ["    " + line for line in lines[1:]]
 
 
+def final_report(conn, session_id: int):
+    """(message id, text) of the last assistant text and (call id, arguments) of the last
+    final-report call — the report, uncapped by the per-unit limits. Either may be None."""
+    final_text = conn.execute(
+        "SELECT id, substr(text, 1, ?) FROM messages WHERE session_id = ? AND role = 'assistant'"
+        " AND trim(coalesce(text, '')) != '' ORDER BY ord DESC, id DESC LIMIT 1",
+        (FINAL_REPORT_CHARS + 1, session_id),
+    ).fetchone()
+    final_call = conn.execute(
+        "SELECT t.id, substr(t.arguments, 1, ?) FROM tool_calls t"
+        " JOIN messages m ON m.id = t.message_id WHERE m.session_id = ? AND t.name IN (%s)"
+        " ORDER BY m.ord DESC, t.id DESC LIMIT 1" % ",".join("?" for _ in FINAL_REPORT_TOOLS),
+        (FINAL_REPORT_CHARS + 1, session_id, *FINAL_REPORT_TOOLS),
+    ).fetchone()
+    return final_text, final_call
+
+
 def build_units(conn, session, *, assistant_chars, args_chars, result_chars, user_chars):
     """One Unit per message, in ord order; returns (units, stripped block count)."""
     session_id, harness = session[0], session[1]
@@ -429,19 +447,7 @@ def build_units(conn, session, *, assistant_chars, args_chars, result_chars, use
     ):
         calls.setdefault(message_id, []).append((call_id, name, arguments, is_error))
 
-    # The final report, uncapped by the per-unit limits: the last assistant text and the
-    # last final-report tool call's arguments.
-    final_text = conn.execute(
-        "SELECT id, substr(text, 1, ?) FROM messages WHERE session_id = ? AND role = 'assistant'"
-        " AND trim(coalesce(text, '')) != '' ORDER BY ord DESC, id DESC LIMIT 1",
-        (FINAL_REPORT_CHARS + 1, session_id),
-    ).fetchone()
-    final_call = conn.execute(
-        "SELECT t.id, substr(t.arguments, 1, ?) FROM tool_calls t"
-        " JOIN messages m ON m.id = t.message_id WHERE m.session_id = ? AND t.name IN (%s)"
-        " ORDER BY m.ord DESC, t.id DESC LIMIT 1" % ",".join("?" for _ in FINAL_REPORT_TOOLS),
-        (FINAL_REPORT_CHARS + 1, session_id, *FINAL_REPORT_TOOLS),
-    ).fetchone()
+    final_text, final_call = final_report(conn, session_id)
 
     units: list[Unit] = []
     stripped_blocks = 0
@@ -1129,6 +1135,493 @@ def cmd_rubric(args) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ analyze
+#
+# The whole-session mode: `read` pages through every message with tool results hidden,
+# `expand` shows one hidden thing, `record-analysis` validates and stores one analysis and
+# `themes` rolls the analyses up. Sizes are measured in docs/superpowers/specs/
+# 2026-10-03-transcript-analyze-design.md: results are 53-75% of a session's characters.
+
+ANALYZE_SKILL = "transcript-analyze"
+# A dispatch call's result is the subagent's report — the one result a whole-session read
+# cannot do without.
+DISPATCH_TOOLS = ("Agent", "Task", "subagent", "delegate_agent")
+DISPATCH_RESULT_CHARS = 2000
+ERROR_RESULT_CHARS = 160
+SMALL_RESULT_CHARS = 200  # a result this short costs less to show than to expand
+PAGE_CHARS = 30000
+EXPAND_CHARS = 4000
+OUTCOMES = ("completed", "partial", "abandoned", "failed", "unclear")
+TARGETS = ("doctrine", "skill", "tool", "harness", "prompt")
+OTHER = "other"
+GOAL_MAX, SUMMARY_MAX, NOTE_MAX, LABEL_MAX = 300, 1500, 500, 60
+EVIDENCE_LISTS = ("turning_points", "went_well", "went_badly")
+ANALYSIS_KEYS = ("goal", "outcome", "summary", *EVIDENCE_LISTS, "root_causes", "recommendations")
+
+
+def capped(text: str, limit: int, total: int | None = None) -> str:
+    """One line of at most `limit` characters; a cut one says how long the original was."""
+    flat = normalize(text)
+    if len(flat) <= limit and (total is None or total <= len(text or "")):
+        return flat
+    return f"{flat[:limit]} …[of {total if total is not None else len(text):,} chars]"
+
+
+def build_read_units(conn, session, *, user_chars, assistant_chars, args_chars) -> list[Unit]:
+    """Every message in ord order, one Unit each, with ordinary tool results hidden."""
+    session_id, harness = session[0], session[1]
+    messages = conn.execute(
+        "SELECT id, ord, role, CASE WHEN role = 'tool_result' THEN substr(text, 1, ?)"
+        " ELSE text END, length(text) FROM messages WHERE session_id = ? ORDER BY ord, id",
+        (DISPATCH_RESULT_CHARS + 1, session_id),
+    ).fetchall()
+    calls: dict[int, list] = {}
+    results: dict[int, tuple] = {}
+    for call_id, message_id, name, arguments, is_error, result_id in conn.execute(
+        "SELECT t.id, t.message_id, t.name, t.arguments, t.is_error, t.result_message_id"
+        " FROM tool_calls t JOIN messages m ON m.id = t.message_id WHERE m.session_id = ?"
+        " ORDER BY t.id",
+        (session_id,),
+    ):
+        calls.setdefault(message_id, []).append((call_id, name, arguments, is_error))
+        if result_id is not None:
+            results[result_id] = (name, is_error, message_id)
+    ord_of = {row[0]: row[1] for row in messages}
+    final_text, final_call = final_report(conn, session_id)
+
+    units: list[Unit] = []
+    for message_id, ord_, role, text, length in messages:
+        text = text or ""
+        if role == "user":
+            clean = strip_boilerplate(text, harness)[0].strip() or "[empty]"
+            unit = Unit(user_lines(ord_, clean, user_chars), ord_=ord_)
+            unit.user = True
+            units.append(unit)
+        elif role == "assistant":
+            lines = []
+            if final_text and final_text[0] == message_id:
+                lines.append(f"[{ord_}] ASSISTANT {one_line(final_text[1], FINAL_REPORT_CHARS)}")
+            elif text.strip():
+                lines.append(f"[{ord_}] ASSISTANT {capped(text, assistant_chars)}")
+            for call_id, name, arguments, is_error in calls.get(message_id, []):
+                if final_call and final_call[0] == call_id:
+                    shown = one_line(final_call[1] or "", FINAL_REPORT_CHARS)
+                else:
+                    shown = capped(arguments or "", args_chars)
+                lines.append(f"[{ord_}] CALL {name} {shown}{' ERR' if is_error else ''}")
+            if lines:
+                units.append(Unit(lines, ord_=ord_))
+        elif role == "tool_result":
+            name, is_error, call_message = results.get(message_id, (None, 0, None))
+            if is_error:
+                body = f"ERR {capped(text, ERROR_RESULT_CHARS, length)}"
+            elif name in DISPATCH_TOOLS:
+                body = capped(text, DISPATCH_RESULT_CHARS, length)
+            elif (length or 0) <= SMALL_RESULT_CHARS:
+                body = normalize(text) or "(empty)"
+            else:
+                body = f"ok {length or 0:,} chars"
+            # Parallel calls share an ord and their results follow later; name the call.
+            source = f"of {name} [{ord_of[call_message]}] " if call_message in ord_of else ""
+            units.append(Unit([f"[{ord_}] RESULT {source}{body}"], ord_=ord_))
+        elif text.strip():
+            units.append(Unit([f"[{ord_}] {role.upper()} {capped(text, assistant_chars)}"],
+                              ord_=ord_))
+    return units
+
+
+def paginate(units: list[Unit], page_chars: int) -> list[list[Unit]]:
+    """Split into pages of about `page_chars`, every unit on exactly one page.
+
+    A page that would overflow ends at its last user turn when that turn sits in the page's
+    second half — a page that starts on what the user asked reads on its own — and at the
+    overflowing unit otherwise. A unit larger than a page is a page of its own.
+    """
+    pages: list[list[Unit]] = []
+    current: list[Unit] = []
+    for unit in units:
+        while current and sum(u.size() for u in current) + unit.size() > page_chars:
+            cut, before = 0, 0
+            for i, u in enumerate(current):
+                if i and u.user and before >= page_chars // 2:
+                    cut = i
+                before += u.size()
+            if cut:
+                pages.append(current[:cut])
+                current = current[cut:]
+            else:
+                pages.append(current)
+                current = []
+        current.append(unit)
+    if current:
+        pages.append(current)
+    return pages
+
+
+def check_run(fconn, run_id: int) -> None:
+    if fconn.execute("SELECT 1 FROM runs WHERE id = ?", (run_id,)).fetchone() is None:
+        raise SystemExit(f"no run {run_id} in findings.db; start one with "
+                         "`record-analysis --new-run --model NAME`")
+
+
+def log_access(dest: Path, run_id: int | None, harness: str, native_id: str, **fields) -> None:
+    """With --run-id, note one page read or expansion: the coverage check reads this back."""
+    if run_id is None:
+        return
+    fconn = load_findings().open_findings(dest)
+    try:
+        check_run(fconn, run_id)
+        fconn.execute(
+            'INSERT INTO analysis_access (run_id, harness, native_id, kind, page, page_count,'
+            ' page_chars, ord, "offset", at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (run_id, harness, native_id, fields["kind"], fields.get("page"),
+             fields.get("page_count"), fields.get("page_chars"), fields.get("ord"),
+             fields.get("offset"), now_iso()),
+        )
+        fconn.commit()
+    finally:
+        fconn.close()
+
+
+def read_pages(conn, session, args) -> list[list[Unit]]:
+    units = build_read_units(conn, session, user_chars=args.user_chars,
+                             assistant_chars=args.assistant_chars, args_chars=args.args_chars)
+    return paginate(units, args.page_chars)
+
+
+def cmd_read(args) -> int:
+    dest = resolve_dest(args.dest)
+    conn = connect(dest)
+    session = resolve_session(conn, args.session)
+    _id, harness, native_id, cwd, _project, kind, started_at, model = session
+    pages = read_pages(conn, session, args)
+
+    header = [
+        f"session {native_id}  harness={harness}  kind={kind}  started={started_at}",
+        f"model={model}  cwd={cwd}  pages={len(pages)} at --page-chars {args.page_chars}",
+    ]
+    if args.index:
+        rows = [[n, f"{p[0].ord}–{p[-1].ord}", sum(u.messages for u in p),
+                 sum(u.size() for u in p)] for n, p in enumerate(pages, 1)]
+        print("\n".join(header) + "\n")
+        print(render_table(["page", "ords", "messages", "chars"], rows) if rows
+              else "no messages")
+        return 0
+    if not 1 <= args.page <= max(len(pages), 1) or not pages:
+        print(f"no page {args.page}; this session has {len(pages)} page(s)", file=sys.stderr)
+        return 2
+    log_access(dest, args.run_id, harness, native_id, kind="page", page=args.page,
+               page_count=len(pages), page_chars=args.page_chars)
+    page = pages[args.page - 1]
+    header.append(
+        f"page {args.page}/{len(pages)} · ords {page[0].ord}–{page[-1].ord} · "
+        f"`RESULT … ok N chars` is a hidden result: `review.py expand {native_id} <ord>` shows it"
+    )
+    print("\n".join(header + [""] + [u.text for u in page]))
+    if args.page < len(pages):
+        print(f"\n(next: --page {args.page + 1})")
+    else:
+        print("\n(last page)")
+    return 0
+
+
+def cmd_expand(args) -> int:
+    """The full text behind one ord — a result, a call's arguments, a capped turn — paged."""
+    dest = resolve_dest(args.dest)
+    conn = connect(dest)
+    session = resolve_session(conn, args.session)
+    session_id, harness, native_id = session[0], session[1], session[2]
+    rows = conn.execute(
+        "SELECT id, role, text FROM messages WHERE session_id = ? AND ord = ? ORDER BY id",
+        (session_id, args.ord),
+    ).fetchall()
+    if not rows:
+        print(f"no message with ord {args.ord} in this session", file=sys.stderr)
+        return 2
+    parts = []
+    for message_id, role, text in rows:
+        if role == "user":
+            text = strip_boilerplate(text or "", harness)[0]
+        if role == "tool_result":
+            name = conn.execute(
+                "SELECT name FROM tool_calls WHERE result_message_id = ?", (message_id,)
+            ).fetchone()
+            label = f"RESULT of {name[0]}" if name else "RESULT"
+        else:
+            label = role.upper()
+        if (text or "").strip():
+            parts.append((label, text or ""))
+        for name, arguments in conn.execute(
+            "SELECT name, arguments FROM tool_calls WHERE message_id = ? ORDER BY id",
+            (message_id,),
+        ):
+            parts.append((f"CALL {name} arguments", arguments or ""))
+    full = "\n".join(f"== {label} ({len(text):,} chars) ==\n{text}" for label, text in parts)
+    if not 0 <= args.offset < max(len(full), 1):
+        print(f"--offset {args.offset} is outside ord {args.ord}'s {len(full):,} chars",
+              file=sys.stderr)
+        return 2
+    log_access(dest, args.run_id, harness, native_id, kind="expand", ord=args.ord,
+               offset=args.offset)
+    end = min(args.offset + args.chars, len(full))
+    print(f"ord {args.ord} · {len(full):,} chars · showing {args.offset:,}–{end:,}\n")
+    print(full[args.offset:end])
+    print(f"\n(next: --offset {end})" if end < len(full) else "\n(end)")
+    return 0
+
+
+def check_evidence(item, where: str, conn, session_id: int, harness: str) -> dict:
+    """One `{ord, quote, note}` item: the quote must be verbatim in the message at its ord."""
+    if not isinstance(item, dict):
+        raise Invalid(f"{where}: must be an object with ord, quote and note")
+    ord_, quote, note = item.get("ord"), item.get("quote"), item.get("note")
+    if not isinstance(ord_, int) or isinstance(ord_, bool):
+        raise Invalid(f"{where}: needs an integer ord")
+    if not isinstance(quote, str) or not quote_needle(quote):
+        raise Invalid(f"{where}: needs a quote copied verbatim from the page")
+    if len(quote) > QUOTE_MAX:
+        raise Invalid(f"{where}: quote is {len(quote)} chars, the cap is {QUOTE_MAX}")
+    if not isinstance(note, str) or not note.strip() or len(note) > NOTE_MAX:
+        raise Invalid(f"{where}: needs a note of 1-{NOTE_MAX} characters")
+    haystack = message_haystack(conn, session_id, ord_, harness)
+    if haystack is None:
+        raise Invalid(f"{where}: no message with ord {ord_} in this session")
+    if quote_needle(quote) not in normalize(haystack):
+        raise Invalid(f"{where}: quote is not in message {ord_}; copy it verbatim")
+    return {"ord": ord_, "quote": quote, "note": note.strip()}
+
+
+def text_field(analysis: dict, key: str, limit: int) -> str:
+    value = analysis.get(key)
+    if not isinstance(value, str) or not value.strip() or len(value) > limit:
+        raise Invalid(f"{key}: needs a string of 1-{limit} characters")
+    return value.strip()
+
+
+def validate_analysis(analysis, conn, session_id: int, harness: str) -> dict:
+    if not isinstance(analysis, dict):
+        raise Invalid("the analysis must be a JSON object")
+    missing = [k for k in ANALYSIS_KEYS if k not in analysis]
+    extra = [k for k in analysis if k not in ANALYSIS_KEYS]
+    if missing or extra:
+        raise Invalid(f"keys must be exactly {', '.join(ANALYSIS_KEYS)}; missing: "
+                      f"{', '.join(missing) or '-'}; unknown: {', '.join(extra) or '-'}")
+    out = {"goal": text_field(analysis, "goal", GOAL_MAX),
+           "outcome": analysis["outcome"],
+           "summary": text_field(analysis, "summary", SUMMARY_MAX)}
+    if out["outcome"] not in OUTCOMES:
+        raise Invalid(f"outcome must be one of {'/'.join(OUTCOMES)}")
+    for key in EVIDENCE_LISTS:
+        if not isinstance(analysis[key], list):
+            raise Invalid(f"{key}: must be a list")
+        out[key] = []
+        for i, item in enumerate(analysis[key]):
+            where = f"{key}[{i}]"
+            clean = check_evidence(item, where, conn, session_id, harness)
+            if key == "went_badly":
+                category, label = item.get("category"), item.get("label")
+                if category not in (*CATEGORIES, OTHER):
+                    raise Invalid(f"{where}: category must be a rubric category or {OTHER!r};"
+                                  " run `review.py rubric`")
+                if not isinstance(label, str) or not label.strip() or len(label) > LABEL_MAX:
+                    raise Invalid(f"{where}: needs a label of 1-{LABEL_MAX} characters")
+                clean.update(category=category, label=label.strip().lower())
+            out[key].append(clean)
+    causes = analysis["root_causes"]
+    if not isinstance(causes, list) or not all(
+        isinstance(c, str) and c.strip() and len(c) <= NOTE_MAX for c in causes
+    ):
+        raise Invalid(f"root_causes: must be a list of strings of 1-{NOTE_MAX} characters")
+    out["root_causes"] = [c.strip() for c in causes]
+    if not isinstance(analysis["recommendations"], list):
+        raise Invalid("recommendations: must be a list")
+    out["recommendations"] = []
+    for i, rec in enumerate(analysis["recommendations"]):
+        where = f"recommendations[{i}]"
+        if not isinstance(rec, dict) or rec.get("target") not in TARGETS:
+            raise Invalid(f"{where}: target must be one of {'/'.join(TARGETS)}")
+        text = rec.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > NOTE_MAX:
+            raise Invalid(f"{where}: needs a text of 1-{NOTE_MAX} characters")
+        out["recommendations"].append({"target": rec["target"], "text": text.strip()})
+    return out
+
+
+def coverage_gap(fconn, run_id: int, harness: str, native_id: str) -> str | None:
+    """None when this run's logged reads cover every page at one page size, else why not."""
+    logged: dict[tuple[int, int], set[int]] = {}
+    for page, page_count, page_chars in fconn.execute(
+        "SELECT page, page_count, page_chars FROM analysis_access"
+        " WHERE run_id = ? AND harness = ? AND native_id = ? AND kind = 'page'",
+        (run_id, harness, native_id),
+    ):
+        logged.setdefault((page_chars, page_count), set()).add(page)
+    if not logged:
+        return (f"run {run_id} logged no page reads of this session; read every page with "
+                f"`read <session> --page N --run-id {run_id}`")
+    gaps = [(page_chars, sorted(set(range(1, page_count + 1)) - seen))
+            for (page_chars, page_count), seen in logged.items()]
+    page_chars, missing = min(gaps, key=lambda g: len(g[1]))
+    if not missing:
+        return None
+    return (f"run {run_id} has not read every page: at --page-chars {page_chars} page(s) "
+            f"{', '.join(map(str, missing))} were never read with --run-id {run_id}")
+
+
+def cmd_record_analysis(args) -> int:
+    dest = resolve_dest(args.dest)
+    findings = load_findings()
+    fconn = findings.open_findings(dest)
+
+    run_id = args.run_id
+    if args.new_run:
+        if not args.model:
+            print("--new-run needs --model", file=sys.stderr)
+            return 2
+        print(findings.start_run(fconn, ANALYZE_SKILL, args.model,
+                                 json.dumps(vars(args), default=str)))
+        return 0
+    if run_id is None or not args.session:
+        print("pass a session and --run-id (or --new-run --model NAME to start a run)",
+              file=sys.stderr)
+        return 2
+    check_run(fconn, run_id)
+
+    conn = connect(dest)
+    session = resolve_session(conn, args.session)
+    session_id, harness, native_id = session[0], session[1], session[2]
+    raw = Path(args.file).expanduser().read_text(encoding="utf-8") if args.file else sys.stdin.read()
+    try:
+        analysis = validate_analysis(json.loads(raw), conn, session_id, harness)
+    except ValueError as exc:  # json.JSONDecodeError
+        print(f"analysis is not valid JSON: {exc}", file=sys.stderr)
+        return 2
+    except Invalid as exc:
+        print(f"invalid analysis: {exc}", file=sys.stderr)
+        return 2
+    gap = coverage_gap(fconn, run_id, harness, native_id)
+    if gap:
+        print(f"refused: {gap}", file=sys.stderr)
+        return 2
+
+    fconn.execute(
+        "DELETE FROM session_analyses WHERE run_id = ? AND harness = ? AND native_id = ?",
+        (run_id, harness, native_id),
+    )
+    fconn.execute(
+        "INSERT INTO session_analyses (run_id, harness, native_id, goal, outcome, summary,"
+        " body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (run_id, harness, native_id, analysis["goal"], analysis["outcome"],
+         analysis["summary"], json.dumps(analysis, ensure_ascii=False), now_iso()),
+    )
+    fconn.commit()
+    print(f"recorded analysis of {harness}/{native_id} in run {run_id}: "
+          f"outcome={analysis['outcome']}, " + ", ".join(
+              f"{len(analysis[k])} {k}" for k in EVIDENCE_LISTS))
+    return 0
+
+
+def cmd_themes(args) -> int:
+    dest = resolve_dest(args.dest)
+    fconn = load_findings().open_findings(dest, readonly=True)
+    conn = connect(dest)
+
+    latest: dict[tuple[str, str], tuple] = {}  # a re-analyzed session counts once
+    for run_id, harness, native_id, outcome, body in fconn.execute(
+        "SELECT run_id, harness, native_id, outcome, body FROM session_analyses ORDER BY id"
+    ):
+        if not args.run_id or run_id in args.run_id:
+            latest[(harness, native_id)] = (run_id, outcome, json.loads(body))
+    if args.harness:
+        latest = {k: v for k, v in latest.items() if k[0] in args.harness}
+    if args.since:
+        meta = session_meta(conn, set(latest))
+        latest = {k: v for k, v in latest.items() if (meta[k][1] or "") >= args.since}
+    if not latest:
+        print("no recorded analyses in this scope")
+        return 0
+
+    runs = sorted({v[0] for v in latest.values()})
+    print(f"sessions analyzed: {len(latest)} (latest analysis of each, from run(s) "
+          f"{', '.join(map(str, runs))})\n")
+    outcomes = Counter(v[1] for v in latest.values())
+    print(render_table(["outcome", "sessions"], [[o, outcomes.get(o, 0)] for o in OUTCOMES]))
+
+    groups: dict[tuple[str, str], set] = {}
+    items: Counter = Counter()
+    for key, (_run, _outcome, body) in latest.items():
+        for item in body.get("went_badly", []):
+            group = (item["category"], item["label"])
+            groups.setdefault(group, set()).add(key)
+            items[group] += 1
+    rows = [[c, label, items[(c, label)], len(keys)]
+            for (c, label), keys in sorted(groups.items(), key=lambda g: (-len(g[1]), g[0]))
+            if len(keys) >= args.min]
+    print("\nwent badly, by category and label:")
+    print(render_table(["category", "label", "items", "sessions"], rows) if rows
+          else f"  no group reached --min {args.min} sessions")
+
+    targets: Counter = Counter()
+    texts: Counter = Counter()
+    for _run, _outcome, body in latest.values():
+        for rec in body.get("recommendations", []):
+            targets[rec["target"]] += 1
+            texts[(rec["target"], normalize(rec["text"]))] += 1
+    if targets:
+        print("\nrecommendations by target:")
+        print(render_table(["target", "count"], [[t, targets[t]] for t in TARGETS if targets[t]]))
+        print("\nmost frequent recommendations:")
+        print(render_table(["target", "count", "text"],
+                           [[t, n, text] for (t, text), n in texts.most_common(10)]))
+
+    expansions = []
+    for (harness, native_id), (run_id, _outcome, _body) in latest.items():
+        expansions.append(fconn.execute(
+            "SELECT count(*) FROM analysis_access WHERE run_id = ? AND harness = ?"
+            " AND native_id = ? AND kind = 'expand'", (run_id, harness, native_id),
+        ).fetchone()[0])
+    print(f"\nexpansions per analyzed session: mean {sum(expansions) / len(expansions):.1f}, "
+          f"max {max(expansions)}, none in {expansions.count(0)} of {len(expansions)}")
+    return 0
+
+
+# The one copy of the example: SKILL.md shows it, `analysis-shape` prints it, a test records it.
+EXAMPLE_ANALYSIS = {
+    "goal": "Make the failing install in CI pass.",
+    "outcome": "partial",
+    "summary": "The assistant reran the install several times before reading the lockfile; "
+               "after the user redirected it, it found the peer dependency but stopped "
+               "before CI was green.",
+    "turning_points": [
+        {"ord": 91, "quote": "no, stop reinstalling and read the lockfile",
+         "note": "the user's redirect ended the retry loop"},
+    ],
+    "went_well": [],
+    "went_badly": [
+        {"ord": 88, "quote": "npm ERR! peer dep missing",
+         "note": "same install rerun unchanged after this error",
+         "category": "repeat_failing_approach", "label": "reinstall-loop"},
+    ],
+    "root_causes": ["Treated a deterministic dependency error as transient."],
+    "recommendations": [
+        {"target": "doctrine",
+         "text": "After the same error twice, read the input that produced it before retrying."},
+    ],
+}
+
+
+def cmd_analysis_shape(args) -> int:
+    print("analysis JSON — every key required, lists may be empty:\n")
+    print(json.dumps(EXAMPLE_ANALYSIS, indent=2))
+    print(f"\noutcome: {' | '.join(OUTCOMES)}")
+    print(f"recommendations[].target: {' | '.join(TARGETS)}")
+    print(f"went_badly[].category: a rubric category (`review.py rubric`) or {OTHER!r}; "
+          f"label: a short kebab-case name for the problem, at most {LABEL_MAX} characters")
+    print(f"every ord + quote: the quote at most {QUOTE_MAX} characters, copied verbatim from "
+          "that message; a note of 1-500 characters")
+    return 0
+
+
 # --------------------------------------------------------------------- main
 
 
@@ -1186,6 +1679,47 @@ def main(argv: list[str] | None = None) -> int:
 
     b = sub.add_parser("rubric", help="print the categories and the verdict shape")
     b.set_defaults(func=cmd_rubric)
+
+    rd = sub.add_parser("read", help="the whole session, paged, tool results hidden")
+    rd.add_argument("session", help="native id or numeric id")
+    pick = rd.add_mutually_exclusive_group()
+    pick.add_argument("--page", type=int, default=1, help="page to print (default 1)")
+    pick.add_argument("--index", action="store_true", help="print the page table only")
+    rd.add_argument("--page-chars", type=int, default=PAGE_CHARS,
+                    help=f"page size in characters (default {PAGE_CHARS})")
+    rd.add_argument("--user-chars", type=int, default=8000)
+    rd.add_argument("--assistant-chars", type=int, default=8000)
+    rd.add_argument("--args-chars", type=int, default=200)
+    rd.add_argument("--run-id", type=int, help="log this page read for the coverage check")
+    rd.set_defaults(func=cmd_read)
+
+    ex = sub.add_parser("expand", help="the full text behind one ord, paged")
+    ex.add_argument("session", help="native id or numeric id")
+    ex.add_argument("ord", type=int)
+    ex.add_argument("--offset", type=int, default=0)
+    ex.add_argument("--chars", type=int, default=EXPAND_CHARS,
+                    help=f"characters to print (default {EXPAND_CHARS})")
+    ex.add_argument("--run-id", type=int, help="log this expansion")
+    ex.set_defaults(func=cmd_expand)
+
+    ra = sub.add_parser("record-analysis", help="validate a session analysis and store it")
+    ra.add_argument("session", nargs="?", help="native id or numeric id")
+    ra.add_argument("--run-id", type=int)
+    ra.add_argument("--new-run", action="store_true", help="start a run; prints its id")
+    ra.add_argument("--model", help="the model writing the analyses")
+    ra.add_argument("--file", help="analysis JSON (default: stdin)")
+    ra.set_defaults(func=cmd_record_analysis)
+
+    th = sub.add_parser("themes", help="roll recorded analyses up across sessions")
+    th.add_argument("--since")
+    th.add_argument("--harness", action="append", choices=["claude", "pi", "dsh"])
+    th.add_argument("--run-id", type=int, action="append",
+                    help="only analyses recorded in this run; repeat for several")
+    th.add_argument("--min", type=int, default=1, help="smallest group shown, in sessions")
+    th.set_defaults(func=cmd_themes)
+
+    sh = sub.add_parser("analysis-shape", help="print the analysis JSON shape")
+    sh.set_defaults(func=cmd_analysis_shape)
 
     args = ap.parse_args(argv)
     return args.func(args)
