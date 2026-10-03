@@ -778,3 +778,318 @@ def test_rubric_mentions_the_unclassified_escape_hatch(capsys):
     assert rv.main(["rubric"]) == 0
     out = capsys.readouterr().out
     assert "unclassified" in out
+
+
+# -------------------------------------------------------------------- analyze
+
+
+def read(tmp_path, capsys, session, *extra):
+    assert rv.main(["--dest", str(tmp_path), "read", session, *extra]) == 0
+    return capsys.readouterr().out
+
+
+def expand(tmp_path, capsys, session, ord_, *extra):
+    assert rv.main(["--dest", str(tmp_path), "expand", session, str(ord_), *extra]) == 0
+    return capsys.readouterr().out
+
+
+def record_analysis(tmp_path, session, payload, run_id):
+    path = tmp_path / "analysis.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return rv.main(["--dest", str(tmp_path), "record-analysis", session, "--file", str(path),
+                    "--run-id", str(run_id)])
+
+
+def analysis(ord_, quote, **overrides):
+    """A valid analysis whose one went_badly item cites `quote` at `ord_`."""
+    body = {
+        "goal": "fix the build",
+        "outcome": "partial",
+        "summary": "retried the install, then stopped",
+        "turning_points": [],
+        "went_well": [],
+        "went_badly": [{"ord": ord_, "quote": quote, "note": "retried unchanged",
+                        "category": "repeat_failing_approach", "label": "reinstall-loop"}],
+        "root_causes": ["treated a deterministic error as transient"],
+        "recommendations": [{"target": "doctrine", "text": "read the input after two failures"}],
+    }
+    body.update(overrides)
+    return body
+
+
+def page_ords(text):
+    return [int(line[1:line.index("]")]) for line in text.splitlines()
+            if line.startswith("[") and "]" in line]
+
+
+def test_read_hides_an_ordinary_result_behind_its_size(index, tmp_path, capsys):
+    s = index.session("r1")
+    call = index.call(s, "Bash", '{"command": "cat big.log"}', result="secret-ish " * 500)
+    index.close()
+
+    out = read(tmp_path, capsys, "r1")
+    assert f"[{call + 1}] RESULT ok 5,500 chars" in out
+    assert "secret-ish" not in out
+
+
+def test_read_shows_the_start_of_a_failed_result(index, tmp_path, capsys):
+    s = index.session("r2")
+    call = index.call(s, "Bash", '{"command": "x"}', is_error=1,
+                      result="permission denied: /etc/shadow")
+    index.close()
+
+    assert f"[{call + 1}] RESULT ERR permission denied: /etc/shadow" in read(tmp_path, capsys, "r2")
+
+
+def test_read_shows_a_subagent_report(index, tmp_path, capsys):
+    s = index.session("r3")
+    index.call(s, "Agent", '{"prompt": "run the suite"}', result="all 12 tests pass")
+    index.close()
+
+    assert "RESULT all 12 tests pass" in read(tmp_path, capsys, "r3")
+
+
+def test_read_caps_call_arguments_and_says_how_long_they_were(index, tmp_path, capsys):
+    s = index.session("r4")
+    arguments = json.dumps({"file_path": "a.py", "content": "z" * 1000})
+    index.call(s, "Write", arguments)
+    index.close()
+
+    out = read(tmp_path, capsys, "r4")
+    assert f'CALL Write {{"file_path": "a.py"' in out
+    assert f"…[of {len(arguments):,} chars]" in out
+    assert "z" * 300 not in out
+
+
+def test_read_puts_every_message_on_exactly_one_page(index, tmp_path, capsys):
+    s = index.session("r5")
+    for i in range(30):
+        index.user(s, f"question {i} " + "q" * 400)
+        index.assistant(s, f"answer {i} " + "a" * 400)
+    index.close()
+
+    table = read(tmp_path, capsys, "r5", "--index", "--page-chars", "3000")
+    pages = int(table.split("pages=")[1].split()[0])
+    seen = []
+    for page in range(1, pages + 1):
+        seen += page_ords(read(tmp_path, capsys, "r5", "--page", str(page), "--page-chars", "3000"))
+    assert pages > 3
+    assert seen == list(range(1, 61))
+
+
+def unit(size, user=False):
+    u = rv.Unit(["x" * (size - 1)])
+    u.user = user
+    return u
+
+
+def test_paginate_breaks_at_a_user_turn_in_the_second_half():
+    turn = unit(100, user=True)
+    units = [unit(100, user=True), unit(400), turn, unit(300), unit(300)]
+
+    pages = rv.paginate(units, 1000)
+    assert pages[1][0] is turn
+
+
+def test_paginate_breaks_at_the_overflow_when_no_user_turn_is_late_enough():
+    units = [unit(100, user=True), unit(400), unit(400), unit(400)]
+
+    assert [len(p) for p in rv.paginate(units, 1000)] == [3, 1]
+
+
+def test_paginate_gives_an_oversized_message_its_own_page():
+    units = [unit(100), unit(5000), unit(100)]
+
+    assert [len(p) for p in rv.paginate(units, 1000)] == [1, 1, 1]
+
+
+def test_read_refuses_a_page_past_the_end(index, tmp_path, capsys):
+    s = index.session("r6")
+    index.user(s, "hello")
+    index.close()
+
+    assert rv.main(["--dest", str(tmp_path), "read", "r6", "--page", "2"]) == 2
+    assert "has 1 page(s)" in capsys.readouterr().err
+
+
+def test_expand_pages_through_a_long_result(index, tmp_path, capsys):
+    s = index.session("e1")
+    call = index.call(s, "Bash", '{"command": "x"}', result="a" * 5000 + "THE-END")
+    index.close()
+
+    first = expand(tmp_path, capsys, "e1", call + 1)
+    rest = expand(tmp_path, capsys, "e1", call + 1, "--offset", "4000")
+    assert "(next: --offset 4000)" in first and "THE-END" not in first
+    assert "THE-END" in rest and "(end)" in rest
+
+
+def test_expand_shows_a_calls_full_arguments(index, tmp_path, capsys):
+    s = index.session("e2")
+    call = index.call(s, "Write", json.dumps({"content": "y" * 900 + "TAIL"}))
+    index.close()
+
+    assert "TAIL" in expand(tmp_path, capsys, "e2", call)
+
+
+def test_expand_strips_boilerplate_from_a_user_turn(index, tmp_path, capsys):
+    s = index.session("e3")
+    ord_ = index.user(s, "do the thing<system-reminder>injected rules</system-reminder>")
+    index.close()
+
+    out = expand(tmp_path, capsys, "e3", ord_)
+    assert "do the thing" in out and "injected rules" not in out
+
+
+def analyzed_session(index, pages_of_text=1):
+    """A session with one quotable failure; `pages_of_text` × ~3000 chars of padding."""
+    s = index.session("a1")
+    index.user(s, "fix the build")
+    bad = index.call(s, "Bash", '{"command": "npm i"}', is_error=1, result="npm ERR! peer dep missing")
+    for i in range(pages_of_text * 6):
+        index.assistant(s, f"thinking {i} " + "t" * 480)
+    index.close()
+    return bad + 1
+
+
+def read_all(tmp_path, capsys, session, run_id, page_chars="3000"):
+    table = read(tmp_path, capsys, session, "--index", "--page-chars", page_chars)
+    for page in range(1, int(table.split("pages=")[1].split()[0]) + 1):
+        read(tmp_path, capsys, session, "--page", str(page), "--page-chars", page_chars,
+             "--run-id", str(run_id))
+
+
+def test_record_analysis_stores_a_valid_analysis_after_every_page_is_read(index, store, tmp_path,
+                                                                          capsys):
+    bad = analyzed_session(index, pages_of_text=3)
+    run_id = fi.start_run(store[0], "transcript-analyze", "m", "{}")
+    read_all(tmp_path, capsys, "a1", run_id)
+
+    assert record_analysis(tmp_path, "a1", analysis(bad, "npm ERR! peer dep missing"), run_id) == 0
+    row = store[0].execute("SELECT outcome, body FROM session_analyses").fetchone()
+    assert row[0] == "partial"
+    assert json.loads(row[1])["went_badly"][0]["label"] == "reinstall-loop"
+
+
+def test_record_analysis_refuses_when_a_page_was_never_read(index, store, tmp_path, capsys):
+    bad = analyzed_session(index, pages_of_text=3)
+    run_id = fi.start_run(store[0], "transcript-analyze", "m", "{}")
+    read(tmp_path, capsys, "a1", "--page", "1", "--page-chars", "3000", "--run-id", str(run_id))
+
+    assert record_analysis(tmp_path, "a1", analysis(bad, "npm ERR! peer dep missing"), run_id) == 2
+    assert "page(s) 2" in capsys.readouterr().err
+
+
+def test_record_analysis_refuses_without_any_logged_read(index, store, tmp_path, capsys):
+    bad = analyzed_session(index)
+    run_id = fi.start_run(store[0], "transcript-analyze", "m", "{}")
+
+    assert record_analysis(tmp_path, "a1", analysis(bad, "npm ERR! peer dep missing"), run_id) == 2
+    assert "logged no page reads" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("change, message", [
+    ({"outcome": "great"}, "outcome must be one of"),
+    ({"summary": ""}, "summary: needs a string"),
+    ({"extra": 1}, "unknown: extra"),
+    ({"recommendations": [{"target": "everyone", "text": "x"}]}, "target must be one of"),
+    ({"root_causes": [""]}, "root_causes"),
+])
+def test_record_analysis_refuses_a_bad_shape(index, store, tmp_path, capsys, change, message):
+    bad = analyzed_session(index)
+    run_id = fi.start_run(store[0], "transcript-analyze", "m", "{}")
+    read_all(tmp_path, capsys, "a1", run_id)
+
+    payload = analysis(bad, "npm ERR! peer dep missing", **change)
+    assert record_analysis(tmp_path, "a1", payload, run_id) == 2
+    assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("item, message", [
+    ({"quote": "npm ERR! something else"}, "quote is not in message"),
+    ({"category": "made_up"}, "category must be a rubric category"),
+    ({"label": ""}, "needs a label"),
+    ({"note": ""}, "needs a note"),
+    ({"ord": 999}, "no message with ord 999"),
+])
+def test_record_analysis_refuses_bad_evidence(index, store, tmp_path, capsys, item, message):
+    bad = analyzed_session(index)
+    run_id = fi.start_run(store[0], "transcript-analyze", "m", "{}")
+    read_all(tmp_path, capsys, "a1", run_id)
+
+    payload = analysis(bad, "npm ERR! peer dep missing")
+    payload["went_badly"][0].update(item)
+    assert record_analysis(tmp_path, "a1", payload, run_id) == 2
+    assert message in capsys.readouterr().err
+
+
+def test_record_analysis_replaces_the_sessions_analysis_within_one_run(index, store, tmp_path,
+                                                                        capsys):
+    bad = analyzed_session(index)
+    run_id = fi.start_run(store[0], "transcript-analyze", "m", "{}")
+    read_all(tmp_path, capsys, "a1", run_id)
+
+    record_analysis(tmp_path, "a1", analysis(bad, "npm ERR! peer dep missing"), run_id)
+    record_analysis(tmp_path, "a1", analysis(bad, "npm ERR! peer dep missing",
+                                             outcome="failed"), run_id)
+    rows = store[0].execute("SELECT outcome FROM session_analyses").fetchall()
+    assert rows == [("failed",)]
+
+
+def test_read_refuses_an_unknown_run_id(index, store, tmp_path, capsys):
+    analyzed_session(index)
+
+    with pytest.raises(SystemExit) as exc:
+        rv.main(["--dest", str(tmp_path), "read", "a1", "--run-id", "999"])
+    assert "no run 999" in str(exc.value)
+
+
+def test_the_example_analysis_is_one_record_analysis_accepts(index, store, tmp_path, capsys):
+    s = index.session("ex")
+    for kind in ("turning_points", "went_badly"):
+        for item in rv.EXAMPLE_ANALYSIS[kind]:  # the example names its own ords
+            index.conn.execute(
+                "INSERT INTO messages (session_id, ord, on_main_path, role, text, raw)"
+                " VALUES (?, ?, 1, 'user', ?, '{}')", (s, item["ord"], item["quote"]),
+            )
+    index.close()
+    run_id = fi.start_run(store[0], "transcript-analyze", "m", "{}")
+    read_all(tmp_path, capsys, "ex", run_id)
+
+    assert record_analysis(tmp_path, "ex", rv.EXAMPLE_ANALYSIS, run_id) == 0
+
+
+def test_the_analyze_skill_shows_the_same_example_as_the_script():
+    skill = (MODULE / "skills/transcript-analyze/SKILL.md").read_text(encoding="utf-8")
+    block = skill.split("```json", 1)[1].split("```", 1)[0]
+    assert json.loads(block) == rv.EXAMPLE_ANALYSIS
+
+
+def two_analyzed_sessions(index, store, tmp_path, capsys):
+    ords = {}
+    for name in ("t1", "t2"):
+        s = index.session(name)
+        ords[name] = index.call(s, "Bash", '{"command": "npm i"}', is_error=1,
+                                result="npm ERR! peer dep missing") + 1
+    index.close()
+    run_id = fi.start_run(store[0], "transcript-analyze", "m", "{}")
+    for name, ord_ in ords.items():
+        read_all(tmp_path, capsys, name, run_id)
+        record_analysis(tmp_path, name, analysis(ord_, "npm ERR! peer dep missing"), run_id)
+    expand(tmp_path, capsys, "t1", ords["t1"], "--run-id", str(run_id))
+    capsys.readouterr()
+
+
+def test_themes_groups_problems_by_category_and_label(index, store, tmp_path, capsys):
+    two_analyzed_sessions(index, store, tmp_path, capsys)
+
+    assert rv.main(["--dest", str(tmp_path), "themes"]) == 0
+    out = capsys.readouterr().out
+    assert "sessions analyzed: 2" in out
+    assert "repeat_failing_approach  reinstall-loop  2      2" in out
+
+
+def test_themes_counts_expansions_per_session(index, store, tmp_path, capsys):
+    two_analyzed_sessions(index, store, tmp_path, capsys)
+
+    rv.main(["--dest", str(tmp_path), "themes"])
+    assert "mean 0.5, max 1, none in 1 of 2" in capsys.readouterr().out

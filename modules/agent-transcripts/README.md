@@ -1,14 +1,15 @@
 # agent-transcripts
 
 Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a
-derived sqlite database. Seven portable skills: `transcript-export-claude`,
+derived sqlite database. Eight portable skills: `transcript-export-claude`,
 `transcript-export-pi` and `transcript-export-dsh` each do a read-only, incremental export
 of one harness's raw session files (host directories plus dev-container docker volumes for
 claude and dsh) into a cache root outside any git worktree, `transcript-ingest` builds
 the derived sqlite index over everything exported, `transcript-query` reads it to answer
 questions about tool use, sessions and activity across harnesses, `transcript-sweep`
-scans it for sessions worth a closer look, and `transcript-review` judges those sessions one
-at a time. The raw files are
+scans it for sessions worth a closer look, `transcript-review` judges those sessions one
+at a time, and `transcript-analyze` reads one whole session and writes an analysis of it.
+The raw files are
 canonical; the database is rebuildable and safe to delete. The three export skills call the
 one script that ships beside the ingest skill.
 
@@ -55,7 +56,21 @@ elided, and `grep` searches one whole session, elided messages included, so a cl
 against its evidence rather than against what fit the budget. `rollup` counts what
 accumulated, by category, tool, project or week.
 
-Both passes write `findings.db`, a small sqlite database beside the index in the cache root,
+## The analysis
+
+`transcript-analyze` reads a whole session instead of a budgeted view of it, for the
+questions a rubric cannot answer: what the session set out to do, where it turned, why it
+ended the way it did, and what to change. Tool results are 53–75% of a session's
+characters, so `read` hides them, showing each as its size, except a failed result's first
+160 characters and a subagent's report. It caps call arguments at 200 characters and
+splits the rest into pages of about 30,000 characters, preferring to break at a user turn.
+`expand` shows any hidden text on demand. `record-analysis` refuses an analysis unless the
+run logged a read of every page and every cited quote occurs in its message. `themes`
+groups recorded analyses by outcome, problem category and label, and recommendation
+target. Its commands live in `transcript-review`'s script, which they share code with. A
+session longer than four pages is split across child agents.
+
+All three passes write `findings.db`, a small sqlite database beside the index in the cache root,
 keyed by `(harness, native_id)` so findings survive rebuilding the index. Like the index it
 is derived from private transcripts and never enters a git repo.
 
