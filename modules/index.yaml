@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: agent-transcripts
-  version: 0.8.0
+  version: 0.8.1
   kinds:
   - skills
   - dsh-plugin
@@ -24,9 +24,8 @@ modules:
     tags:
     - observability
     command: false
-    summary: Read one agent session from start to finish — every message, with tool results hidden until
-      you ask for one — and record a whole-session analysis of what it set out to do, where it turned,
-      what went well and badly, why, and what to change.
+    summary: Read one agent session end to end, with tool results hidden until asked for, and record a
+      whole-session analysis of its goal, turning points, what went well and badly, why, and what to change.
   - name: transcript-export-claude
     path: modules/agent-transcripts/skills/transcript-export-claude/SKILL.md
     harness:

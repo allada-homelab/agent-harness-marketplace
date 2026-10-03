@@ -1,6 +1,6 @@
 ---
 name: transcript-analyze
-description: Read one agent session from start to finish — every message, with tool results hidden until you ask for one — and record a whole-session analysis of what it set out to do, where it turned, what went well and badly, why, and what to change. Use when the user asks to "analyze", "read through" or "do a deep review" of a session or a few sessions on claude, pi or dsh, or wants to know how a session went as a whole rather than which errors it hit. A script pages the session, shows hidden content on demand, checks that every page was read and every quote is real, and stores the result, so a small local model can run it.
+description: Read one agent session end to end, with tool results hidden until asked for, and record a whole-session analysis of its goal, turning points, what went well and badly, why, and what to change. Use to analyze or deep-review how a session went as a whole.
 tags: [observability]
 ---
 
