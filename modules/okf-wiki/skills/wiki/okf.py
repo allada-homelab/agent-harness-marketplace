@@ -806,6 +806,100 @@ def cmd_index(args) -> int:
     return 0
 
 
+# ---- tags ---------------------------------------------------------------------------
+
+def _tags(c: Concept) -> list[str]:
+    tags = c.meta.get("tags")
+    return [str(t) for t in tags] if isinstance(tags, list) else []
+
+
+def tag_map(concepts: list[Concept]) -> dict[str, list[Concept]]:
+    out: dict[str, list[Concept]] = {}
+    for c in concepts:
+        if not c.error:
+            for t in dict.fromkeys(_tags(c)):
+                out.setdefault(t, []).append(c)
+    return out
+
+
+def tag_suggestions(by_tag: dict[str, list[Concept]], repo: str) -> list[str]:
+    n = {t: len(cs) for t, cs in by_tag.items()}
+    out = []
+    for t in n:
+        if not SEGMENT_RE.match(t):
+            out.append(f"FORMAT {t} ({n[t]}): tags are lowercase-kebab like ids")
+        if t in TYPES:
+            out.append(f"REDUNDANT {t} ({n[t]}): it is a concept type, which `type` already records")
+        elif t == repo.lower():
+            out.append(f"REDUNDANT {t} ({n[t]}): it is the repository's name")
+    pairs: dict[frozenset[str], str] = {}
+    squash = {t: re.sub(r"[^a-z0-9]", "", t.lower()) for t in n}
+    for a in n:
+        for b in n:
+            if a == b or frozenset((a, b)) in pairs:
+                continue
+            if squash[a] == squash[b]:
+                pairs[frozenset((a, b))] = "spelling"
+            elif squash[a] in (squash[b] + "s", squash[b] + "es"):
+                pairs[frozenset((a, b))] = "plural"
+    for pair, why in pairs.items():
+        # Keep a tag retag accepts as a target, then the more-used, then the shorter spelling.
+        keep, drop = sorted(pair, key=lambda t: (not SEGMENT_RE.match(t), -n[t], len(t), t))
+        out.append(f"MERGE? {drop} ({n[drop]}) -> {keep} ({n[keep]}): {why}")
+    return sorted(out)
+
+
+def cmd_tags(args) -> int:
+    root, bundle = _root_and_bundle(args)
+    concepts = load(bundle)
+    by_tag = tag_map(concepts)
+    if args.suggest:
+        lines = tag_suggestions(by_tag, root.name)
+        for line in lines:
+            print(line)
+        status("tags", "ok", f"{len(lines)} suggestions")
+    elif args.tags:
+        shown = 0
+        for t in args.tags:
+            for c in by_tag.get(t, []):
+                print(f"{t} {c.id} — {c.meta.get('title') or c.id}")
+                shown += 1
+            if t not in by_tag:
+                print(f"{t}: no concepts")
+        status("tags", "ok", f"{shown} concepts")
+    else:
+        for t, cs in sorted(by_tag.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            print(f"{len(cs)} {t}")
+        once = sum(1 for cs in by_tag.values() if len(cs) == 1)
+        tagged = len({c.id for cs in by_tag.values() for c in cs})
+        status("tags", "ok", f"{len(by_tag)} tags ({once} used once) in {tagged} concepts")
+    return 0
+
+
+def retag(concepts: list[Concept], old: str, new: str | None) -> int:
+    if new is not None and not SEGMENT_RE.match(new):
+        raise OkfError(f"tag {new!r} must match [a-z0-9][a-z0-9-]*")
+    if new == old:
+        raise OkfError(f"{old!r} -> {new!r} is the same tag")
+    hit = tag_map(concepts).get(old)
+    if not hit:
+        raise OkfError(f"no concept is tagged {old!r}")
+    for c in hit:
+        renamed = [new if t == old else t for t in _tags(c)]
+        c.meta["tags"] = list(dict.fromkeys(t for t in renamed if t is not None))
+        write(c)
+    return len(hit)
+
+
+def cmd_retag(args) -> int:
+    if (args.new is None) == (not args.drop):
+        raise OkfError("give a new tag or --drop, exactly one")
+    _, bundle = _root_and_bundle(args)
+    n = retag(load(bundle), args.old, args.new)
+    status("retag", "ok", f"{args.old} " + (f"-> {args.new}" if args.new else "dropped") + f" ({n} concepts)")
+    return 0
+
+
 # ---- scaffolding and stamping -------------------------------------------------------
 
 TEMPLATES = {
@@ -1616,7 +1710,8 @@ def main(argv: list[str] | None = None) -> int:
     def verb(name, fn, *positional, **flags):
         s = sub.add_parser(name)
         for a in positional:
-            s.add_argument(a, **({"nargs": "*"} if a == "ids" else {}))
+            name, kw = (a, {"nargs": "*"} if a == "ids" else {}) if isinstance(a, str) else a
+            s.add_argument(name, **kw)
         for flag, kw in flags.items():
             s.add_argument(flag.replace("_", "-"), **kw)
         s.set_defaults(fn=fn)
@@ -1633,6 +1728,8 @@ def main(argv: list[str] | None = None) -> int:
     verb("fresh", cmd_fresh, "ids")
     verb("anchor", cmd_anchor, "id")
     verb("mv", cmd_mv, "old", "new")
+    verb("tags", cmd_tags, ("tags", {"nargs": "*"}), __suggest={"action": "store_true"})
+    verb("retag", cmd_retag, "old", ("new", {"nargs": "?"}), __drop={"action": "store_true"})
     verb("migrate", cmd_migrate, "source", __dry_run={"action": "store_true"})
     verb("stats", cmd_stats, __days={"type": int, "default": 60}, __mark={"action": "store_true"})
     verb("hook-session-start", lambda _: run_hook(hook_session_start))

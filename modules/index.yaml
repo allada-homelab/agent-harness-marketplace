@@ -342,7 +342,7 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: okf-wiki
-  version: 0.1.7
+  version: 0.1.8
   kinds:
   - skills
   - dsh-plugin
@@ -407,8 +407,8 @@ modules:
     tags: []
     command: true
     summary: Health report for this repo's .wiki/ — validation errors and warnings, stale, unanchored
-      and unverified concepts, orphans nothing links to, and likely duplicates — with an offer to heal
-      the stale ones in one batch.
+      and unverified concepts, orphans nothing links to, likely duplicates, and tags to consolidate —
+      with an offer to heal the stale ones in one batch.
   - name: wiki
     path: modules/okf-wiki/skills/wiki/SKILL.md
     harness:

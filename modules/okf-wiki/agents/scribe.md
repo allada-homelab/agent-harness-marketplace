@@ -42,7 +42,7 @@ working directory. Run `python3 <okf> <verb>` for every step it covers; never ha
    On exit 3 (near-duplicates) read those concepts; if one covers the claim, switch to update
    mode for it; only if they are genuinely different, rerun with `--force`.
 2. Fill every `<fill: ...>` in the new file: `title`, `description` (the claim, at most 200
-   characters), `tags`, `sources` (from the brief's evidence, with ids cited as `[^id]` in the
+   characters), `tags` (reuse what `python3 <okf> tags` lists before coining one), `sources` (from the brief's evidence, with ids cited as `[^id]` in the
    body), each template section in a few tight sentences, and the `## Verify` anchor.
 3. Go to "finish".
 
