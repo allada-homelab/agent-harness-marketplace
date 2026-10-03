@@ -854,7 +854,10 @@ def cmd_tags(args) -> int:
     concepts = load(bundle)
     by_tag = tag_map(concepts)
     if args.suggest:
-        lines = tag_suggestions(by_tag, root.name)
+        # A linked worktree's directory is named after its branch; the common .git is not.
+        common = Path(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir",
+                          check=False).strip() or root / ".git")
+        lines = tag_suggestions(by_tag, common.parent.name if common.name == ".git" else root.name)
         for line in lines:
             print(line)
         status("tags", "ok", f"{len(lines)} suggestions")

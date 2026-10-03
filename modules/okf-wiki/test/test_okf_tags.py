@@ -1,5 +1,5 @@
 import pytest
-from okf_testlib import GOOD_META, concept, run
+from okf_testlib import GOOD_META, concept, git, run
 
 
 def tagged(repo, cid, tags, title=None):
@@ -60,6 +60,15 @@ def test_tags_suggest_flags_redundant_and_malformed_tags(repo):
         "REDUNDANT repo (1): it is the repository's name",
         "okf: tags ok 3 suggestions",
     ]
+
+
+def test_tags_suggest_names_the_repo_from_a_linked_worktree(repo):
+    tagged(repo, "a", ["repo"])
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "wiki")
+    git(repo, "worktree", "add", "-q", str(repo.parent / "feat-x"))
+    out = run(repo.parent / "feat-x", "tags", "--suggest").stdout
+    assert "REDUNDANT repo (1): it is the repository's name" in out
 
 
 def test_tags_suggest_on_a_clean_vocabulary(repo):
