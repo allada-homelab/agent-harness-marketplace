@@ -37,8 +37,8 @@ authority on the run, and its brief templates and schemas sit beside it under
 - Everything after an em/en dash or `--` is the user's review instruction. Pass it
   through **verbatim** as `--task`; it shapes both reviews identically.
 - `claude:<model>/<effort>` and `codex:<model>/<effort>` set each reviewer
-  independently, e.g. `claude:opus/high codex:gpt-5.6-sol/xhigh`. Either half may be
-  omitted (`codex:/xhigh`). Defaults: `opus`/`high` and `gpt-5.6-sol`/`high`.
+  independently, e.g. `claude:opus/high codex:gpt-6.1-sol/xhigh`. Either half may be
+  omitted (`codex:/xhigh`). Defaults: `opus`/`high` and `gpt-6.1-sol`/`high`.
 - If no models or effort are named, use the defaults and say which you used — do not
   ask.
 

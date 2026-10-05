@@ -171,7 +171,7 @@ render_pr_comments() {
 # a detached worktree at the PR head so file reads land on the right revision.
 cmd_prepare() {
   local pr="" task="" claude_model="opus" claude_effort="high"
-  local codex_model="gpt-5.6-sol" codex_effort="high" timeout_s=2400
+  local codex_model="gpt-6.1-sol" codex_effort="high" timeout_s=2400
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --pr)            pr="$2"; shift 2 ;;
@@ -444,7 +444,7 @@ usage: dual_review.sh <command>
   preflight
   prepare --pr <url|number> --task <text>
           [--claude-model opus] [--claude-effort high]
-          [--codex-model gpt-5.6-sol] [--codex-effort high] [--timeout 2400]
+          [--codex-model gpt-6.1-sol] [--codex-effort high] [--timeout 2400]
   run     <run_dir> <round> <findings|verdicts|comment-verdicts>
   status  <run_dir> <round>
   cleanup <run_dir>
