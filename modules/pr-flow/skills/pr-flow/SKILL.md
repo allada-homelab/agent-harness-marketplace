@@ -60,8 +60,12 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    - `merged` (exit 0): someone merged it; the tool already tore the worktree down.
    - `checks-failed` (10): the failed job's log is in the output. Fix it in the
      worktree, commit, push, watch again.
-   - `conflict` (11): in the worktree `git fetch origin && git merge origin/<base>`,
-     resolve, commit, push, watch again. Never force-push to resolve a conflict.
+   - `conflict` (11): sync with the base the way the output says, resolve,
+     commit, push, watch again. That is `git fetch origin && git merge
+     origin/<base>` and a plain push, unless the repo merges by rebase (no merge
+     commits allowed): a rebase merge cannot replay a merge commit, so there it
+     is `git rebase origin/<base>` and `git push --force-with-lease`, run only
+     with the user's OK. Never force-push in any other case.
    - `review` (12): unresolved review threads, changes requested, a draft PR, or
      one blocked by branch protection. Address each thread (bot reviewers
      included) or the blocking condition, push, reply on the thread, watch again.
@@ -72,13 +76,13 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
      decides.
    `--merge` binds to the exact commit it last saw green
    (`--match-head-commit`); if the head moved since, it refuses (exit 2) rather
-   than merging a commit nobody watched — run watch again. It only ever
-   creates a merge commit, so a repo that allows squash or rebase only refuses
-   too; the refusal carries gh's own message plus the likely causes (head
-   moved, merge commits disabled, branch-protection rule unmet). A `green`
+   than merging a commit nobody watched — run watch again. It merges by a
+   method the repo allows — a merge commit, else rebase, else squash — and a
+   refusal carries gh's own message plus the likely causes (head moved, a merge
+   commit on a rebase-merged branch, branch-protection rule unmet). A `green`
    whose head is behind the base is reported with a hint: under "require
-   branches to be up to date" the merge will be refused until you merge
-   `origin/<base>` in and push. A `green` reached
+   branches to be up to date" the merge will be refused until you sync with
+   the base as for `conflict` and push. A `green` reached
    only because a grace window expired (checks never reported but GitHub
    could not confirm no run exists, or the PR head never caught up with the
    push) still exits 0 but `--merge` refuses and says so on stdout: merge by

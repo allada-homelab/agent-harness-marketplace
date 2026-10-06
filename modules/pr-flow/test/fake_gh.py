@@ -45,6 +45,13 @@ elif argv[:2] == ["pr", "create"]:
 elif argv[:2] == ["repo", "view"]:
     if any("isFork" in a for a in argv):
         print(replay.get("fork_owner", ""))
+    elif any("mergeCommitAllowed" in a for a in argv):
+        if replay.get("merge_methods_fail"):
+            print("boom", file=sys.stderr)
+            sys.exit(1)
+        allowed = replay.get("merge_methods", ["merge", "squash", "rebase"])
+        print(json.dumps({"mergeCommitAllowed": "merge" in allowed, "squashMergeAllowed": "squash" in allowed,
+                          "rebaseMergeAllowed": "rebase" in allowed}))
     else:
         print("o r")
 elif argv[0] == "api" and "/actions/runs" in argv[1]:

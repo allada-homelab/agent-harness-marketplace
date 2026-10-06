@@ -397,8 +397,8 @@ def classify(pr, unresolved):
         return "review"
     if unresolved() > 0:
         return "review"
-    # mergeStateStatus BEHIND is left green here: a merge commit (our only merge mode) folds
-    # the base in on merge, so a head that's merely behind needs no action before merging.
+    # mergeStateStatus BEHIND is left green here: every merge method lands the change on the
+    # current base, so a head that's merely behind needs no action before merging.
     if pr.get("mergeStateStatus") == "BLOCKED":
         return "review"
     if not checks:
@@ -456,13 +456,40 @@ def print_failed_logs(pr, cwd):
                 warn(f"could not fetch log for run {run_id}: {e}")
 
 
-def do_merge(ctx, cwd, pr):
+def merge_method(cwd):
+    """The `gh pr merge` method: a merge commit when the repo allows one, else rebase, else squash."""
+    allowed = json.loads(gh("repo", "view", "--json", "mergeCommitAllowed,rebaseMergeAllowed,squashMergeAllowed",
+                            cwd=cwd))
+    for method, key in (("merge", "mergeCommitAllowed"), ("rebase", "rebaseMergeAllowed"),
+                        ("squash", "squashMergeAllowed")):
+        if allowed.get(key):
+            return method
+    raise Fail("the repo allows no merge method")
+
+
+def sync_hint(cwd, base):
+    """How to bring the branch up to date with `base` so the repo's merge method still accepts it."""
     try:
-        gh("pr", "merge", str(pr["number"]), "--merge", "--match-head-commit", pr["headRefOid"], cwd=cwd)
+        method = merge_method(cwd)
     except Fail as e:
-        raise Fail(f"gh pr merge refused: {e}\nlikely causes: the head moved since watch saw it green (run watch "
-                   "again), merge commits are disabled for this repo (pr-flow only merges with a merge commit), "
-                   "or a branch-protection rule is unmet (approval, up-to-date branch, required check)")
+        warn(f"could not read the repo's merge methods ({e}); assuming merge commits")
+        method = "merge"
+    if method == "rebase":
+        return (f"git fetch origin && git rebase origin/{base}, git push --force-with-lease "
+                "(a rebase merge cannot replay a merge commit)")
+    return f"git fetch origin && git merge origin/{base}, push"
+
+
+def do_merge(ctx, cwd, pr):
+    method = merge_method(cwd)
+    try:
+        gh("pr", "merge", str(pr["number"]), f"--{method}", "--match-head-commit", pr["headRefOid"], cwd=cwd)
+    except Fail as e:
+        rebase_cause = (", a merge commit on the branch (a rebase merge cannot replay one; "
+                        f"{sync_hint(cwd, branch_base(ctx.main_root, ctx.branch))})") if method == "rebase" else ""
+        raise Fail(f"gh pr merge --{method} refused: {e}\nlikely causes: the head moved since watch saw it green "
+                   f"(run watch again){rebase_cause}, or a branch-protection rule is unmet (approval, up-to-date "
+                   "branch, required check)")
     # gh reported the merge done, but the PR object can lag the write for a few seconds — the
     # same read-after-write gap watch guards against on headRefOid. Give it a few reads.
     for _ in range(5):
@@ -668,7 +695,8 @@ def cmd_watch(a):
             else:
                 print(f"{threads['n']} unresolved review thread(s); reviewDecision={pr.get('reviewDecision') or '-'}")
         elif verdict == "conflict":
-            print(f"conflicts with base; in the worktree: git fetch origin && git merge origin/{branch_base(ctx.main_root, ctx.branch)}")
+            print(f"conflicts with base; in the worktree: {sync_hint(cwd, branch_base(ctx.main_root, ctx.branch))}, "
+                  "watch again")
         if st["attempts"] > MAX_ATTEMPTS:
             print(f"{st['attempts'] - 1} fix rounds used on this PR and this sixth verdict is still {verdict}")
             verdict = "attempts-exhausted"
@@ -678,7 +706,7 @@ def cmd_watch(a):
         if verdict == "green" and pr.get("mergeStateStatus") == "BEHIND":
             base = branch_base(ctx.main_root, ctx.branch)
             print(f"head is behind origin/{base}; a repo that requires up-to-date branches will refuse the merge "
-                  f"— in the worktree: git fetch origin && git merge origin/{base}, push, watch again")
+                  f"— in the worktree: {sync_hint(cwd, base)}, watch again")
     if verdict == "green" and (a.merge or a.merge_if_only):
         if grace_expired:
             print("this head's checks are unverified (none reported, or the PR head lagged the push); "
@@ -793,7 +821,8 @@ def main(argv=None):
     o.set_defaults(fn=cmd_open)
     w = sub.add_parser("watch", help="poll the PR until a terminal verdict")
     m = w.add_mutually_exclusive_group()
-    m.add_argument("--merge", action="store_true", help="merge (merge commit) when green; only when the user said so")
+    m.add_argument("--merge", action="store_true", help="merge when green, by a method the repo allows (merge commit, else rebase, "
+                        "else squash); only when the user said so")
     m.add_argument("--merge-if-only", metavar="PREFIX", action="append",
                    help="merge when green only if every changed path is PREFIX or under it (e.g. .wiki/); "
                         "repeat for several; for a class of PR the user standing-approved")

@@ -38,10 +38,14 @@ flow. `watch` also reports `review` for a draft PR or one `mergeStateStatus:
 BLOCKED` by branch protection, and its `--merge` binds to the head commit it
 last polled green (`gh pr merge --match-head-commit`) — if the head moved
 since, it refuses rather than merging a newer, unreviewed commit; the same
-refusal names gh's message and the other likely causes (merge commits disabled
-— pr-flow only merges with a merge commit — or a branch-protection rule unmet).
-A green head that is behind its base is reported with a hint, since "require
-branches to be up to date" protection refuses such a merge. An empty
+refusal names gh's message and the other likely causes (a merge commit on a
+rebase-merged branch, or a branch-protection rule unmet). `--merge` reads the
+repo's allowed methods and uses a merge commit, else rebase, else squash; the
+conflict and behind-base hints follow the same choice, so a rebase-merged repo
+is told to rebase onto the base and `push --force-with-lease`, because GitHub
+cannot rebase-merge a branch carrying a merge commit. A green head that is
+behind its base is reported with a hint, since "require branches to be up to
+date" protection refuses such a merge. An empty
 `statusCheckRollup` is either no CI for this PR (none configured, or every
 workflow's `paths` filter misses the change) or the gap right after `open`'s
 push before GitHub Actions registers its check runs. `watch` tells them apart

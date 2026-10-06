@@ -1,4 +1,6 @@
 import json
+
+import pytest
 from conftest import git, run
 
 
@@ -252,6 +254,54 @@ def test_behind_base_is_green_with_a_warning(repo):
     assert r.returncode == 0, r.stderr
     assert last(r) == "pr-flow: watch green https://github.com/o/r/pull/7"
     assert "behind origin/main" in r.stdout
+
+
+@pytest.mark.parametrize("allowed, flag", [
+    (["merge", "squash", "rebase"], "--merge"),
+    (["squash", "rebase"], "--rebase"),
+    (["squash"], "--squash"),
+])
+def test_merge_uses_a_method_the_repo_allows(repo, allowed, flag):
+    root, wt = opened(repo)
+    log = root / ".gh-log"
+    r = run("watch", "--merge", cwd=wt, env={"FAKE_GH_LOG": str(log)},
+            replay={"pr_view": [pr(checks=[check("SUCCESS")])], "merge_methods": allowed})
+    assert r.returncode == 0, r.stderr
+    assert last(r).startswith("pr-flow: watch merged")
+    merges = [c for c in map(json.loads, log.read_text().splitlines()) if c[:2] == ["pr", "merge"]]
+    assert len(merges) == 1 and flag in merges[0]
+
+
+def test_merge_refuses_when_repo_merge_methods_are_unreadable(repo):
+    root, wt = opened(repo)
+    log = root / ".gh-log"
+    r = run("watch", "--merge", cwd=wt, env={"FAKE_GH_LOG": str(log)},
+            replay={"pr_view": [pr(checks=[check("SUCCESS")])], "merge_methods_fail": True})
+    assert r.returncode == 2
+    assert not any(c[:2] == ["pr", "merge"] for c in map(json.loads, log.read_text().splitlines()))
+
+
+@pytest.mark.parametrize("view, code", [
+    (pr(checks=[check("SUCCESS")], mergeable="CONFLICTING"), 11),
+    (pr(checks=[check("SUCCESS")], mergeStateStatus="BEHIND"), 0),
+])
+def test_sync_hint_rebases_when_the_repo_merges_by_rebase(repo, view, code):
+    # A rebase merge cannot replay a merge commit, so syncing a rebase-merged PR by merging the
+    # base in makes it unmergeable; the hint must rebase and force-push with lease instead.
+    _, wt = opened(repo)
+    r = run("watch", cwd=wt, replay={"pr_view": [view], "merge_methods": ["squash", "rebase"]})
+    assert r.returncode == code, r.stderr
+    assert "git rebase origin/main" in r.stdout and "--force-with-lease" in r.stdout
+    assert "git merge origin/main" not in r.stdout
+
+
+@pytest.mark.parametrize("allowed", [["merge", "squash", "rebase"], ["squash"]])
+def test_sync_hint_merges_the_base_in_when_the_merge_method_tolerates_it(repo, allowed):
+    _, wt = opened(repo)
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], mergeable="CONFLICTING")],
+                                     "merge_methods": allowed})
+    assert r.returncode == 11
+    assert "git merge origin/main" in r.stdout and "--force-with-lease" not in r.stdout
 
 
 def test_attempts_exhausted_message_counts_rounds_correctly(repo):
