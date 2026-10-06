@@ -1,5 +1,7 @@
 import json
 import shutil
+
+import pytest
 from conftest import git, run
 from test_watch import pr, check, last
 
@@ -318,7 +320,8 @@ def test_gc_dry_run_names_the_remote_delete(repo):
     assert "origin/feat/dr" in r.stdout and wt.exists()
 
 
-def test_watch_merge_failure_names_the_real_causes(repo):
+@pytest.mark.parametrize("allowed, flag", [(["merge", "squash", "rebase"], "--merge"), (["rebase"], "--rebase")])
+def test_watch_merge_failure_names_the_real_causes(repo, allowed, flag):
     root, _ = repo
     assert run("start", "mc", cwd=root).returncode == 0
     wt = root / ".claude" / "worktrees" / "feat-mc"
@@ -327,9 +330,12 @@ def test_watch_merge_failure_names_the_real_causes(repo):
     git("commit", "-q", "-m", "mc", cwd=wt)
     git("push", "-q", "-u", "origin", "feat/mc", cwd=wt)
     head = git("rev-parse", "HEAD", cwd=wt)
-    r = run("watch", "--merge", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head)], "merge_fails": True})
+    r = run("watch", "--merge", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], head=head)],
+                                                "merge_fails": True, "merge_methods": allowed})
     assert r.returncode == 2
-    assert "boom" in r.stderr and "merge commits" in r.stderr and "branch-protection" in r.stderr
+    assert "boom" in r.stderr and f"{flag} refused" in r.stderr and "branch-protection" in r.stderr
+    # Only a rebase merge is defeated by a merge commit on the branch, so only it names that cause.
+    assert ("cannot replay a merge commit" in r.stderr) == (flag == "--rebase")
 
 
 def pushed_pr_branch(repo, name, files):
