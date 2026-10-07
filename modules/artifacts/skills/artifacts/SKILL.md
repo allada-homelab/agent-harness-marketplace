@@ -22,18 +22,25 @@ acceptable. A single fact, a short list or an answer the user will act on at onc
 
 1. **Read first.** `./references/design.md` — its *Local page contract* is binding; the
    fundamentals and process below it are the craft. For a chart, graph, KPI row or dashboard
-   also read `./references/dataviz/README.md` and run its validator before choosing colors.
-   For a diagram read `./references/diagramming.md`. For anything that would store, share or
-   ask the model read `./references/runtime-seam.md` and design for its absence.
+   also read `./references/dataviz/README.md` and run its validator before choosing colors. Start from these validated five-slot categorical palettes and run the validator only if you change them: light on a near-white surface `#0072B2,#009E73,#D55E00,#B2548F,#C77F00`; dark on a near-black surface `#357FB5,#009E73,#D55E00,#A64E97,#C77F00`.
+   For a diagram read `./references/diagramming.md`. For anything beyond one viewer's own
+   browser storage — shared state, a file download, a model call — read
+   `./references/runtime-seam.md` and design for its absence.
 2. **Prepare the output dir.** `python3 <skill dir>/artifactctl.py prepare` prints the
    directory (`.artifacts/` under the working directory, git-excluded). The file is
    `<slug-of-title>.html` inside it; a revision overwrites the same file.
 3. **Write the page** with the `write` tool: a complete document (doctype, head, title,
    description meta, viewport with `viewport-fit=cover`, tokens on `:root`, body), scripts only
    from the CDN allowlist, everything else inline.
-4. **Check once.** `python3 <skill dir>/artifactctl.py check <file>` — fix every `FAIL`,
-   re-run, stop when it prints `ok`. A `WARN` is advice. There is no rendered preview; do not
-   build one.
+4. **Check, then look.** `python3 <skill dir>/artifactctl.py check <file>` — fix every `FAIL`,
+   re-run, stop when it prints `ok`. A `WARN` is advice. Then
+   `python3 <skill dir>/artifactctl.py render <file>`: it renders the page in headless Chrome
+   at phone width, writes `<stem>.png` beside the file and prints any console error; `skipped:`
+   means no Chrome is installed and is not a defect. Read the PNG with your file-reading tool
+   and look at it the way the user will: an empty bar, overlapping text, an unstyled block or a
+   missing section is a defect the static check cannot see. Fix, re-check, re-render. If the
+   tool returns the PNG as text rather than an image, rely on the console lines. Build no other
+   preview.
 5. **Deliver.**
    - **dsh:** call the `present` tool with `files: [{ path, description }]`, the description
      being the page's one sentence. The card opens the page in the right sidebar, where it runs
