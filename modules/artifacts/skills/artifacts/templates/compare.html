@@ -1,0 +1,367 @@
+<!doctype html>
+<!-- template: compare · slots: title, description, eyebrow, question, matrix-heading, cards-heading, DATA -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Family Photo Server</title>
+<meta name="description" content="Weighted decision matrix comparing Immich, PhotoPrism and Nextcloud Memories as the self-hosted home for the family photo library.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one 52rem column; question, recommendation, the matrix (own scroller), then option cards. */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --sunken: #eaeef2;
+  --fg: #17202b; --muted: #586474; --line: #d8dee6;
+  --accent: #1d4f91; --accent-fg: #ffffff; --danger: #b3261e; --ok: #1b6e3c;
+  --shadow: rgb(23 32 43 / 0.14);
+  --c1: #0072B2; --c2: #009E73; --c3: #D55E00; --c4: #B2548F; --c5: #C77F00;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem; --step-0: 0.9375rem; --step-1: 1.0625rem; --step-2: 1.375rem; --step-3: 1.75rem;
+  --radius: 10px;
+  color-scheme: light;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1318; --surface: #161d25; --sunken: #1d252f;
+    --fg: #e4e9ef; --muted: #96a3b3; --line: #2a3440;
+    --accent: #7fb2ee; --accent-fg: #0e1318; --danger: #f2867e; --ok: #6fcf97;
+    --shadow: rgb(0 0 0 / 0.45);
+    --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1318; --surface: #161d25; --sunken: #1d252f;
+  --fg: #e4e9ef; --muted: #96a3b3; --line: #2a3440;
+  --accent: #7fb2ee; --accent-fg: #0e1318; --danger: #f2867e; --ok: #6fcf97;
+  --shadow: rgb(0 0 0 / 0.45);
+  --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box }
+[hidden] { display: none !important }
+img { max-width: 100% }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 400 var(--step-0)/1.5 var(--font-body);
+  padding-inline: 16px; padding-block: 20px 40px;
+  -webkit-text-size-adjust: 100%;
+}
+.page { max-width: 52rem; margin-inline: auto; display: grid; gap: 20px }
+h1, h2, h3 { margin: 0; text-wrap: balance; font-weight: 600 }
+h1 { font-size: var(--step-3); line-height: 1.15; letter-spacing: -0.015em }
+h2 { font-size: var(--step-1); line-height: 1.3 }
+h3 { font-size: var(--step-0); line-height: 1.3 }
+p { margin: 0 }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums }
+.eyebrow { font-size: var(--step--1); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 500 }
+.lede { color: var(--muted); max-width: 60ch }
+
+header.top { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px }
+header.top .intro { display: grid; gap: 6px; min-width: 0; flex: 1 1 16rem }
+
+.seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--sunken); border-radius: 999px; flex: none }
+.seg button {
+  font: 500 var(--step--1)/1 var(--font-body); color: var(--muted); background: none;
+  border: 0; border-radius: 999px; padding: 7px 12px; min-height: 32px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px var(--shadow) }
+:is(button):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+
+.question { display: grid; gap: 4px; padding: 12px 16px; border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 var(--radius) var(--radius) 0 }
+.question .k { font-size: var(--step--1); color: var(--muted); font-weight: 500 }
+.question p { font-size: var(--step-1); font-weight: 500; line-height: 1.4; min-width: 0 }
+
+.rec { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 8px; min-width: 0 }
+.rec .k { font-size: var(--step--1); color: var(--muted); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase }
+.rec .pick { display: flex; align-items: center; gap: 10px; font-size: var(--step-2); font-weight: 600; line-height: 1.2; min-width: 0; overflow-wrap: anywhere }
+.rec .why, .rec .flip { min-width: 0 }
+.rec .flip { color: var(--muted); font-size: var(--step--1) }
+.rec .flip strong { color: var(--fg); font-weight: 600 }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 14px; min-width: 0 }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 10px 12px; flex-wrap: wrap }
+.panel .meta { color: var(--muted); font-size: var(--step--1) }
+
+.swatch { display: block; width: 10px; height: 10px; border-radius: 3px; background: var(--swatch); flex: none }
+.rec .swatch { width: 14px; height: 14px; border-radius: 4px }
+
+/* The matrix scrolls inside its own box; the criterion column stays put. */
+.scroll { overflow-x: auto; min-width: 0; margin-inline: -16px; padding-inline: 16px; -webkit-overflow-scrolling: touch }
+table.matrix { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 30rem; font-size: var(--step--1) }
+.matrix th, .matrix td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: center; vertical-align: middle }
+.matrix thead th { font-weight: 600; color: var(--fg); vertical-align: bottom }
+.matrix thead th.w, .matrix td.w { color: var(--muted) }
+.matrix .crit { position: sticky; left: 0; z-index: 1; background: var(--surface); text-align: left; font-weight: 500; min-width: 9.5rem; box-shadow: 1px 0 0 var(--line) }
+.matrix thead .crit { color: var(--muted); font-weight: 500 }
+.opt-h { display: flex; align-items: center; justify-content: center; gap: 6px }
+.matrix td.cell { font-size: var(--step-0) }
+.matrix td.best { font-weight: 600 }
+.matrix td.best::after { content: " ▲"; font-size: 0.7em; color: var(--muted) }
+.matrix tfoot th, .matrix tfoot td { border-bottom: 0; padding-top: 14px; vertical-align: top }
+/* Fixed track width so every bar is drawn to the same physical scale, whatever the column width. */
+.total { display: grid; gap: 6px; justify-items: stretch; width: 6rem; margin-inline: auto }
+.total .pts { font-size: var(--step-1); font-weight: 500; line-height: 1.1 }
+.total .pct { color: var(--muted) }
+.track { display: block; height: 10px; background: var(--sunken); border-radius: 999px; overflow: hidden }
+.fill { display: block; height: 100%; width: 0; background: var(--swatch); border-radius: 999px }
+.legend { color: var(--muted); font-size: var(--step--1) }
+
+.cards-wrap { display: grid; gap: 12px; min-width: 0 }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 12px }
+.card { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--swatch); border-radius: var(--radius); padding: 14px 16px; display: grid; gap: 10px; align-content: start; min-width: 0 }
+.card .head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px }
+.card .head .num { color: var(--muted); font-size: var(--step--1); flex: none }
+.card .sum { color: var(--muted); font-size: var(--step--1) }
+.card h4 { margin: 0; font-size: var(--step--1); font-weight: 600; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase }
+.card ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: var(--step--1) }
+.card li { display: grid; grid-template-columns: 1rem minmax(0, 1fr); gap: 4px; overflow-wrap: anywhere }
+.card .pros li::before { content: "+"; color: var(--ok); font-weight: 600 }
+.card .cons li::before { content: "−"; color: var(--danger); font-weight: 600 }
+@media (max-width: 420px) {
+  .rec .pick { font-size: var(--step-1) }
+  .matrix th, .matrix td { padding: 9px 8px }
+  .matrix .crit { min-width: 7.5rem }
+}
+@media (prefers-reduced-motion: no-preference) { .fill { transition: width 0.25s ease-out } }
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="top">
+    <div class="intro">
+      <p class="eyebrow" data-slot="eyebrow">Homelab decision · October 2026</p>
+      <h1 data-slot="title">Family Photo Server</h1>
+      <p class="lede" data-slot="description">Three self-hosted photo apps scored against what the family actually needs from the library on the home server.</p>
+    </div>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+      <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+    </div>
+  </header>
+
+  <div class="question">
+    <span class="k">The question</span>
+    <p data-slot="question">Which app should hold 14 years of family photos and take over phone backup from Google Photos on the 8 GB home server?</p>
+  </div>
+
+  <section class="rec" aria-labelledby="rec-k" aria-live="polite">
+    <span class="k" id="rec-k">Recommendation</span>
+    <p class="pick" id="rec-pick"></p>
+    <p class="why" id="rec-why"></p>
+    <p class="flip" id="rec-flip"></p>
+  </section>
+
+  <section class="panel" aria-labelledby="matrix-h">
+    <div class="panel-head">
+      <h2 id="matrix-h" data-slot="matrix-heading">Scores by criterion</h2>
+      <div class="seg" role="group" aria-label="Cell values">
+        <button type="button" data-view="raw" aria-pressed="true">Raw 1–5</button>
+        <button type="button" data-view="weighted" aria-pressed="false">Weighted</button>
+      </div>
+    </div>
+    <div class="scroll" role="region" aria-labelledby="matrix-h" tabindex="0">
+      <table class="matrix" id="matrix">
+        <thead><tr id="matrix-head"></tr></thead>
+        <tbody id="matrix-body"></tbody>
+        <tfoot><tr id="matrix-foot"></tr></tfoot>
+      </table>
+    </div>
+    <p class="legend" id="legend"></p>
+  </section>
+
+  <section class="cards-wrap" aria-labelledby="cards-h">
+    <h2 id="cards-h" data-slot="cards-heading">The options</h2>
+    <div class="cards" id="cards"></div>
+  </section>
+</main>
+
+<script>
+const DATA = {
+  // 2–5 options; option i is colored --c<i+1> everywhere it is marked.
+  options: [
+    { name: "Immich",
+      summary: "Google Photos-style app with native phone clients and fast, active development.",
+      pros: ["Background backup on iOS and Android just works", "Face and CLIP search across the whole library", "Shared albums and partner sharing for the family"],
+      cons: ["Breaking changes still land between releases", "Machine-learning container wants 3–4 GB of RAM"] },
+    { name: "PhotoPrism",
+      summary: "Mature, indexing-first library that reads your existing folders in place.",
+      pros: ["Leaves the folder tree untouched", "Stable releases, years of track record", "Lighter on memory than Immich"],
+      cons: ["No first-party phone app; backup needs a sync tool", "Multi-user sharing needs the paid tier"] },
+    { name: "Nextcloud Memories",
+      summary: "Timeline and albums app on top of a Nextcloud install you may already run.",
+      pros: ["Reuses Nextcloud accounts, sharing and backup", "Files stay plain files in the user's folder"],
+      cons: ["Nextcloud upgrades are the heaviest upkeep here", "Search and faces lag behind the other two", "Slowest timeline on a 60k-photo library"] },
+  ],
+  // weight 1–5; scores[i] belongs to options[i], each 1–5.
+  criteria: [
+    { name: "Automatic phone backup", weight: 5, scores: [5, 2, 4] },
+    { name: "Search and face grouping", weight: 4, scores: [5, 4, 2] },
+    { name: "Family sharing", weight: 4, scores: [4, 2, 4] },
+    { name: "Upgrade stability", weight: 3, scores: [2, 4, 3] },
+    { name: "Fits in 8 GB RAM", weight: 3, scores: [3, 4, 3] },
+    { name: "Keeps the folder layout", weight: 2, scores: [2, 5, 5] },
+  ],
+};
+
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+
+// Storage throws in the sandboxed preview; it is a convenience, so failure just means "not kept".
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* not kept */ } },
+};
+
+// ── theme: Auto sets nothing, so prefers-color-scheme decides ──
+function setTheme(mode) {
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode; else delete root.dataset.theme;
+  document.querySelectorAll("[data-theme-set]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === (mode || "auto"))));
+}
+document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => {
+  setTheme(b.dataset.themeSet);
+  store.set("theme", b.dataset.themeSet);
+}));
+setTheme(store.get("theme"));
+
+function el(tag, cls, content) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (content != null) n.textContent = content;
+  return n;
+}
+const color = (i) => `var(--c${i + 1})`;
+const swatch = (i) => { const s = el("span", "swatch"); s.style.setProperty("--swatch", color(i)); return s; };
+const pts = (n) => `${n} ${n === 1 ? "pt" : "pts"}`;
+
+// ── scoring: total = Σ weight × score; max = Σ weight × 5 is the one shared scale ──
+function score() {
+  const opts = DATA.options;
+  const totals = opts.map((_, i) => DATA.criteria.reduce((s, c) => s + c.weight * c.scores[i], 0));
+  const max = DATA.criteria.reduce((s, c) => s + c.weight * 5, 0);
+  const order = opts.map((_, i) => i).sort((a, b) => totals[b] - totals[a] || a - b);
+  return { totals, max, top: order[0], runner: order[1] };
+}
+
+// What would flip it: the criterion where the runner-up leads the top pick by the most weighted points.
+function flipLine(top, runner, margin) {
+  const T = DATA.options[top].name, R = DATA.options[runner].name;
+  let best = null;
+  DATA.criteria.forEach((c) => {
+    const d = c.scores[runner] - c.scores[top];
+    if (d > 0 && (!best || d * c.weight > best.d * best.c.weight)) best = { c, d };
+  });
+  if (!best) return [`${R} scores no higher than ${T} on any criterion, so no change of weights flips it.`];
+  const gap = best.d * best.c.weight;
+  const raise = margin === 0 ? 1 : Math.floor(margin / best.d) + 1;
+  const tail = best.c.weight + raise <= 5
+    ? `raising its weight from ${best.c.weight} to ${best.c.weight + raise} would put ${R} ahead.`
+    : `even at weight 5 it would not close the ${pts(margin)} gap alone.`;
+  return ["What would flip it: ", best.c.name, `, where ${R} leads by ${pts(gap)} weighted; ${tail}`];
+}
+
+let view = "raw";
+
+function render() {
+  const { totals, max, top, runner } = score();
+  const opts = DATA.options;
+
+  // recommendation
+  const margin = totals[top] - totals[runner];
+  const pick = $("rec-pick");
+  if (margin === 0) {
+    pick.replaceChildren(swatch(top), swatch(runner), el("span", null, `Tie: ${opts[top].name} and ${opts[runner].name}`));
+    $("rec-why").textContent = `Both score ${totals[top]} of ${max}. Decide on the criterion you weight highest, or add one that separates them.`;
+  } else {
+    pick.replaceChildren(swatch(top), el("span", null, opts[top].name));
+    $("rec-why").textContent = `${totals[top]} of ${max} weighted points (${Math.round(totals[top] / max * 100)}%), ` +
+      `${pts(margin)} ahead of ${opts[runner].name} at ${totals[runner]}.`;
+  }
+  const [lead, crit, rest] = flipLine(top, runner, margin);
+  $("rec-flip").replaceChildren(lead, ...(crit ? [el("strong", null, crit), rest] : []));
+
+  // header
+  const head = [el("th", "crit", "Criterion"), el("th", "w", "Weight")];
+  head[0].scope = head[1].scope = "col";
+  opts.forEach((o, i) => {
+    const th = el("th");
+    th.scope = "col";
+    const h = el("span", "opt-h");
+    h.append(swatch(i), el("span", null, o.name));
+    th.append(h);
+    head.push(th);
+  });
+  $("matrix-head").replaceChildren(...head);
+
+  // rows: the best score in each row is bold and marked ▲, never color alone
+  $("matrix-body").replaceChildren(...DATA.criteria.map((c) => {
+    const tr = el("tr");
+    const th = el("th", "crit", c.name);
+    th.scope = "row";
+    tr.append(th, el("td", "w num", "×" + c.weight));
+    const hi = Math.max(...c.scores);
+    c.scores.forEach((s, i) => {
+      const v = view === "weighted" ? s * c.weight : s;
+      const td = el("td", "cell num" + (s === hi ? " best" : ""), String(v));
+      td.title = `${opts[i].name}: ${s} of 5 × weight ${c.weight} = ${s * c.weight}`;
+      tr.append(td);
+    });
+    return tr;
+  }));
+
+  // totals: one bar per option, all drawn to the same max
+  const foot = [el("th", "crit", "Weighted total"), el("td", "w num", "/" + max)];
+  foot[0].scope = "row";
+  totals.forEach((t, i) => {
+    const td = el("td");
+    const box = el("div", "total");
+    box.style.setProperty("--swatch", color(i));
+    const track = el("span", "track");
+    const fill = el("span", "fill");
+    fill.style.width = (t / max * 100).toFixed(1) + "%";
+    track.append(fill);
+    box.append(el("span", "pts num", String(t)), el("span", "pct num", Math.round(t / max * 100) + "%"), track);
+    td.append(box);
+    foot.push(td);
+  });
+  $("matrix-foot").replaceChildren(...foot);
+
+  $("legend").textContent = view === "weighted"
+    ? "Cells show score × weight. ▲ marks the best score in each row; bars share one scale, the maximum of " + max + "."
+    : "Cells show raw scores, 1 (poor) to 5 (excellent). ▲ marks the best in each row; bars share one scale, the maximum of " + max + ".";
+
+  // cards
+  $("cards").replaceChildren(...opts.map((o, i) => {
+    const card = el("article", "card");
+    card.style.setProperty("--swatch", color(i));
+    const head = el("div", "head");
+    head.append(el("h3", null, o.name), el("span", "num", `${totals[i]}/${max}`));
+    const list = (title, items, cls) => {
+      const wrap = el("div");
+      const ul = el("ul", cls);
+      ul.append(...items.map((t) => el("li", null, t)));
+      wrap.append(el("h4", null, title), ul);
+      return wrap;
+    };
+    card.append(head, el("p", "sum", o.summary), list("Pros", o.pros, "pros"), list("Cons", o.cons, "cons"));
+    return card;
+  }));
+}
+
+document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => {
+  view = b.dataset.view;
+  document.querySelectorAll("[data-view]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  render();
+}));
+
+render();
+</script>
+</body>
+</html>

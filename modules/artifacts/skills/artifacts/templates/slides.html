@@ -1,0 +1,423 @@
+<!doctype html>
+<!-- template: slides · slots: title, description, DATA -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pinned Marketplace Modules</title>
+<meta name="description" content="A seven-slide briefing on why the fleet moved agent modules from branch refs to pinned tags, what it cost and what comes next.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: progress bar, one slide filling the stage, an optional notes panel, a control bar. */
+:root {
+  --bg: #f6f4ef; --surface: #fffdf8; --sunken: #ebe7de;
+  --fg: #1d1b16; --muted: #686256; --line: #dcd6ca;
+  --accent: #0f5f63; --accent-fg: #ffffff; --accent-soft: #dcecea; --danger: #b3261e; --ok: #1b6e3c;
+  --c1: #0072B2; --c2: #009E73; --c3: #D55E00; --c4: #B2548F; --c5: #C77F00;
+  --shadow: rgb(40 30 10 / 0.12);
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem; --step-0: 0.9375rem;
+  --radius: 12px;
+  color-scheme: light;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14130f; --surface: #1d1b17; --sunken: #28251f;
+    --fg: #ece7dc; --muted: #a69f91; --line: #36322a;
+    --accent: #6fc6c2; --accent-fg: #0f1413; --accent-soft: #1d3533; --danger: #f2867e; --ok: #6fcf97;
+    --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+    --shadow: rgb(0 0 0 / 0.5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14130f; --surface: #1d1b17; --sunken: #28251f;
+  --fg: #ece7dc; --muted: #a69f91; --line: #36322a;
+  --accent: #6fc6c2; --accent-fg: #0f1413; --accent-soft: #1d3533; --danger: #f2867e; --ok: #6fcf97;
+  --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+  --shadow: rgb(0 0 0 / 0.5);
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box }
+[hidden] { display: none !important }
+img, svg { max-width: 100% }
+html { height: 100% }
+body {
+  margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+  font: 400 var(--step-0)/1.5 var(--font-body);
+  padding-inline: 16px; padding-block: 10px 12px;
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 10px;
+  -webkit-text-size-adjust: 100%;
+}
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums }
+
+/* progress */
+.progress { display: block; height: 4px; background: var(--sunken); border-radius: 999px; overflow: hidden }
+.progress-fill { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 999px }
+
+/* stage: without script the slides stack and snap; with it one slide shows at a time */
+.stage { min-height: 0; overflow-y: auto; scroll-snap-type: y mandatory; display: grid; gap: 12px; touch-action: pan-y }
+.slide {
+  /* every size inside a slide is in em, so the overview scales a slide by changing one font-size */
+  font-size: clamp(1rem, 0.75rem + 1.1vw, 1.375rem);
+  min-height: 100%; min-width: 0; scroll-snap-align: start;
+  display: flex; flex-direction: column; gap: 0.9em;
+  /* side padding centres a 46em measure on wide screens; % resolves against the stage width */
+  padding: 1.4em max(1.25em, (100% - 46em) / 2) 1em; background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); overflow-y: auto; position: relative;
+}
+.slide h1, .slide h2 { font-family: var(--font-display); font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: -0.01em }
+.slide h1 { font-size: 2.2em; line-height: 1.08 }
+.slide h2 { font-size: 1.55em; line-height: 1.15 }
+.slide p { margin: 0 }
+.kicker { font-size: 0.72em; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); font-weight: 600 }
+.lede { color: var(--muted); font-size: 1.05em; max-width: 32em }
+.slide-foot { margin-top: auto; display: flex; justify-content: space-between; gap: 1em; color: var(--muted); font-size: 0.65em; padding-top: 0.8em; border-top: 1px solid var(--line) }
+
+.js .slide { display: none; min-height: 0; height: 100% }
+.js .slide.current { display: flex }
+
+/* layouts */
+.slide--title .seg { align-self: flex-start }
+.slide .seg button { font-size: 0.75em; padding: 0.6em 1em; min-height: 2.7em }
+.slide--title .kicker, .slide--big > :first-child, .slide--closing > :first-child { margin-top: auto }
+.slide--title .byline { color: var(--muted); font-size: 0.8em }
+.points { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.75em }
+.points li { display: grid; grid-template-columns: 0.55em minmax(0, 1fr); gap: 0.75em; align-items: baseline }
+.points li::before { content: ""; display: block; width: 0.55em; height: 0.55em; border-radius: 2px; background: var(--accent); transform: translateY(-0.1em) }
+.points strong { font-weight: 600 }
+.split { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14em), 1fr)); gap: 0.9em }
+.col { background: var(--sunken); border-radius: 10px; padding: 0.9em 1em; display: grid; gap: 0.5em; align-content: start; min-width: 0; border-top: 4px solid var(--col) }
+.col h3 { margin: 0; font-size: 0.95em; font-weight: 600 }
+.col ul { margin: 0; padding-left: 1.1em; display: grid; gap: 0.35em; font-size: 0.88em }
+.col code { font-family: var(--font-data); font-size: 0.92em; overflow-wrap: anywhere }
+.slide--big { text-align: center }
+.slide--big > * { max-width: 30em }
+.big { font-family: var(--font-display); font-size: 5em; line-height: 1; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; display: flex; justify-content: center; align-items: baseline; gap: 0.25em }
+.big .from { color: var(--muted); font-size: 0.5em }
+.big .arrow { color: var(--muted); font-size: 0.4em }
+.big-caption { font-size: 1.05em; color: var(--muted) }
+figure { margin: 0; display: grid; gap: 0.6em; min-height: 0 }
+figure svg { display: block; width: 100%; height: auto; max-height: 52vh }
+figcaption { font-size: 0.75em; color: var(--muted) }
+.fig-box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5 }
+.fig-box.s1 { stroke: var(--c1) } .fig-box.s2 { stroke: var(--c2) } .fig-box.s3 { stroke: var(--c3) }
+.fig-box.src { fill: var(--accent-soft); stroke: var(--accent) }
+.fig-edge { stroke: var(--muted); stroke-width: 1.5; fill: none }
+.fig-head { fill: var(--muted) }
+.fig-t { fill: var(--fg); font: 600 13px var(--font-body) }
+.fig-t.mono { font: 500 12px var(--font-data) }
+.fig-s { fill: var(--muted); font: 400 12px var(--font-body) }
+.asks { margin: 0; padding-left: 1.3em; display: grid; gap: 0.5em }
+.asks li::marker { color: var(--accent); font-family: var(--font-data) }
+
+/* overview: every slide as a small card in a grid */
+.overview .stage { grid-template-columns: repeat(auto-fill, minmax(min(100%, 10.5rem), 1fr)); align-content: start; scroll-snap-type: none }
+.overview .slide { display: flex; font-size: 0.4rem; height: auto; height: 14rem; overflow: hidden; cursor: pointer; box-shadow: 0 1px 3px var(--shadow) }
+.overview .slide.current { outline: 2px solid var(--accent); outline-offset: 2px }
+.overview .slide > * { pointer-events: none }
+
+/* notes and controls */
+.notes { background: var(--sunken); border-radius: var(--radius); padding: 10px 14px; display: grid; gap: 4px; max-height: 30vh; overflow-y: auto; min-width: 0 }
+.notes h2 { margin: 0; font-size: var(--step--1); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600 }
+.notes p { margin: 0; max-width: 65ch }
+.bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px }
+html:not(.js) .bar, html:not(.js) .progress { display: none }
+.bar .group { display: flex; align-items: center; gap: 6px }
+.btn {
+  font: 500 var(--step-0)/1 var(--font-body); border-radius: 8px; padding: 10px 12px; min-height: 44px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer;
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg) }
+.btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--fg) }
+.btn:disabled { opacity: 0.45; cursor: default }
+.counter { min-width: 3.5rem; text-align: center; color: var(--muted); font-size: var(--step--1) }
+
+.seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--sunken); border-radius: 999px; flex: none }
+.seg button {
+  font: 500 var(--step--1)/1 var(--font-body); color: var(--muted); background: none;
+  border: 0; border-radius: 999px; padding: 7px 12px; min-height: 32px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px var(--shadow) }
+:is(button, .slide):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+@media (prefers-reduced-motion: no-preference) {
+  .progress-fill { transition: width 0.25s ease-out }
+  /* only after a move, so the first paint is complete at rest */
+  .js.moved:not(.overview) .slide.current { animation: enter 0.22s ease-out }
+  @keyframes enter { from { opacity: 0; transform: translateY(6px) } }
+}
+</style>
+</head>
+<body>
+<span class="progress" aria-hidden="true"><span class="progress-fill" id="progress"></span></span>
+
+<main class="stage" id="stage" aria-roledescription="slide deck">
+  <section class="slide slide--title" id="intro" aria-label="Title">
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+      <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+    </div>
+    <p class="kicker">Platform briefing · Q4 2026</p>
+    <h1 data-slot="title">Pinned Marketplace Modules</h1>
+    <p class="lede" data-slot="description">Why every machine in the fleet now installs agent modules from a tagged release instead of a moving branch, and what that changed.</p>
+    <p class="byline">Dev environment team · 7 October 2026</p>
+  </section>
+
+  <section class="slide slide--bullets" id="problem" aria-label="What kept breaking">
+    <p class="kicker">The problem</p>
+    <h2>A branch ref is not a version</h2>
+    <ul class="points">
+      <li><span><strong>Silent drift.</strong> Each sync pulled whatever <code>main</code> held that hour, so two laptops on the same commit ran different skills.</span></li>
+      <li><span><strong>No rollback.</strong> Reverting meant waiting for an upstream fix; there was no older ref to point back at.</span></li>
+      <li><span><strong>Three harnesses, three copies.</strong> Claude, pi and dsh each listed modules by hand and disagreed within a week.</span></li>
+      <li><span><strong>Untraceable failures.</strong> A broken session never said which module revision it had loaded.</span></li>
+    </ul>
+  </section>
+
+  <section class="slide slide--split" id="before-after" aria-label="Before and after">
+    <p class="kicker">The change</p>
+    <h2>One declaration, pinned refs</h2>
+    <div class="split">
+      <div class="col" style="--col: var(--c3)">
+        <h3>Before: branch refs</h3>
+        <ul>
+          <li>Ref <code>main</code> in three config files</li>
+          <li>Updates land on the next sync, unreviewed</li>
+          <li>Drift found when something breaks</li>
+        </ul>
+      </div>
+      <div class="col" style="--col: var(--c2)">
+        <h3>After: tagged pins</h3>
+        <ul>
+          <li>One row per module in <code>agents/modules.tsv</code></li>
+          <li>Ref bumps arrive as a reviewed pull request</li>
+          <li><code>--check</code> fails CI when configs disagree</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide slide--big" id="incidents" aria-label="Incidents">
+    <p class="kicker">The result</p>
+    <p class="big num" aria-label="From 11 to 0"><span class="from">11</span><span class="arrow">→</span><span>0</span></p>
+    <p class="big-caption">fleet-wide breakages traced to upstream module drift: 11 in Q2 on branch refs, none in the twelve weeks since the pin.</p>
+  </section>
+
+  <section class="slide slide--figure" id="flow" aria-label="How a pin reaches each harness">
+    <p class="kicker">How it works</p>
+    <h2>From one table to three harnesses</h2>
+    <figure>
+      <svg viewBox="0 0 340 236" role="img" aria-labelledby="flow-cap">
+        <defs>
+          <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="fig-head" d="M0 0 L10 5 L0 10 z"/>
+          </marker>
+        </defs>
+        <rect class="fig-box src" x="80" y="6" width="180" height="40" rx="8"/>
+        <text class="fig-t mono" x="170" y="31" text-anchor="middle">agents/modules.tsv</text>
+        <path class="fig-edge" d="M170 46 V84" marker-end="url(#head)"/>
+        <rect class="fig-box" x="70" y="88" width="200" height="40" rx="8"/>
+        <text class="fig-t mono" x="170" y="113" text-anchor="middle">render-modules.py</text>
+        <path class="fig-edge" d="M150 128 L60 174" marker-end="url(#head)"/>
+        <path class="fig-edge" d="M170 128 V174" marker-end="url(#head)"/>
+        <path class="fig-edge" d="M190 128 L280 174" marker-end="url(#head)"/>
+        <rect class="fig-box s1" x="6" y="178" width="104" height="52" rx="8"/>
+        <text class="fig-t" x="58" y="200" text-anchor="middle">Claude</text>
+        <text class="fig-s" x="58" y="218" text-anchor="middle">settings.json</text>
+        <rect class="fig-box s2" x="118" y="178" width="104" height="52" rx="8"/>
+        <text class="fig-t" x="170" y="200" text-anchor="middle">pi</text>
+        <text class="fig-s" x="170" y="218" text-anchor="middle">settings.json</text>
+        <rect class="fig-box s3" x="230" y="178" width="104" height="52" rx="8"/>
+        <text class="fig-t" x="282" y="200" text-anchor="middle">dsh</text>
+        <text class="fig-s" x="282" y="218" text-anchor="middle">plugins.json</text>
+      </svg>
+      <figcaption id="flow-cap">The table is the only place a module and its ref are written; the renderer writes the managed keys into each harness's config, and the same script in check mode fails CI on any mismatch.</figcaption>
+    </figure>
+  </section>
+
+  <section class="slide slide--bullets" id="costs" aria-label="What it costs">
+    <p class="kicker">Trade-offs</p>
+    <h2>What pinning costs us</h2>
+    <ul class="points">
+      <li><span><strong>Slower uptake.</strong> A fix upstream reaches laptops only after the daily bump PR is reviewed and merged.</span></li>
+      <li><span><strong>Review load.</strong> Roughly two bump PRs a week; most are a one-line ref change.</span></li>
+      <li><span><strong>Tag discipline upstream.</strong> A module without release tags cannot be pinned and stays out of the table.</span></li>
+    </ul>
+  </section>
+
+  <section class="slide slide--closing" id="next" aria-label="Next steps">
+    <p class="kicker">Next</p>
+    <h2>Three asks for this quarter</h2>
+    <ol class="asks">
+      <li>Auto-merge bump PRs whose only change is a ref, once CI is green.</li>
+      <li>Record the loaded module revision in every session transcript.</li>
+      <li>Move the last two hand-listed modules into the table.</li>
+    </ol>
+    <p class="lede">Questions and objections to the platform channel before the 20 October review.</p>
+  </section>
+</main>
+
+<aside class="notes" id="notes" aria-live="polite" hidden>
+  <h2>Notes</h2>
+  <p id="notes-text"></p>
+</aside>
+
+<nav class="bar" aria-label="Slide controls">
+  <div class="group">
+    <button type="button" class="btn" id="overview" aria-pressed="false">Overview</button>
+    <button type="button" class="btn" id="notes-toggle" aria-pressed="false" aria-controls="notes">Notes</button>
+  </div>
+  <div class="group">
+    <button type="button" class="btn" id="prev" aria-label="Previous slide">Prev</button>
+    <span class="counter num" id="counter" aria-live="polite"></span>
+    <button type="button" class="btn primary" id="next-btn" aria-label="Next slide">Next</button>
+  </div>
+</nav>
+
+<script>
+const DATA = {
+  footer: "Pinned marketplace modules · Q4 2026",
+  notes: {
+    problem: "Open with the September incident: the skills module renamed a frontmatter key on main and every laptop that synced that afternoon lost its review commands.",
+    incidents: "Count is from the incident log tagged module-drift. Q2 had eleven; the pin landed on 15 July and the count has been zero since. Do not claim causation for the unrelated harness crashes.",
+    flow: "Point at the table first. Nobody edits the three config files by hand any more; render-modules.py owns those keys, and the --check run in CI is what stops drift coming back.",
+  },
+};
+
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+const KEY = "slides:" + document.title;
+
+// Storage throws in the sandboxed preview; it is a convenience, so failure just means "not kept".
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* not kept */ } },
+};
+
+// ── theme: Auto sets nothing, so prefers-color-scheme decides ──
+function setTheme(mode) {
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode; else delete root.dataset.theme;
+  document.querySelectorAll("[data-theme-set]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === (mode || "auto"))));
+}
+document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => {
+  setTheme(b.dataset.themeSet);
+  store.set("theme", b.dataset.themeSet);
+}));
+setTheme(store.get("theme") ?? root.dataset.theme);  // keep an authored data-theme when nothing is stored
+
+function el(tag, cls, content) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (content != null) n.textContent = content;
+  return n;
+}
+
+// ── deck ──
+root.classList.add("js");
+const slides = [...document.querySelectorAll(".slide")];
+slides.forEach((s, i) => {
+  const foot = el("footer", "slide-foot");
+  foot.append(el("span", null, DATA.footer), el("span", "num", `${i + 1}`));
+  s.append(foot);
+});
+const saved = store.get(KEY);
+let index = Number.isInteger(saved) && saved >= 0 && saved < slides.length ? saved : 0;
+let overview = false;
+
+function render() {
+  slides.forEach((s, i) => {
+    const on = i === index;
+    s.classList.toggle("current", on);
+    s.setAttribute("aria-current", on ? "true" : "false");
+  });
+  $("counter").textContent = `${index + 1} / ${slides.length}`;
+  $("progress").style.width = ((index + 1) / slides.length * 100).toFixed(2) + "%";
+  $("prev").disabled = index === 0;
+  $("next-btn").disabled = index === slides.length - 1;
+  const note = DATA.notes[slides[index].id];
+  $("notes-text").textContent = note || "No notes for this slide.";
+}
+
+function go(i) {
+  index = Math.max(0, Math.min(slides.length - 1, i));
+  root.classList.add("moved");
+  store.set(KEY, index);
+  render();
+}
+
+// ── overview: cards become focusable buttons; their contents go inert so a tap lands on the card ──
+function setOverview(on) {
+  overview = on;
+  root.classList.toggle("overview", on);
+  $("overview").setAttribute("aria-pressed", String(on));
+  slides.forEach((s, i) => {
+    [...s.children].forEach((c) => { c.inert = on; });
+    if (on) {
+      s.tabIndex = 0;
+      s.setAttribute("role", "button");
+      s.setAttribute("aria-label", `Go to slide ${i + 1}: ${(s.querySelector("h1, h2, .kicker") || s).textContent.trim()}`);
+    } else {
+      s.removeAttribute("tabindex");
+      s.removeAttribute("role");
+    }
+  });
+  if (on) slides[index].focus();
+}
+$("overview").addEventListener("click", () => setOverview(!overview));
+$("stage").addEventListener("click", (e) => {
+  const s = overview && e.target.closest(".slide");
+  if (!s) return;
+  go(slides.indexOf(s));
+  setOverview(false);
+});
+
+$("notes-toggle").addEventListener("click", (e) => {
+  const show = $("notes").hidden;
+  $("notes").hidden = !show;
+  e.currentTarget.setAttribute("aria-pressed", String(show));
+});
+$("prev").addEventListener("click", () => go(index - 1));
+$("next-btn").addEventListener("click", () => go(index + 1));
+
+document.addEventListener("keydown", (e) => {
+  if (e.altKey || e.ctrlKey || e.metaKey || e.target.matches("input, textarea, select")) return;
+  if (overview) {
+    if (e.key === "Escape") setOverview(false);
+    else if ((e.key === "Enter" || e.key === " ") && e.target.matches(".slide")) {
+      e.preventDefault();
+      go(slides.indexOf(e.target));
+      setOverview(false);
+    }
+    return;
+  }
+  const step = { ArrowRight: 1, PageDown: 1, ArrowLeft: -1, PageUp: -1 }[e.key];
+  if (step) { e.preventDefault(); go(index + step); }
+  else if (e.key === "Home") go(0);
+  else if (e.key === "End") go(slides.length - 1);
+});
+
+// ── swipe: a mostly-horizontal pointer drag of 50px or more pages; vertical drags still scroll ──
+let start = null;
+$("stage").addEventListener("pointerdown", (e) => {
+  if (!overview && e.isPrimary) start = { x: e.clientX, y: e.clientY };
+});
+$("stage").addEventListener("pointerup", (e) => {
+  if (!start) return;
+  const dx = e.clientX - start.x, dy = e.clientY - start.y;
+  start = null;
+  if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy) * 1.5) go(index + (dx < 0 ? 1 : -1));
+});
+$("stage").addEventListener("pointercancel", () => { start = null; });
+
+render();
+</script>
+</body>
+</html>

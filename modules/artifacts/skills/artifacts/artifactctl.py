@@ -5,6 +5,8 @@ Stdlib only. Exit codes: 0 ok, 1 check failures, 2 usage or missing file.
 """
 from __future__ import annotations
 
+import html
+import json
 import os
 import posixpath
 import re
@@ -34,8 +36,23 @@ _JS_IMPORT = re.compile(
     r"""\bimport\s*\(\s*(["'])([^"']*)\1"""  # dynamic import("x")
     r"""|\bimport\s+(?:[\w$*{},\s]+?\s*\bfrom\s*)?(["'])([^"']*)\3""")  # import x from "y" / import "y"
 _CSS_IMPORT = re.compile(r"""@import\s+(?:url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s]*))\s*\)|"([^"]*)"|'([^']*)')""", re.I)
+_SUBMIT_LISTENER = re.compile(r"""addEventListener\(\s*(["'])submit\1""")
+_ONSUBMIT = re.compile(r"\bonsubmit\s*=", re.I)  # .onsubmit = f  and  <form onsubmit=...>
+_FORM_TAG = re.compile(r"<form\b[^>]*>", re.I)
+_FORM_SEND = re.compile(r"(?<![\w-])(action|method)\s*=", re.I)  # not data-action=
+_SUBMIT_CONTROL = re.compile(r"<(button|input)\b[^>]*?(?<![\w-])type\s*=\s*" + _VAL, re.I)
+_CODE_BODY = re.compile(r"(<(pre|code)\b[^>]*>).*?(</\2\s*>)", re.I | re.S)
+_CSS_STRING = re.compile(r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'", re.S)
+_SANDBOX_WHY = (" — form submission never fires in the dsh preview (sandbox lacks allow-forms); "
+                'use type="button" with a click handler and Enter on keydown')
 _SCHEME = re.compile(r"^[a-z][\w+.-]*:", re.I)
 _URL = re.compile(r"^(?:https?:)?//([^/]+)(/.*)?$", re.I)
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+_CSS_URL = re.compile(r"\burl\([^)]*\)", re.I)
+_COLOR_LITERAL = re.compile(
+    r"(?<![\w-])#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\w-])"
+    r"|\b(?:rgba?|hsla?|oklch|oklab|color-mix)\([^()]*(?:\([^()]*\)[^()]*)*\)", re.I)
+_THEME_WARN_CAP = 10
 
 
 def _host(url: str) -> tuple[str, str] | None:
@@ -55,6 +72,66 @@ def _script_host_ok(host: str, path: str) -> bool:
         return False
     # normpath first: /npm/../gh/... must not ride the /npm/ prefix
     return host != "cdn.jsdelivr.net" or posixpath.normpath(path).startswith("/npm/")
+
+
+def _theme_literals(css: str) -> list[tuple[str, str]]:
+    """(literal, selector) for each declaration holding a color literal outside the token blocks.
+    Allowed: a block whose prelude contains :root, or any block under @media (prefers-color-scheme)."""
+    css = _CSS_COMMENT.sub(" ", css)
+    hits: list[tuple[str, str]] = []
+    stack: list[str] = []
+    buf: list[str] = []
+    paren = 0
+    quote = ""
+    escaped = False
+
+    def declaration(decl: str) -> None:
+        if not stack or ":" not in decl:
+            return
+        prop, value = decl.split(":", 1)
+        if prop.strip().lower() == "color-scheme":
+            return
+        if ":root" in stack[-1].lower() or any(
+                p.lower().startswith("@media") and "prefers-color-scheme" in p.lower() for p in stack):
+            return
+        m = _COLOR_LITERAL.search(_CSS_STRING.sub(" ", _CSS_URL.sub("", value)))
+        if m:
+            hits.append((m.group(0), " ".join(stack[-1].split())))
+
+    for ch in css:
+        if quote:
+            buf.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+            buf.append(ch)
+        elif ch == "(":
+            paren += 1
+            buf.append(ch)
+        elif ch == ")":
+            paren = max(paren - 1, 0)
+            buf.append(ch)
+        elif paren:  # inside url(...) and friends, ; { } are data, not structure
+            buf.append(ch)
+        elif ch == "{":
+            stack.append("".join(buf).strip())
+            buf = []
+        elif ch == "}":
+            declaration("".join(buf))
+            if stack:
+                stack.pop()
+            buf = []
+        elif ch == ";":
+            declaration("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    return hits
 
 
 def _local(kind: str, value: str) -> str:
@@ -124,8 +201,23 @@ def check_html(text: str, size: int) -> tuple[list[str], list[str]]:
                 fails.append(_local("@import", url))
             elif h[0] != STYLE_HOST:
                 fails.append(f"host: @import from {url} is not {STYLE_HOST}")
+    code_free = _CODE_BODY.sub(r"\1 \3", text)  # a code sample about submit listeners is not one
+    for _ in _SUBMIT_LISTENER.finditer(code_free):
+        fails.append("sandbox: a submit listener" + _SANDBOX_WHY)
+    for _ in _ONSUBMIT.finditer(code_free):
+        fails.append("sandbox: an onsubmit handler" + _SANDBOX_WHY)
+    for tag in _FORM_TAG.findall(code_free):
+        for m in _FORM_SEND.finditer(tag):
+            fails.append(f"sandbox: <form {m.group(1).lower()}=>" + _SANDBOX_WHY)
+    for m in _SUBMIT_CONTROL.finditer(code_free):
+        if "".join(g or "" for g in m.groups()[1:]).strip().lower() == "submit":
+            fails.append(f'sandbox: <{m.group(1).lower()} type="submit">' + _SANDBOX_WHY)
     if size > SIZE_CAP:
         fails.append(f"size: {size} bytes exceeds the 16 MB cap")
+    literals = [hit for body in _STYLE_BODY.findall(text) for hit in _theme_literals(body)]
+    for literal, selector in literals[:_THEME_WARN_CAP]:
+        warns.append(f'theme: color literal {literal} in rule "{selector}" — '
+                     "define it as a token on :root so both themes stay readable")
     return fails, warns
 
 
@@ -219,7 +311,45 @@ def parse_console(stderr: str) -> tuple[list[str], list[str]]:
     return fails, warns
 
 
-def render(path: Path, out: Path, width: int, height: int) -> int:
+# Console lines from a sandboxed srcdoc frame do not reliably reach stderr, so the inner page reports
+# its own uncaught errors to the host, which keeps them in document.title for --dump-dom to read.
+_SANDBOX_PROBE = (
+    '<script>window.addEventListener("error", e => parent.postMessage({artifactctlError: String(e.message)}, "*"));'
+    'window.addEventListener("unhandledrejection", e => parent.postMessage({artifactctlError: "Uncaught (in promise) " + String(e.reason)}, "*"));'
+    "</script>")
+_SANDBOX_COLLECTOR = (
+    '<script>const errs = []; window.addEventListener("message", e => {'
+    ' if (e.data && typeof e.data === "object" && "artifactctlError" in e.data) {'
+    ' errs.push(String(e.data.artifactctlError)); document.title = "artifactctl-errors:" + JSON.stringify(errs); } });'
+    "</script>")
+_SANDBOX_ERRORS = "artifactctl-errors:"
+_HEAD = re.compile(r"<head\b[^>]*>", re.I)
+_HTML_TAG = re.compile(r"<html\b[^>]*>", re.I)
+_DOCTYPE_TAG = re.compile(r"<!doctype\b[^>]*>", re.I)
+
+
+def sandbox_host(inner_html: str) -> str:
+    """A host page framing `inner_html` the way dsh does: <iframe sandbox="allow-scripts" srcdoc>."""
+    # never ahead of the doctype: a probe there would drop the page into quirks mode
+    m = _HEAD.search(inner_html) or _HTML_TAG.search(inner_html) or _DOCTYPE_TAG.search(inner_html)
+    at = m.end() if m else 0
+    inner = inner_html[:at] + _SANDBOX_PROBE + inner_html[at:]
+    return ('<!doctype html><html><head><meta charset="utf-8"><title>sandbox host</title>'
+            "<style>html,body{margin:0;height:100%}iframe{border:0;width:100%;height:100%}</style>"
+            f'{_SANDBOX_COLLECTOR}</head><body><iframe sandbox="allow-scripts" srcdoc="{html.escape(inner, quote=True)}">'
+            "</iframe></body></html>")
+
+
+def parse_sandbox_dom(dom: str) -> list[str]:
+    """FAIL lines from the errors the sandbox probe collected into the dumped host <title>."""
+    m = _TITLE.search(dom)
+    title = html.unescape(m.group(1)).strip() if m else ""
+    if not title.startswith(_SANDBOX_ERRORS):
+        return []
+    return [f"console: {msg}" for msg in json.loads(title[len(_SANDBOX_ERRORS):])]
+
+
+def render(path: Path, out: Path, width: int, height: int, sandbox: bool = False) -> int:
     chrome = find_chrome(os.environ, shutil.which, sys.platform)
     if chrome is None:
         print("skipped: no Chrome found; install Chrome or set ARTIFACTS_CHROME")
@@ -228,10 +358,15 @@ def render(path: Path, out: Path, width: int, height: int) -> int:
         print(f"render: ARTIFACTS_CHROME={chrome} does not exist")
         return 2
     tmpdir = tempfile.mkdtemp()
+    target = path
+    if sandbox:
+        target = Path(tmpdir) / "sandbox-host.html"
+        target.write_text(sandbox_host(path.read_text(errors="replace")), encoding="utf-8")
     cmd = [chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
            "--no-default-browser-check", f"--user-data-dir={tmpdir}", f"--window-size={width},{height}",
            f"--screenshot={out}", "--enable-logging=stderr", "--v=0", "--virtual-time-budget=4000",
-           f"file://{path}"]
+           # an isolated sandboxed frame runs outside virtual time, so its timers never fire before the dump
+           *(["--dump-dom", "--disable-features=IsolateSandboxedIframes"] if sandbox else []), f"file://{target}"]
     if os.geteuid() == 0:  # the sandbox refuses root, which is what containers run as
         cmd.insert(1, "--no-sandbox")
     out.unlink(missing_ok=True)
@@ -247,7 +382,9 @@ def render(path: Path, out: Path, width: int, height: int) -> int:
         print(f"render: chrome failed: {lines[-1] if lines else f'exit {proc.returncode}'}")
         return 2
     fails, warns = parse_console(proc.stderr)
-    print(f"rendered {out}")
+    if sandbox:  # the same error can arrive by both paths; report it once
+        fails = list(dict.fromkeys(fails + parse_sandbox_dom(proc.stdout)))
+    print(f"rendered {out}" + (" (sandbox)" if sandbox else ""))
     for w in warns:
         print(f"WARN {w}")
     for f in fails:
@@ -258,7 +395,7 @@ def render(path: Path, out: Path, width: int, height: int) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) < 1 or argv[0] not in ("prepare", "check", "render", "open"):
-        print("usage: artifactctl.py prepare [DIR] | check FILE | render FILE [--out PNG] [--width N] [--height N] | open FILE",
+        print("usage: artifactctl.py prepare [DIR] | check FILE | render FILE [--out PNG] [--width N] [--height N] [--sandbox] | open FILE",
               file=sys.stderr)
         return 2
     verb, rest = argv[0], argv[1:]
@@ -272,10 +409,11 @@ def main(argv: list[str]) -> int:
         ap.add_argument("--out")
         ap.add_argument("--width", type=int, default=390)
         ap.add_argument("--height", type=int, default=844)
+        ap.add_argument("--sandbox", action="store_true")
         a = ap.parse_args(rest)
         path = _file_arg(a.file)
         out = Path(a.out).expanduser().resolve() if a.out else path.with_suffix(".png")
-        return render(path, out, a.width, a.height)
+        return render(path, out, a.width, a.height, a.sandbox)
     path = _file_arg(rest[0] if rest else None)
     if verb == "open":
         open_file(path)

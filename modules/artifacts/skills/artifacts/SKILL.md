@@ -29,13 +29,16 @@ acceptable. A single fact, a short list or an answer the user will act on at onc
 2. **Prepare the output dir.** `python3 <skill dir>/artifactctl.py prepare` prints the
    directory (`.artifacts/` under the working directory, git-excluded). The file is
    `<slug-of-title>.html` inside it; a revision overwrites the same file.
-3. **Write the page** with the `write` tool: a complete document (doctype, head, title,
-   description meta, viewport with `viewport-fit=cover`, tokens on `:root`, body), scripts only
+3. **Write the page.** Start from the closest template: read `./templates/README.md`, copy
+   that file to the output dir as `<slug>.html`, replace its slots and its `DATA`, and keep its
+   token block and interaction code — they already satisfy the contract. Only when no template
+   is close write the document from scratch with the `write` tool: doctype, head, title,
+   description meta, viewport with `viewport-fit=cover`, tokens on `:root`, body; scripts only
    from the CDN allowlist, everything else inline.
 4. **Check, then look.** `python3 <skill dir>/artifactctl.py check <file>` — fix every `FAIL`,
    re-run, stop when it prints `ok`. A `WARN` is advice. Then
    `python3 <skill dir>/artifactctl.py render <file>`: it renders the page in headless Chrome
-   at phone width, writes `<stem>.png` beside the file and prints any console error; `skipped:`
+   at phone width, writes `<stem>.png` beside the file and prints any console error; add `--sandbox` to render it inside the same `allow-scripts` frame dsh uses, which surfaces storage access and other runtime errors (a blocked form submit stays silent; the static `sandbox:` rule in `check` catches that); `skipped:`
    means no Chrome is installed and is not a defect. Read the PNG with your file-reading tool
    and look at it the way the user will: an empty bar, overlapping text, an unstyled block or a
    missing section is a defect the static check cannot see. Fix, re-check, re-render. If the
@@ -59,5 +62,7 @@ loaded from); the script sits beside it. Run it with `python3`, never import it.
 - One file per artifact; no sibling assets, no multi-page sites.
 - Phone width first: dsh is used from a phone.
 - Never a download link, never `window.claude`, never a claude.ai URL.
+- Action buttons are `type="button"` with click handlers; a `submit` event never fires in the dsh
+  preview.
 - Say one plain sentence about the design direction at most; the token plan lives in the
   file, not in the reply.

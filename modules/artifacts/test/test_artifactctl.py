@@ -1,3 +1,4 @@
+import html
 import os
 import shutil
 import subprocess
@@ -282,6 +283,67 @@ def test_open_missing_file(run, tmp_path):
     assert r.returncode == 2
 
 
+# ── sandbox: form submission never fires in dsh's allow-scripts-only frame ──
+
+SANDBOX_TAIL = ' — form submission never fires in the dsh preview (sandbox lacks allow-forms); ' \
+               'use type="button" with a click handler and Enter on keydown'
+
+
+@pytest.mark.parametrize("snippet", [
+    '<script>f.addEventListener("submit", e => e.preventDefault())</script>',
+    "<script>f.addEventListener( 'submit', add)</script>",
+    "<script>document.forms[0].onsubmit = add</script>",
+    '<form onsubmit="add(); return false"><input id="a"></form>',
+    '<form action="/add"><input id="a"></form>',
+    "<form method=post><input id=\"a\"></form>",
+    '<form><button type="submit">Add</button></form>',
+    "<form><button class=x type='submit'>Add</button></form>",
+    "<form><input type=submit value=Add></form>",
+])
+def test_check_fails_form_submission(snippet):
+    fails, _ = artifactctl.check_html(GOOD_PAGE.replace("</body>", snippet + "</body>"), size=1024)
+    assert len(fails) == 1, fails
+    assert fails[0].startswith("sandbox: ") and fails[0].endswith(SANDBOX_TAIL), fails
+
+
+def test_check_reports_each_submission_hit():
+    snippet = '<form method="post"><button type="submit">Add</button></form>' \
+              '<script>document.querySelector("form").addEventListener("submit", add)</script>'
+    fails, _ = artifactctl.check_html(GOOD_PAGE.replace("</body>", snippet + "</body>"), size=1024)
+    assert len(fails) == 3 and all(f.startswith("sandbox: ") for f in fails), fails
+
+
+def test_check_passes_button_form_with_keydown():
+    snippet = ('<form id="f"><label for="a">Item</label><input id="a">'
+               '<button type="button" id="add">Add</button></form>'
+               '<script>const add = () => {};'
+               'document.getElementById("add").addEventListener("click", add);'
+               'document.getElementById("a").addEventListener("keydown", e => { if (e.key === "Enter") add(); });'
+               '</script>')
+    fails, _ = artifactctl.check_html(GOOD_PAGE.replace("</body>", snippet + "</body>"), size=1024)
+    assert fails == []
+
+
+@pytest.mark.parametrize("snippet, n", [
+    ('<form data-action="x"><input id="a"></form>', 0),
+    ('<form action="x"><input id="a"></form>', 1),
+    ('<form><button data-type="submit" type="button">Add</button></form>', 0),
+    ('<form><button type="submit">Add</button></form>', 1),
+])
+def test_check_sandbox_ignores_data_attributes(snippet, n):
+    fails, _ = artifactctl.check_html(GOOD_PAGE.replace("</body>", snippet + "</body>"), size=1024)
+    assert len(fails) == n, fails
+
+
+@pytest.mark.parametrize("snippet, n", [
+    ('<pre><code>form.addEventListener("submit", f)</code></pre>', 0),
+    ('<pre><code>form.addEventListener("submit", f)</code></pre><script>form.addEventListener("submit", f)</script>', 1),
+])
+def test_check_sandbox_ignores_code_samples(snippet, n):
+    fails, _ = artifactctl.check_html(GOOD_PAGE.replace("</body>", snippet + "</body>"), size=1024)
+    assert len(fails) == n, fails
+
+
 # ── allowlist bypass forms ───────────────────────────────────────────────
 
 @pytest.mark.parametrize("tag, kind", [
@@ -376,3 +438,122 @@ def test_render_reports_uncaught_error(run, tmp_path):
     assert r.returncode == 1, r.stdout + r.stderr
     assert any(l.startswith("FAIL console: Uncaught ReferenceError") for l in r.stdout.splitlines())
     assert r.stdout.strip().splitlines()[-1] == "fail"
+
+
+@needs_chrome
+def test_render_sandbox_reports_error_inside_frame(run, tmp_path):
+    p = tmp_path / "bad.html"
+    p.write_text(GOOD_PAGE.replace("</body>", "<script>nope()</script></body>"))
+    r = run("render", str(p), "--sandbox", env=dict(os.environ))
+    assert r.returncode == 1, r.stdout + r.stderr
+    lines = r.stdout.strip().splitlines()
+    assert lines[0] == f"rendered {tmp_path / 'bad.png'} (sandbox)"
+    assert any(l.startswith("FAIL console:") and "nope" in l for l in lines), r.stdout
+    assert lines[-1] == "fail"
+
+
+@needs_chrome
+def test_render_sandbox_surfaces_unguarded_storage(run, tmp_path):
+    p = tmp_path / "store.html"
+    p.write_text(GOOD_PAGE.replace("</body>", '<script>localStorage.getItem("k")</script></body>'))
+    r = run("render", str(p), "--sandbox", env=dict(os.environ))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert any(l.startswith("FAIL console:") and "localStorage" in l for l in r.stdout.splitlines()), r.stdout
+    r = run("render", str(p), env=dict(os.environ))
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+@needs_chrome
+def test_render_sandbox_good_page_ok(run, tmp_path):
+    p = tmp_path / "good.html"
+    p.write_text(GOOD_PAGE)
+    r = run("render", str(p), "--sandbox", env=dict(os.environ))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "good.png").stat().st_size > 0
+    assert r.stdout.strip().splitlines()[-1] == "ok"
+
+
+@needs_chrome
+@pytest.mark.parametrize("delay", [1000, 2500])
+def test_render_sandbox_reports_deferred_error(run, tmp_path, delay):
+    p = tmp_path / "late.html"
+    p.write_text(GOOD_PAGE.replace(
+        "</body>", f'<script>setTimeout(() => {{ throw new Error("late{delay}") }}, {delay})</script></body>'))
+    r = run("render", str(p), "--sandbox", env=dict(os.environ))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"FAIL console: Uncaught Error: late{delay}" in r.stdout.splitlines(), r.stdout
+
+
+@needs_chrome
+def test_render_sandbox_reports_rejection_once(run, tmp_path):
+    p = tmp_path / "rej.html"
+    p.write_text(GOOD_PAGE.replace("</body>", '<script>Promise.reject(new Error("rej"))</script></body>'))
+    r = run("render", str(p), "--sandbox", env=dict(os.environ))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert [l for l in r.stdout.splitlines() if l.startswith("FAIL console:")] == [
+        "FAIL console: Uncaught (in promise) Error: rej"], r.stdout
+
+
+def test_sandbox_host_escapes_inner_and_probes_once():
+    host = artifactctl.sandbox_host(GOOD_PAGE)
+    assert '<iframe sandbox="allow-scripts" srcdoc="' in host
+    srcdoc = host.split('srcdoc="', 1)[1].split('"', 1)[0]
+    assert "&lt;script" in srcdoc and "<" not in srcdoc
+    assert host.count("unhandledrejection") == 1
+    # the probe lands at the top of the inner <head>, before the page's own markup
+    assert srcdoc.index("unhandledrejection") < srcdoc.index("&lt;meta charset")
+
+
+@pytest.mark.parametrize("page, after", [
+    ("<!doctype html><title>T</title><p>x", "<!doctype html>"),
+    ('<!doctype html><html lang="en"><title>T</title><p>x', '<html lang="en">'),
+])
+def test_sandbox_host_probe_follows_doctype_without_head(page, after):
+    srcdoc = html.unescape(artifactctl.sandbox_host(page).split('srcdoc="', 1)[1].split('"', 1)[0])
+    assert srcdoc.startswith("<!doctype html>")
+    assert srcdoc.index("unhandledrejection") > srcdoc.index(after)
+
+
+# ── theme: color literals outside the token blocks ───────────────────────
+
+def _theme_warns(css):
+    _, warns = artifactctl.check_html(GOOD_PAGE.replace("</style>", css + "\n</style>"), size=1024)
+    return [w for w in warns if w.startswith("theme:")]
+
+
+@pytest.mark.parametrize("css", [
+    ":root { --card: #333; --shade: rgb(0 0 0 / 0.2) }",
+    '@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --card: #ccc; --x: oklch(70% 0.1 200) } }',
+    ".hero { background: url(data:image/png;base64,AAAA#notacolor) }",
+    ".hero { color-scheme: dark }",
+    "/* .card { color: #333 } */ .card { color: var(--fg) }",
+])
+def test_check_theme_allows_tokens_and_non_colors(css):
+    assert _theme_warns(css) == []
+
+
+def test_check_theme_warns_literal_outside_tokens():
+    fails, warns = artifactctl.check_html(GOOD_PAGE.replace("</style>", ".card{color:#333}\n</style>"), size=1024)
+    assert fails == []
+    assert warns == ['theme: color literal #333 in rule ".card" — define it as a token on :root so both themes stay readable']
+
+
+def test_check_theme_warns_functions_and_caps_at_ten():
+    assert _theme_warns(".a { border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent) }") == [
+        'theme: color literal color-mix(in srgb, var(--fg) 20%, transparent) in rule ".a" — '
+        "define it as a token on :root so both themes stay readable"]
+    assert len(_theme_warns("".join(f".c{i} {{ color: rgba(0,0,0,.{i}) }}" for i in range(15)))) == 10
+
+
+def test_good_page_has_no_theme_warnings():
+    _, warns = artifactctl.check_html(GOOD_PAGE, size=1024)
+    assert warns == []
+
+
+def test_check_theme_skips_escaped_quote():
+    assert _theme_warns('.a::after{content:"\\"";} .b{color:#123}') == [
+        'theme: color literal #123 in rule ".b" — define it as a token on :root so both themes stay readable']
+
+
+def test_check_theme_ignores_quoted_strings():
+    assert _theme_warns('.a::after{content:"#add"}') == []

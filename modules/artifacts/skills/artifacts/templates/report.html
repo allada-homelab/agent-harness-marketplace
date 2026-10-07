@@ -1,0 +1,376 @@
+<!doctype html>
+<!-- template: report · slots: title, description, author, summary, DATA -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>INC-2291 Checkout Outage</title>
+<meta name="description" content="Post-incident review of the 51-minute checkout outage on 22 Sep 2026, caused by database connection exhaustion after a pool-size change.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+/* Layout: one reading column (prose ≤ 65ch); title block, summary, contents, then collapsible sections. */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --sunken: #eaeef2;
+  --fg: #17202b; --muted: #586474; --line: #d8dee6;
+  --accent: #1d4f91; --accent-fg: #ffffff; --danger: #b3261e; --ok: #1b6e3c; --warn: #8a5a00;
+  --c1: #0072B2; --c2: #009E73; --c3: #D55E00; --c4: #B2548F; --c5: #C77F00;
+  --shadow: rgb(0 0 0 / 0.12);
+  /* Washes derive from the theme's own tokens, so the dark blocks need not repeat them. */
+  --accent-wash: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  --danger-wash: color-mix(in srgb, var(--danger) 7%, var(--surface));
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-prose: "IBM Plex Serif", Charter, "Iowan Old Style", Georgia, serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem; --step-0: 0.9375rem; --step-1: 1.0625rem; --step-2: 1.375rem; --step-3: 1.75rem;
+  --radius: 10px;
+  color-scheme: light;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1318; --surface: #161d25; --sunken: #1d252f;
+    --fg: #e4e9ef; --muted: #96a3b3; --line: #2a3440;
+    --accent: #7fb2ee; --accent-fg: #0e1318; --danger: #f2867e; --ok: #6fcf97; --warn: #e9b65c;
+    --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+    --shadow: rgb(0 0 0 / 0.45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1318; --surface: #161d25; --sunken: #1d252f;
+  --fg: #e4e9ef; --muted: #96a3b3; --line: #2a3440;
+  --accent: #7fb2ee; --accent-fg: #0e1318; --danger: #f2867e; --ok: #6fcf97; --warn: #e9b65c;
+  --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+  --shadow: rgb(0 0 0 / 0.45);
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box }
+[hidden] { display: none !important }
+img { max-width: 100% }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 400 var(--step-0)/1.5 var(--font-body);
+  padding-inline: 16px; padding-block: 20px 48px;
+  -webkit-text-size-adjust: 100%;
+}
+.page { max-width: 44rem; margin-inline: auto; display: grid; gap: 24px }
+h1, h2, h3 { margin: 0; text-wrap: balance; font-weight: 600 }
+h1 { font-size: var(--step-3); line-height: 1.15; letter-spacing: -0.015em }
+h2 { font-size: var(--step-2); line-height: 1.25; letter-spacing: -0.01em }
+h3 { font-size: var(--step-1); line-height: 1.3 }
+p, ul, ol { margin: 0 }
+a { color: var(--accent); text-underline-offset: 2px }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums }
+.label { font: 500 var(--step--1)/1.3 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted) }
+.lede { color: var(--muted); max-width: 60ch }
+
+header.top { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px }
+header.top .intro { display: grid; gap: 8px; min-width: 0; flex: 1 1 18rem }
+.byline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--muted); font-size: var(--step--1) }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+  font: 500 var(--step--1)/1.4 var(--font-body); color: var(--tone); border: 1px solid var(--tone);
+}
+.pill::before { content: ""; display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--tone) }
+
+.seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--sunken); border-radius: 999px; flex: none }
+.seg button {
+  font: 500 var(--step--1)/1 var(--font-body); color: var(--muted); background: none;
+  border: 0; border-radius: 999px; padding: 7px 12px; min-height: 32px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px var(--shadow) }
+
+.summary { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 10px; min-width: 0 }
+.summary p { font: 400 var(--step-1)/1.6 var(--font-prose); max-width: 65ch }
+.summary-head { display: flex; justify-content: space-between; align-items: center; gap: 12px }
+.btn {
+  font: 500 var(--step--1)/1 var(--font-body); border-radius: 8px; padding: 8px 12px; min-height: 34px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer;
+}
+textarea.copy-fallback {
+  width: 100%; min-height: 8rem; font: 400 var(--step--1)/1.45 var(--font-data); color: var(--fg);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+}
+
+.toc { display: grid; gap: 8px; border-block: 1px solid var(--line); padding-block: 12px }
+.toc ol { padding-left: 1.6em; display: grid; gap: 4px }
+.toc li { padding-left: 2px }
+.toc li::marker { font-family: var(--font-data); color: var(--muted); font-size: var(--step--1) }
+.toc a { text-decoration: none }
+.toc a:hover { text-decoration: underline }
+
+.sec { display: grid; gap: 12px; min-width: 0; scroll-margin-top: calc(16px + env(safe-area-inset-top, 0px)) }
+.tog {
+  all: unset; box-sizing: border-box; display: flex; align-items: baseline; gap: 10px; width: 100%;
+  cursor: pointer; border-radius: 6px; color: var(--fg);
+}
+.chev { display: block; flex: none; width: 0.55em; height: 0.55em; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: translateY(-0.12em) rotate(45deg) }
+.tog[aria-expanded="false"] .chev { transform: translateY(0.05em) rotate(-45deg) }
+.body { display: grid; gap: 14px; min-width: 0 }
+.body p, .body li { font: 400 var(--step-1)/1.65 var(--font-prose); max-width: 65ch }
+.body ul, .body ol { padding-left: 1.3em; display: grid; gap: 8px }
+.body li::marker { color: var(--muted) }
+.who { font: 400 var(--step--1)/1.4 var(--font-body); color: var(--muted); white-space: nowrap }
+sup { line-height: 0 }
+sup a { font: 500 0.7em/1 var(--font-data); text-decoration: none; padding-inline: 1px }
+code { font: 400 0.88em/1 var(--font-data); background: var(--sunken); border-radius: 4px; padding: 1px 4px; overflow-wrap: anywhere }
+
+.callout { border: 1px solid var(--tone); border-radius: 8px; padding: 12px 14px; display: grid; gap: 6px; background: var(--wash); --tone: var(--accent); --wash: var(--accent-wash) }
+.callout.risk { --tone: var(--danger); --wash: var(--danger-wash) }
+.callout .label { color: var(--tone) }
+.callout p { font: 400 var(--step-0)/1.55 var(--font-body); max-width: 65ch }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface) }
+table { border-collapse: collapse; width: 100%; font-size: var(--step--1); line-height: 1.45 }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-top: 1px solid var(--line) }
+thead th { border-top: 0; color: var(--muted); font-weight: 500; background: var(--sunken) }
+td:first-child { font-family: var(--font-data); font-variant-numeric: tabular-nums; white-space: nowrap }
+td:last-child { min-width: 14rem }
+
+.sources li { font: 400 var(--step--1)/1.5 var(--font-body); overflow-wrap: anywhere; scroll-margin-top: 16px }
+.sources li:target { background: var(--sunken); border-radius: 4px }
+.sources .host { display: block; color: var(--muted); font-family: var(--font-data) }
+
+:is(button, a, .tog):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth }
+  .chev { transition: transform 0.15s ease-out }
+}
+@media print {
+  :root:root:root { --bg: #ffffff; --surface: #ffffff; --sunken: #f1f3f5; --fg: #000000; --muted: #444b55; --line: #c4cbd3; --accent: #1d4f91; color-scheme: light }
+  @page { margin: 18mm }
+  body { padding: 0; font-size: 10.5pt }
+  .page { max-width: none; gap: 16px }
+  .seg, #copy, .chev, textarea.copy-fallback { display: none !important }
+  .body[hidden] { display: grid !important }
+  .sec { break-inside: auto }
+  .sec > h2, .callout, tr { break-inside: avoid; break-after: auto }
+  a { color: inherit }
+}
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="top">
+    <div class="intro">
+      <h1 data-slot="title">INC-2291 Checkout Outage</h1>
+      <p class="lede" data-slot="description">Post-incident review of the 51-minute checkout outage on 22 Sep 2026, caused by database connection exhaustion after a pool-size change.</p>
+      <div class="byline">
+        <span data-slot="author">Maya Okafor, payments on-call · reviewed with Platform SRE</span>
+        <span>Updated <time id="updated"></time></span>
+        <span class="pill" id="status"></span>
+      </div>
+    </div>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+      <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+    </div>
+  </header>
+
+  <section class="summary" aria-labelledby="summary-h">
+    <div class="summary-head">
+      <h2 class="label" id="summary-h">Summary</h2>
+      <button type="button" class="btn" id="copy">Copy as text</button>
+    </div>
+    <p id="summary-text" data-slot="summary">From 14:07 to 14:58 UTC, 6.8% of checkout attempts failed and the rest slowed to a 9.2 s p95. Release 3.41.0 of checkout-api raised each pod's connection pool from 20 to 60; when the lunch peak scaled the service to 14 pods, they asked the primary database for more connections than it allows. Rolling back the release restored service. We are moving pool sizing to a fleet-wide budget and putting PgBouncer in front of the primary.</p>
+    <textarea class="copy-fallback" id="copy-fallback" readonly hidden aria-label="Summary as text"></textarea>
+  </section>
+
+  <nav class="toc" aria-labelledby="toc-h">
+    <h2 class="label" id="toc-h">Contents</h2>
+    <ol id="toc"></ol>
+  </nav>
+
+  <section class="sec">
+    <h2 data-toc>Impact</h2>
+    <p>For 51 minutes, customers on web and in the iOS and Android apps saw checkout spin and then fail with “We couldn’t place your order.” Of 60,600 checkout attempts in the window, 4,120 failed. Baskets were kept, and support counted 312 contacts about duplicate charges, all of which were authorisations that expired without capture.</p>
+    <ul>
+      <li>Checkout p95 latency rose from 380 ms to 9.2 s at the worst minute, 14:31.</li>
+      <li>Order history and saved cards were slow but available; browsing and search were unaffected.</li>
+      <li>No data was lost. Every failed attempt rolled back before payment capture.</li>
+    </ul>
+  </section>
+
+  <section class="sec">
+    <h2 data-toc>Timeline</h2>
+    <p>All times are UTC on 22 September 2026, taken from the deploy log and the incident channel.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Time</th><th scope="col">Event</th></tr></thead>
+        <tbody>
+          <tr><td>13:52</td><td>checkout-api 3.41.0 finishes rolling out to 10 pods. Pool size per pod is now 60.</td></tr>
+          <tr><td>14:07</td><td>Lunch traffic scales the service to 14 pods. New pods fail their readiness check on connection timeouts.</td></tr>
+          <tr><td>14:11</td><td>Checkout error-rate alert fires and pages the payments on-call.</td></tr>
+          <tr><td>14:24</td><td>Database dashboard shows 796 of 800 connections in use. Incident declared Sev 2.</td></tr>
+          <tr><td>14:41</td><td>Rollback to 3.40.2 starts after ruling out the payment provider.</td></tr>
+          <tr><td>14:58</td><td>Error rate and p95 back to baseline. Incident resolved.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="sec">
+    <h2 data-toc>Root cause</h2>
+    <p>The primary database accepts 800 connections, with 30 reserved for superusers and replication.<sup><a href="#src-1">1</a></sup> Other services hold up to 170 at peak, which leaves checkout-api 600. Release 3.41.0 raised HikariCP’s <code>maximumPoolSize</code> from 20 to 60 to absorb short bursts in a load test that ran on a single pod.<sup><a href="#src-2">2</a></sup> At 10 pods the fleet could open 600 connections, exactly its share. At 14 pods it could open 840.</p>
+    <p>The pods that started at 14:07 could not get connections, failed readiness and were restarted, and each restart opened a fresh pool while the old connections were still closing. The retry policy on the checkout client then multiplied the load on the pods that were still healthy.<sup><a href="#src-3">3</a></sup></p>
+    <p>The change passed review because pool size is set per pod, while the limit that matters is the total across the fleet at its maximum scale. Nothing in our config or CI connects the two numbers.</p>
+  </section>
+
+  <section class="sec">
+    <h2 data-toc>Decision</h2>
+    <div class="callout">
+      <p class="label">Recommendation</p>
+      <p>Treat database connections as a fleet-wide budget. Each service declares its share of the primary’s 770 usable connections, and CI fails any change where pool size times the autoscaler’s maximum replicas exceeds that share.</p>
+    </div>
+    <p>We considered raising <code>max_connections</code> instead. Each Postgres connection is a process with its own memory, and doubling the limit would trade this failure for memory pressure on the primary.<sup><a href="#src-4">4</a></sup> A pooler in transaction mode lets many client connections share a small number of server connections, which addresses the cause.</p>
+    <div class="callout risk">
+      <p class="label">Open risk</p>
+      <p>Until PgBouncer is in place, checkout-api’s share of 600 connections allows 30 pods at pool size 20, and a restart briefly holds two pools. The autoscaler is capped at 24 pods to keep that headroom.</p>
+    </div>
+  </section>
+
+  <section class="sec">
+    <h2 data-toc>Follow-up actions</h2>
+    <ol>
+      <li>Cap checkout-api at 24 replicas and pool size 20. <span class="who">Done, Maya Okafor</span></li>
+      <li>Add a CI check comparing pool size × max replicas with each service’s connection budget. <span class="who">Platform SRE, due 10 Oct</span></li>
+      <li>Deploy PgBouncer in transaction mode in front of the primary. <span class="who">Database team, due 31 Oct</span></li>
+      <li>Add jittered backoff and a retry budget to the checkout client. <span class="who">Mobile and web, due 17 Oct</span></li>
+    </ol>
+  </section>
+
+  <section class="sec">
+    <h2 data-toc>Sources</h2>
+    <ol class="sources" id="source-list"></ol>
+  </section>
+</main>
+
+<script>
+const DATA = {
+  status: "In review",
+  updated: "2026-09-29",
+  sources: [
+    { label: "PostgreSQL 16 documentation: connection settings", href: "https://www.postgresql.org/docs/16/runtime-config-connection.html" },
+    { label: "checkout-api pull request 4182: raise pool size to 60", href: "https://github.com/example/checkout-api/pull/4182" },
+    { label: "Checkout API dashboard, 22 Sep 13:30–15:30 UTC", href: "https://grafana.example.com/d/checkout-api?from=1790083800000&to=1790091000000" },
+    { label: "HikariCP wiki: About Pool Sizing", href: "https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing" },
+  ],
+};
+
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+
+// Storage throws in the sandboxed preview; it is a convenience, so failure just means "not kept".
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* not kept */ } },
+};
+
+// ── theme: Auto sets nothing, so prefers-color-scheme decides ──
+function setTheme(mode) {
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode; else delete root.dataset.theme;
+  document.querySelectorAll("[data-theme-set]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === (mode || "auto"))));
+}
+document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => {
+  setTheme(b.dataset.themeSet);
+  store.set("theme", b.dataset.themeSet);
+}));
+setTheme(store.get("theme"));
+
+function el(tag, cls, content) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (content != null) n.textContent = content;
+  return n;
+}
+
+// ── title block: date and status pill; the pill's tone is semantic, its text says the state ──
+const TONES = { draft: "--muted", "in review": "--warn", approved: "--ok", rejected: "--danger" };
+const updated = new Date(DATA.updated + "T00:00:00Z");
+$("updated").dateTime = DATA.updated;
+$("updated").textContent = Number.isNaN(updated.getTime()) ? DATA.updated
+  : new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(updated);
+$("status").textContent = DATA.status;
+$("status").style.setProperty("--tone", `var(${TONES[DATA.status.toLowerCase()] || "--muted"})`);
+
+// ── sections: each <h2 data-toc> gets an id, a collapse button, and a TOC entry ──
+const slug = (s) => s.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
+  .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "section";
+const used = new Set();
+const toc = [];
+document.querySelectorAll("h2[data-toc]").forEach((h) => {
+  const label = h.textContent.trim();
+  let id = slug(label);
+  for (let n = 2; used.has(id) || document.getElementById(id); n++) id = `${slug(label)}-${n}`;
+  used.add(id);
+  const sec = h.closest("section") || h.parentElement;
+  sec.id = id;
+  // Everything after the heading goes into one body the button shows and hides.
+  const body = el("div", "body");
+  body.id = `${id}-body`;
+  while (h.nextSibling) body.append(h.nextSibling);
+  h.after(body);
+  const btn = el("button", "tog");
+  btn.type = "button";
+  btn.setAttribute("aria-expanded", "true");
+  btn.setAttribute("aria-controls", body.id);
+  btn.append(el("span", "chev"), el("span", null, label));
+  btn.querySelector(".chev").setAttribute("aria-hidden", "true");
+  h.replaceChildren(btn);
+  btn.addEventListener("click", () => {
+    const open = btn.getAttribute("aria-expanded") !== "true";
+    btn.setAttribute("aria-expanded", String(open));
+    body.hidden = !open;
+  });
+  const li = el("li");
+  const a = el("a", null, label);
+  a.href = `#${id}`;
+  // A jump to a collapsed section opens it first, so the link always lands on content.
+  a.addEventListener("click", () => { if (body.hidden) btn.click(); });
+  li.append(a);
+  toc.push(li);
+});
+$("toc").replaceChildren(...toc);
+
+// ── sources: numbered to match the <sup> references in the prose ──
+$("source-list").replaceChildren(...DATA.sources.map((s, i) => {
+  const li = el("li");
+  li.id = `src-${i + 1}`;
+  const a = el("a", null, s.label);
+  a.href = s.href;
+  a.target = "_blank";
+  a.rel = "noopener";
+  let host = "";
+  try { host = new URL(s.href).hostname; } catch { /* a relative or bad href shows no host */ }
+  li.append(a);
+  if (host) li.append(document.createTextNode(" "), el("span", "host", host));
+  return li;
+}));
+
+// ── copy: clipboard inside the click handler, else show the text selected ──
+$("copy").addEventListener("click", (e) => {
+  const btn = e.currentTarget;
+  const value = `${document.querySelector('[data-slot="title"]').textContent.trim()}\n` +
+    `${DATA.status} · updated ${DATA.updated}\n\n${$("summary-text").textContent.trim()}`;
+  const fallback = () => {
+    const ta = $("copy-fallback");
+    ta.value = value;
+    ta.hidden = false;
+    ta.focus();
+    ta.select();
+    btn.textContent = "Selected: copy it";
+  };
+  if (!navigator.clipboard) { fallback(); return; }
+  navigator.clipboard.writeText(value).then(() => {
+    btn.textContent = "Copied";
+    setTimeout(() => { btn.textContent = "Copy as text"; }, 2000);
+  }, fallback);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,434 @@
+<!doctype html>
+<!-- template: tool · slots: title, description, eyebrow, note, form-heading, list-heading, DATA -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Porto Trip Ledger</title>
+<meta name="description" content="Running total of shared expenses for a five-day trip to Porto, by category and against the budget.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one 44rem column; summary (KPIs, categories) above the entry form and the list. */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --sunken: #eaeef2;
+  --fg: #17202b; --muted: #586474; --line: #d8dee6;
+  --accent: #1d4f91; --accent-fg: #ffffff; --danger: #b3261e; --ok: #1b6e3c;
+  --shadow: rgb(23 32 43 / 0.14);
+  --c1: #0072B2; --c2: #009E73; --c3: #D55E00; --c4: #B2548F; --c5: #C77F00;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem; --step-0: 0.9375rem; --step-1: 1.0625rem; --step-2: 1.375rem; --step-3: 1.75rem;
+  --radius: 10px;
+  color-scheme: light;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1318; --surface: #161d25; --sunken: #1d252f;
+    --fg: #e4e9ef; --muted: #96a3b3; --line: #2a3440;
+    --accent: #7fb2ee; --accent-fg: #0e1318; --danger: #f2867e; --ok: #6fcf97;
+    --shadow: rgb(0 0 0 / 0.45);
+    --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1318; --surface: #161d25; --sunken: #1d252f;
+  --fg: #e4e9ef; --muted: #96a3b3; --line: #2a3440;
+  --accent: #7fb2ee; --accent-fg: #0e1318; --danger: #f2867e; --ok: #6fcf97;
+  --shadow: rgb(0 0 0 / 0.45);
+  --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box }
+[hidden] { display: none !important }
+img { max-width: 100% }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 400 var(--step-0)/1.5 var(--font-body);
+  padding-inline: 16px; padding-block: 20px 40px;
+  -webkit-text-size-adjust: 100%;
+}
+.page { max-width: 44rem; margin-inline: auto; display: grid; gap: 20px }
+h1, h2 { margin: 0; text-wrap: balance; font-weight: 600 }
+h1 { font-size: var(--step-3); line-height: 1.15; letter-spacing: -0.015em }
+h2 { font-size: var(--step-1); line-height: 1.3 }
+p { margin: 0 }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums }
+.eyebrow { font-size: var(--step--1); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 500 }
+.lede { color: var(--muted); max-width: 60ch }
+
+header.top { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px }
+header.top .intro { display: grid; gap: 6px; min-width: 0; flex: 1 1 16rem }
+
+.seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--sunken); border-radius: 999px; flex: none }
+.seg button {
+  font: 500 var(--step--1)/1 var(--font-body); color: var(--muted); background: none;
+  border: 0; border-radius: 999px; padding: 7px 12px; min-height: 32px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px var(--shadow) }
+
+.note { display: flex; gap: 10px; align-items: baseline; padding: 10px 14px; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--muted); font-size: var(--step--1) }
+.note strong { color: var(--fg); font-weight: 600; flex: none }
+
+.kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: grid; gap: 4px; min-width: 0 }
+.kpi dt { font-size: var(--step--1); color: var(--muted) }
+.kpi dd { margin: 0; font-size: var(--step-2); font-weight: 500; line-height: 1.2; overflow-wrap: anywhere }
+.kpi dd.over { color: var(--danger) }
+.kpi .sub { font-size: var(--step--1); color: var(--muted) }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 14px; min-width: 0 }
+.panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap }
+.panel-head .meta { color: var(--muted); font-size: var(--step--1) }
+
+.cats { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px }
+.cat { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr) 5.5rem; align-items: center; gap: 10px; font-size: var(--step--1) }
+.cat .name { display: flex; align-items: center; gap: 8px; min-width: 0 }
+.swatch { display: block; width: 10px; height: 10px; border-radius: 3px; background: var(--swatch); flex: none }
+.track { display: block; height: 10px; background: var(--sunken); border-radius: 999px; overflow: hidden }
+.fill { display: block; height: 100%; width: 0; background: var(--swatch); border-radius: 999px }
+.cat .amt { text-align: right }
+
+form.entry { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; margin: 0 }
+.field { display: grid; gap: 4px; min-width: 0 }
+.field.wide { grid-column: 1 / -1 }
+label { font-size: var(--step--1); font-weight: 500 }
+input, select {
+  font: 400 var(--step-0)/1.3 var(--font-body); color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; min-height: 42px; width: 100%; min-width: 0;
+}
+input[inputmode="decimal"], input[type="date"] { font-family: var(--font-data); font-variant-numeric: tabular-nums }
+input[aria-invalid="true"] { border-color: var(--danger) }
+.err { font-size: var(--step--1); color: var(--danger); min-height: 1.25em }
+.actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px; align-items: center }
+.btn {
+  font: 500 var(--step-0)/1 var(--font-body); border-radius: 8px; padding: 11px 16px; min-height: 42px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer;
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg) }
+.btn.quiet { border-color: transparent; background: none; color: var(--muted); padding-inline: 8px }
+.btn.armed, .rm.armed { border-color: var(--danger); color: var(--danger); background: var(--surface) }
+:is(button, input, select):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.status { font-size: var(--step--1); color: var(--ok) }
+
+.entries { list-style: none; margin: 0; padding: 0; display: grid }
+.entries > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding-block: 12px; border-top: 1px solid var(--line) }
+.entries > li:first-child { border-top: 0; padding-top: 0 }
+.entries .what { min-width: 0; overflow-wrap: anywhere }
+.entries .meta { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; color: var(--muted); font-size: var(--step--1); grid-column: 1 }
+.chip { display: inline-flex; align-items: center; gap: 6px }
+.entries .amt { text-align: right; font-weight: 500; grid-column: 2; grid-row: 1 }
+.rm {
+  grid-column: 2; grid-row: 2; justify-self: end; font: 500 var(--step--1)/1 var(--font-body); color: var(--muted);
+  background: none; border: 1px solid transparent; border-radius: 6px; padding: 6px 8px; min-height: 30px; cursor: pointer;
+}
+.entries .empty { display: block; color: var(--muted); padding: 8px 0 }
+.foot { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center }
+textarea.copy-fallback {
+  width: 100%; min-height: 9rem; font: 400 var(--step--1)/1.45 var(--font-data); color: var(--fg);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+}
+@media (max-width: 420px) {
+  .cat { grid-template-columns: 5.75rem minmax(0, 1fr) 4.75rem }
+  .kpis { gap: 8px }
+  .kpi { padding: 10px }
+  .kpi dd { font-size: var(--step-1) }
+}
+@media (prefers-reduced-motion: no-preference) { .fill { transition: width 0.25s ease-out } }
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="top">
+    <div class="intro">
+      <p class="eyebrow" data-slot="eyebrow">Shared expenses · 12–16 Sep 2026</p>
+      <h1 data-slot="title">Porto Trip Ledger</h1>
+      <p class="lede" data-slot="description">What the two of us spent in Porto, by category and against the budget we set before leaving.</p>
+    </div>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+      <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+    </div>
+  </header>
+
+  <p class="note"><strong>Example entries.</strong> <span data-slot="note">Edit, remove or clear them. Changes stay in this browser when it allows storage; a preview pane forgets them when closed.</span></p>
+
+  <dl class="kpis" id="kpis">
+    <div class="kpi"><dt>Spent</dt><dd class="num" id="kpi-spent">–</dd><span class="sub" id="kpi-count"></span></div>
+    <div class="kpi"><dt id="kpi-left-label">Left</dt><dd class="num" id="kpi-left">–</dd><span class="sub num" id="kpi-budget"></span></div>
+    <div class="kpi"><dt>Per day</dt><dd class="num" id="kpi-day">–</dd><span class="sub" id="kpi-days"></span></div>
+  </dl>
+
+  <section class="panel" aria-labelledby="cats-h">
+    <div class="panel-head"><h2 id="cats-h">By category</h2><span class="meta">bars scaled to the largest</span></div>
+    <ul class="cats" id="cats"></ul>
+  </section>
+
+  <section class="panel" aria-labelledby="form-h">
+    <h2 id="form-h" data-slot="form-heading">Add an expense</h2>
+    <form class="entry" id="entry-form" novalidate>
+      <div class="field wide">
+        <label for="entry-label">What</label>
+        <input id="entry-label" autocomplete="off" placeholder="Dinner at the market" aria-describedby="entry-label-error">
+        <span class="err" id="entry-label-error" aria-live="polite"></span>
+      </div>
+      <div class="field">
+        <label for="entry-amount" id="entry-amount-label">Amount</label>
+        <input id="entry-amount" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-describedby="entry-amount-error">
+        <span class="err" id="entry-amount-error" aria-live="polite"></span>
+      </div>
+      <div class="field">
+        <label for="entry-category">Category</label>
+        <select id="entry-category"></select>
+        <span class="err" aria-hidden="true"></span>
+      </div>
+      <div class="field">
+        <label for="entry-date">Date</label>
+        <input id="entry-date" type="date" aria-describedby="entry-date-error">
+        <span class="err" id="entry-date-error" aria-live="polite"></span>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn primary" id="entry-add">Add expense</button>
+        <span class="status" id="status" role="status"></span>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="list-h">
+    <div class="panel-head"><h2 id="list-h" data-slot="list-heading">Expenses</h2><span class="meta num" id="list-total"></span></div>
+    <ul class="entries" id="entries"></ul>
+    <div class="foot">
+      <button type="button" class="btn" id="copy">Copy as text</button>
+      <button type="button" class="btn quiet" id="clear">Clear all</button>
+    </div>
+    <textarea class="copy-fallback" id="copy-fallback" readonly hidden aria-label="Expenses as text"></textarea>
+  </section>
+</main>
+
+<script>
+const DATA = {
+  currency: "EUR",
+  locale: "en-IE",
+  budget: 1100,
+  // At most five: the categorical palette has five validated slots, assigned by index.
+  categories: ["Lodging", "Food", "Transport", "Activities", "Other"],
+  entries: [
+    { date: "2026-09-12", label: "Guesthouse in Ribeira, 4 nights", category: "Lodging", amount: 486.00 },
+    { date: "2026-09-12", label: "Metro from the airport, two Andante cards", category: "Transport", amount: 6.40 },
+    { date: "2026-09-12", label: "Francesinha dinner at Café Santiago", category: "Food", amount: 31.50 },
+    { date: "2026-09-13", label: "Port tasting at a Gaia lodge", category: "Activities", amount: 42.00 },
+    { date: "2026-09-13", label: "Pastéis de nata and coffee, Manteigaria", category: "Food", amount: 7.80 },
+    { date: "2026-09-14", label: "Train to Aveiro and back", category: "Transport", amount: 14.60 },
+    { date: "2026-09-14", label: "Douro cruise under the six bridges", category: "Activities", amount: 36.00 },
+    { date: "2026-09-15", label: "Market lunch at Mercado do Bolhão", category: "Food", amount: 24.30 },
+    { date: "2026-09-16", label: "Azulejo tiles and a cork notebook", category: "Other", amount: 27.90 },
+    { date: "2026-09-16", label: "Livraria Lello entry vouchers", category: "Activities", amount: 20.00 },
+  ],
+};
+
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+const KEY = "ledger:" + document.title;
+
+// Storage throws in the sandboxed preview; it is a convenience, so failure just means "not kept".
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* not kept */ } },
+};
+
+// ── theme: Auto sets nothing, so prefers-color-scheme decides ──
+function setTheme(mode) {
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode; else delete root.dataset.theme;
+  document.querySelectorAll("[data-theme-set]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === (mode || "auto"))));
+}
+document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => {
+  setTheme(b.dataset.themeSet);
+  store.set("theme", b.dataset.themeSet);
+}));
+setTheme(store.get("theme"));
+
+// ── formatting ──
+const money = new Intl.NumberFormat(DATA.locale, { style: "currency", currency: DATA.currency });
+const money0 = new Intl.NumberFormat(DATA.locale, { style: "currency", currency: DATA.currency, maximumFractionDigits: 0 });
+const dayFmt = new Intl.DateTimeFormat(DATA.locale, { day: "numeric", month: "short", timeZone: "UTC" });
+const utc = (iso) => new Date(iso + "T00:00:00Z");
+const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+const colorOf = (cat) => `var(--c${Math.max(0, DATA.categories.indexOf(cat)) + 1})`;
+
+// ── state ──
+const valid = (e) => e && typeof e.label === "string" && Number.isFinite(e.amount) &&
+  DATA.categories.includes(e.category) && !Number.isNaN(utc(e.date).getTime());
+const saved = store.get(KEY);
+let nextId = 1;
+let entries = (Array.isArray(saved) && saved.every(valid) ? saved : DATA.entries).map((e) => ({ ...e, id: nextId++ }));
+const save = () => store.set(KEY, entries.map(({ id, ...e }) => e));
+
+// ── render ──
+function render() {
+  const spent = entries.reduce((s, e) => s + e.amount, 0);
+  const left = DATA.budget - spent;
+  const times = entries.map((e) => utc(e.date).getTime());
+  const days = entries.length ? Math.round((Math.max(...times) - Math.min(...times)) / 864e5) + 1 : 0;
+
+  $("kpi-spent").textContent = money0.format(spent);
+  $("kpi-count").textContent = `${entries.length} ${entries.length === 1 ? "expense" : "expenses"}`;
+  $("kpi-left-label").textContent = left < 0 ? "Over budget" : "Left";
+  $("kpi-left").textContent = money0.format(Math.abs(left));
+  $("kpi-left").classList.toggle("over", left < 0);
+  $("kpi-budget").textContent = "of " + money0.format(DATA.budget);
+  $("kpi-day").textContent = days ? money0.format(spent / days) : "–";
+  $("kpi-days").textContent = days ? `over ${days} ${days === 1 ? "day" : "days"}` : "no days yet";
+  $("list-total").textContent = money.format(spent);
+
+  const totals = DATA.categories.map((c) => entries.filter((e) => e.category === c).reduce((s, e) => s + e.amount, 0));
+  const max = Math.max(...totals, 0);
+  $("cats").replaceChildren(...DATA.categories.map((c, i) => {
+    const li = el("li", "cat");
+    li.style.setProperty("--swatch", colorOf(c));
+    const name = el("span", "name");
+    name.append(el("span", "swatch"), text(c));
+    const track = el("span", "track");
+    const fill = el("span", "fill");
+    fill.style.width = max ? (totals[i] / max * 100).toFixed(1) + "%" : "0%";
+    track.append(fill);
+    const amt = el("span", "amt num", money0.format(totals[i]));
+    li.append(name, track, amt);
+    return li;
+  }));
+
+  const sorted = [...entries].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
+  $("entries").replaceChildren(...(sorted.length ? sorted.map(row) : [el("li", "empty", "No expenses yet. Add one above.")]));
+  $("clear").hidden = !entries.length;
+}
+
+function row(e) {
+  const li = el("li");
+  li.dataset.id = e.id;
+  const chip = el("span", "chip");
+  const sw = el("span", "swatch");
+  sw.style.setProperty("--swatch", colorOf(e.category));
+  chip.append(sw, text(e.category));
+  const meta = el("span", "meta");
+  meta.append(el("span", "num", dayFmt.format(utc(e.date))), chip);
+  const rm = el("button", "rm", "Remove");
+  rm.type = "button";
+  rm.dataset.remove = e.id;
+  rm.setAttribute("aria-label", `Remove ${e.label}`);
+  li.append(el("span", "what", e.label), el("span", "amt num", money.format(e.amount)), meta, rm);
+  return li;
+}
+
+function el(tag, cls, content) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (content != null) n.textContent = content;
+  return n;
+}
+const text = (s) => document.createTextNode(s);
+
+// ── add: a click on a type="button" plus Enter on keydown; submit never fires in the sandbox ──
+const fields = { label: $("entry-label"), amount: $("entry-amount"), category: $("entry-category"), date: $("entry-date") };
+fields.category.replaceChildren(...DATA.categories.map((c) => { const o = el("option", null, c); o.value = c; return o; }));
+fields.date.value = today();
+$("entry-amount-label").textContent = `Amount (${DATA.currency})`;
+
+function setError(name, msg) {
+  const err = $(`entry-${name}-error`);
+  err.textContent = msg || "";
+  fields[name].setAttribute("aria-invalid", msg ? "true" : "false");
+  return !msg;
+}
+
+function addEntry() {
+  const label = fields.label.value.trim();
+  const raw = fields.amount.value.trim().replace(/\s/g, "").replace(/,(?=\d{1,2}$)/, ".").replace(/,/g, "");
+  const amount = Math.round(Number(raw) * 100) / 100;
+  const date = fields.date.value;
+  const ok = [
+    setError("label", label ? "" : "Say what it was for."),
+    setError("amount", !raw ? "Enter an amount." : !(amount > 0) ? "Use a number above zero, like 12.50." : ""),
+    setError("date", date && !Number.isNaN(utc(date).getTime()) ? "" : "Pick a date."),
+  ];
+  if (ok.includes(false)) {
+    fields[["label", "amount", "date"][ok.indexOf(false)]].focus();
+    $("status").textContent = "";
+    return;
+  }
+  entries.push({ date, label, category: fields.category.value, amount, id: nextId++ });
+  save();
+  render();
+  fields.label.value = "";
+  fields.amount.value = "";
+  fields.label.focus();
+  $("status").textContent = `Added ${money.format(amount)} for ${label}.`;
+}
+$("entry-add").addEventListener("click", addEntry);
+$("entry-form").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.matches("input, select")) { e.preventDefault(); addEntry(); }
+});
+
+// ── two-click confirm: the first click arms, a second within 3 s acts ──
+function armed(btn, label, armedLabel, act) {
+  if (btn.classList.contains("armed")) { clearTimeout(btn._t); act(); return; }
+  btn.classList.add("armed");
+  btn.textContent = armedLabel;
+  btn._t = setTimeout(() => { btn.classList.remove("armed"); btn.textContent = label; }, 3000);
+}
+$("entries").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-remove]");
+  if (!btn) return;
+  const id = Number(btn.dataset.remove);
+  armed(btn, "Remove", "Confirm", () => {
+    const gone = entries.find((x) => x.id === id);
+    entries = entries.filter((x) => x.id !== id);
+    save();
+    render();
+    $("status").textContent = `Removed ${gone.label}.`;
+  });
+});
+$("clear").addEventListener("click", (e) => {
+  armed(e.currentTarget, "Clear all", `Tap again to clear ${entries.length}`, () => {
+    entries = [];
+    save();
+    render();
+    e.currentTarget.classList.remove("armed");
+    e.currentTarget.textContent = "Clear all";
+    $("status").textContent = "Cleared every expense.";
+  });
+});
+
+// ── copy: clipboard inside the click handler, else show the text selected ──
+function asText() {
+  const spent = entries.reduce((s, e) => s + e.amount, 0);
+  const lines = [...entries].sort((a, b) => a.date.localeCompare(b.date))
+    .map((e) => [e.date, e.category, e.label, money.format(e.amount)].join("\t"));
+  return [`${document.title}: ${money.format(spent)} of ${money.format(DATA.budget)}`, ...lines].join("\n");
+}
+$("copy").addEventListener("click", (e) => {
+  const btn = e.currentTarget;
+  const value = asText();
+  const fallback = () => {
+    const ta = $("copy-fallback");
+    ta.value = value;
+    ta.hidden = false;
+    ta.focus();
+    ta.select();
+    btn.textContent = "Selected: copy it";
+  };
+  if (!navigator.clipboard) { fallback(); return; }
+  navigator.clipboard.writeText(value).then(() => {
+    btn.textContent = "Copied";
+    setTimeout(() => { btn.textContent = "Copy as text"; }, 2000);
+  }, fallback);
+});
+
+render();
+</script>
+</body>
+</html>

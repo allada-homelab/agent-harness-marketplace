@@ -1,0 +1,399 @@
+<!doctype html>
+<!-- template: catalog · slots: title, description, intro, DATA -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Homelab Service Index</title>
+<meta name="description" content="Every self-hosted service on the homelab, searchable and filterable by category and status, with memory, port and host.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one 64rem column; header, search + facet chips + sort, then a card grid (one column on a phone). */
+:root {
+  --bg: #f3f5f2; --surface: #ffffff; --sunken: #e7ebe5;
+  --fg: #18201b; --muted: #59645c; --line: #d6ddd4;
+  --accent: #1f6a4f; --accent-fg: #ffffff; --chip-on: #dcebe2; --shadow: #18201b1f; --ok: #1b6e3c; --warn: #8a5a00; --danger: #b3261e;
+  --c1: #0072B2; --c2: #009E73; --c3: #D55E00; --c4: #B2548F; --c5: #C77F00;
+  --font-body: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-data: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem; --step-0: 0.9375rem; --step-1: 1.0625rem; --step-2: 1.25rem; --step-3: 1.875rem;
+  --radius: 12px;
+  color-scheme: light;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1411; --surface: #171e19; --sunken: #1f2822;
+    --fg: #e3eae4; --muted: #97a59b; --line: #2b362f;
+    --accent: #6fd0a6; --accent-fg: #0f1411; --chip-on: #21392d; --shadow: #00000066; --ok: #6fcf97; --warn: #e8b85c; --danger: #f2867e;
+    --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1411; --surface: #171e19; --sunken: #1f2822;
+  --fg: #e3eae4; --muted: #97a59b; --line: #2b362f;
+  --accent: #6fd0a6; --accent-fg: #0f1411; --chip-on: #21392d; --shadow: #00000066; --ok: #6fcf97; --warn: #e8b85c; --danger: #f2867e;
+  --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box }
+[hidden] { display: none !important }
+img { max-width: 100% }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 400 var(--step-0)/1.5 var(--font-body);
+  padding-inline: 16px; padding-block: 20px 48px;
+  -webkit-text-size-adjust: 100%;
+}
+.page { max-width: 64rem; margin-inline: auto; display: grid; gap: 20px }
+h1, h2, h3 { margin: 0; text-wrap: balance }
+h1 { font-size: var(--step-3); line-height: 1.1; letter-spacing: -0.02em; font-weight: 700 }
+h3 { font-size: var(--step-1); line-height: 1.3; font-weight: 600 }
+p { margin: 0 }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums }
+.lede { color: var(--muted); max-width: 62ch }
+
+header.top { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px }
+header.top .intro { display: grid; gap: 8px; min-width: 0; flex: 1 1 18rem }
+
+.seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--sunken); border-radius: 999px; flex: none }
+.seg button {
+  font: 500 var(--step--1)/1 var(--font-body); color: var(--muted); background: none;
+  border: 0; border-radius: 999px; padding: 7px 12px; min-height: 32px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px var(--shadow) }
+
+.controls { display: grid; gap: 14px; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0 }
+.searchrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: end }
+.field { display: grid; gap: 4px; min-width: 0 }
+.field.grow { flex: 1 1 16rem }
+.field.sort { flex: 1 1 11rem }
+label, .facet-name { font-size: var(--step--1); font-weight: 600; color: var(--muted) }
+input, select {
+  font: 400 var(--step-0)/1.3 var(--font-body); color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; min-height: 44px; width: 100%; min-width: 0;
+}
+.facets { display: grid; gap: 12px }
+.facet { display: grid; gap: 6px; min-width: 0 }
+.chips { display: flex; flex-wrap: wrap; gap: 6px }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; font: 500 var(--step--1)/1 var(--font-body);
+  color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 999px;
+  padding: 7px 12px; min-height: 34px; cursor: pointer;
+}
+.chip .n { color: var(--muted); font-size: 0.75rem }
+.chip[aria-pressed="true"] { background: var(--chip-on); border-color: var(--accent); color: var(--fg) }
+.chip[aria-pressed="true"]::before { content: "✓"; color: var(--accent); font-weight: 700 }
+.chip:disabled { opacity: 0.45; cursor: default }
+.swatch { display: block; width: 9px; height: 9px; border-radius: 3px; background: var(--swatch); flex: none }
+
+.bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between }
+.count { color: var(--muted); font-size: var(--step--1) }
+.count strong { color: var(--fg); font-weight: 600 }
+.btn {
+  font: 500 var(--step--1)/1 var(--font-body); border-radius: 8px; padding: 9px 14px; min-height: 38px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer;
+}
+.btn.quiet { border-color: transparent; background: none; color: var(--accent); padding-inline: 6px }
+:is(button, input, select, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+
+.grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr)) }
+.card { display: grid; gap: 10px; align-content: start; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--swatch); border-radius: var(--radius); min-width: 0 }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px }
+.card-head h3 { min-width: 0; overflow-wrap: anywhere }
+.card-head a { color: inherit; text-decoration-color: var(--line); text-underline-offset: 3px }
+.card-head a:hover { text-decoration-color: var(--accent) }
+.card .summary { color: var(--muted); font-size: var(--step--1); overflow-wrap: anywhere }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: var(--step--1) }
+.meta .cat { display: inline-flex; align-items: center; gap: 6px }
+.status { display: inline-flex; align-items: center; gap: 6px; flex: none; font-size: var(--step--1); color: var(--muted) }
+.status .dot { display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted) }
+.status[data-s="running"] .dot { background: var(--ok) }
+.status[data-s="degraded"] .dot { background: var(--warn) }
+.status[data-s="stopped"] .dot { background: var(--danger) }
+.tags { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px }
+.tags li { font: 400 0.75rem/1 var(--font-data); color: var(--muted); background: var(--sunken); border-radius: 6px; padding: 5px 7px }
+.fields { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding-top: 10px; border-top: 1px solid var(--line) }
+.fields div { min-width: 0 }
+.fields dt { font-size: 0.75rem; color: var(--muted) }
+.fields dd { margin: 0; font: 500 var(--step--1)/1.3 var(--font-data); font-variant-numeric: tabular-nums; overflow-wrap: anywhere }
+
+.empty { display: grid; gap: 10px; justify-items: start; padding: 24px 16px; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--muted) }
+.empty strong { color: var(--fg) }
+@media (prefers-reduced-motion: no-preference) { .chip, .card { transition: border-color 0.15s ease, background-color 0.15s ease } }
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="top">
+    <div class="intro">
+      <h1 data-slot="title">Homelab Service Index</h1>
+      <p class="lede" data-slot="intro">Everything running on the three-node cluster in the hall cupboard: what it is for, where it lives and how much memory it holds. Filter by category or status, or search a name or tag.</p>
+    </div>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+      <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+    </div>
+  </header>
+
+  <section class="controls" aria-label="Search and filters">
+    <div class="searchrow">
+      <div class="field grow">
+        <label for="q">Search</label>
+        <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Name, summary or tag" aria-describedby="count">
+      </div>
+      <div class="field sort">
+        <label for="sort">Sort</label>
+        <select id="sort"></select>
+      </div>
+    </div>
+    <div class="facets" id="facets"></div>
+    <div class="bar">
+      <p class="count" id="count" role="status" aria-live="polite"></p>
+      <button type="button" class="btn quiet" id="reset" hidden>Clear filters</button>
+    </div>
+  </section>
+
+  <ul class="grid" id="grid" aria-label="Results"></ul>
+  <div class="empty" id="empty" hidden>
+    <p><strong>Nothing matches.</strong> Try fewer filters or a shorter search.</p>
+    <button type="button" class="btn" id="empty-reset">Clear filters</button>
+  </div>
+</main>
+
+<script>
+const DATA = {
+  // Item keys that become chip rows; the first facet also colors the cards (≤5 values, --c1…--c5 by first appearance).
+  facets: ["category", "status"],
+  // Top-level numeric keys (here `memory`, in MB) become sort options; `fields` is what the card shows.
+  items: [
+    { name: "Jellyfin", summary: "Streams the film and TV library to the living-room TV and phones, with hardware transcoding.", tags: ["video", "dlna", "gpu"], url: "https://jellyfin.org", category: "Media", status: "Running", memory: 1536,
+      fields: [{ label: "Host", value: "atlas" }, { label: "Port", value: "8096" }, { label: "Memory", value: "1.5 GB" }] },
+    { name: "Immich", summary: "Backs up every phone photo automatically and finds faces and places in twelve years of pictures.", tags: ["photos", "backup", "ml"], url: "https://immich.app", category: "Media", status: "Running", memory: 2048,
+      fields: [{ label: "Host", value: "atlas" }, { label: "Port", value: "2283" }, { label: "Memory", value: "2 GB" }] },
+    { name: "Navidrome", summary: "Subsonic-compatible music server for the FLAC collection, played through Symfonium.", tags: ["music", "subsonic"], url: "https://www.navidrome.org", category: "Media", status: "Running", memory: 128,
+      fields: [{ label: "Host", value: "borealis" }, { label: "Port", value: "4533" }, { label: "Memory", value: "128 MB" }] },
+    { name: "Audiobookshelf", summary: "Audiobooks and podcasts with listening progress synced between the car and the kitchen speaker.", tags: ["audiobooks", "podcasts"], url: "https://www.audiobookshelf.org", category: "Media", status: "Stopped", memory: 256,
+      fields: [{ label: "Host", value: "borealis" }, { label: "Port", value: "13378" }, { label: "Memory", value: "256 MB" }] },
+    { name: "Nextcloud", summary: "Family file sync, shared calendars and contacts, replacing the old Dropbox plan.", tags: ["files", "calendar", "webdav"], url: "https://nextcloud.com", category: "Productivity", status: "Degraded", memory: 1024,
+      fields: [{ label: "Host", value: "atlas" }, { label: "Port", value: "8443" }, { label: "Memory", value: "1 GB" }] },
+    { name: "Paperless-ngx", summary: "Scans, OCRs and tags every letter and receipt so tax season is a search, not a shoebox.", tags: ["documents", "ocr"], url: "https://docs.paperless-ngx.com", category: "Productivity", status: "Running", memory: 768,
+      fields: [{ label: "Host", value: "borealis" }, { label: "Port", value: "8000" }, { label: "Memory", value: "768 MB" }] },
+    { name: "Vaultwarden", summary: "Bitwarden-compatible password vault for four people, with the official apps and browser extension.", tags: ["passwords", "security"], url: "https://github.com/dani-garcia/vaultwarden", category: "Productivity", status: "Running", memory: 64,
+      fields: [{ label: "Host", value: "cirrus" }, { label: "Port", value: "8222" }, { label: "Memory", value: "64 MB" }] },
+    { name: "Forgejo", summary: "Git hosting for the dotfiles and side projects, mirroring to GitHub on push.", tags: ["git", "ci", "code"], url: "https://forgejo.org", category: "Productivity", status: "Running", memory: 384,
+      fields: [{ label: "Host", value: "cirrus" }, { label: "Port", value: "3000" }, { label: "Memory", value: "384 MB" }] },
+    { name: "Traefik", summary: "Reverse proxy in front of everything, issuing Let's Encrypt certificates over DNS challenge.", tags: ["proxy", "tls", "routing"], url: "https://traefik.io", category: "Network", status: "Running", memory: 96,
+      fields: [{ label: "Host", value: "cirrus" }, { label: "Port", value: "443" }, { label: "Memory", value: "96 MB" }] },
+    { name: "Authelia", summary: "Single sign-on with TOTP for every admin page Traefik exposes beyond the LAN.", tags: ["sso", "security", "2fa"], url: "https://www.authelia.com", category: "Network", status: "Running", memory: 64,
+      fields: [{ label: "Host", value: "cirrus" }, { label: "Port", value: "9091" }, { label: "Memory", value: "64 MB" }] },
+    { name: "AdGuard Home", summary: "Network-wide DNS with ad and tracker blocking, and local names for every service.", tags: ["dns", "adblock"], url: "https://adguard.com/en/adguard-home/overview.html", category: "Network", status: "Running", memory: 128,
+      fields: [{ label: "Host", value: "cirrus" }, { label: "Port", value: "53" }, { label: "Memory", value: "128 MB" }] },
+    { name: "Grafana", summary: "Dashboards for power draw, disk health and the house temperature sensors.", tags: ["dashboards", "metrics"], url: "https://grafana.com", category: "Monitoring", status: "Running", memory: 256,
+      fields: [{ label: "Host", value: "borealis" }, { label: "Port", value: "3001" }, { label: "Memory", value: "256 MB" }] },
+    { name: "Prometheus", summary: "Scrapes node, container and SMART metrics every 30 seconds and keeps 90 days of history.", tags: ["metrics", "alerts", "tsdb"], url: "https://prometheus.io", category: "Monitoring", status: "Degraded", memory: 1280,
+      fields: [{ label: "Host", value: "borealis" }, { label: "Port", value: "9090" }, { label: "Memory", value: "1.25 GB" }] },
+    { name: "Uptime Kuma", summary: "Pings every service each minute and posts to the family chat when one goes down.", tags: ["uptime", "alerts"], url: "https://github.com/louislam/uptime-kuma", category: "Monitoring", status: "Running", memory: 160,
+      fields: [{ label: "Host", value: "cirrus" }, { label: "Port", value: "3002" }, { label: "Memory", value: "160 MB" }] },
+    { name: "Home Assistant", summary: "Runs the lights, heating schedule and the washing-machine-finished notification.", tags: ["automation", "iot"], url: "https://www.home-assistant.io", category: "Home", status: "Running", memory: 896,
+      fields: [{ label: "Host", value: "atlas" }, { label: "Port", value: "8123" }, { label: "Memory", value: "896 MB" }] },
+    { name: "Zigbee2MQTT", summary: "Bridges 31 Zigbee sensors and bulbs to MQTT without a vendor hub.", tags: ["zigbee", "mqtt", "iot"], url: "https://www.zigbee2mqtt.io", category: "Home", status: "Stopped", memory: 192,
+      fields: [{ label: "Host", value: "atlas" }, { label: "Port", value: "8080" }, { label: "Memory", value: "192 MB" }] },
+  ],
+};
+
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+const KEY = "catalog:" + document.title;
+
+// Storage throws in the sandboxed preview; it is a convenience, so failure just means "not kept".
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* not kept */ } },
+};
+
+// ── theme: Auto sets nothing, so prefers-color-scheme decides ──
+function setTheme(mode) {
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode; else delete root.dataset.theme;
+  document.querySelectorAll("[data-theme-set]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === (mode || "auto"))));
+}
+document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => {
+  setTheme(b.dataset.themeSet);
+  store.set("theme", b.dataset.themeSet);
+}));
+setTheme(store.get("theme"));
+
+function el(tag, cls, content) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (content != null) n.textContent = content;
+  return n;
+}
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+// ── derived from DATA: facet values in order of first appearance, numeric sort keys ──
+const facetValues = Object.fromEntries(DATA.facets.map((f) => [f, [...new Set(DATA.items.map((it) => it[f]).filter(Boolean))]]));
+const colorFacet = DATA.facets[0];
+const colorOf = (v) => { const i = facetValues[colorFacet].indexOf(v); return i >= 0 && i < 5 ? `var(--c${i + 1})` : "var(--muted)"; };
+const numericKeys = [...new Set(DATA.items.flatMap((it) => Object.keys(it).filter((k) => typeof it[k] === "number")))];
+const sorts = [{ id: "name", label: "Name, A–Z" }, ...numericKeys.flatMap((k) => [
+  { id: k + ":desc", label: `${cap(k)}, high to low` },
+  { id: k + ":asc", label: `${cap(k)}, low to high` },
+])];
+
+// ── state: search text, selected values per facet (OR within, AND across), sort ──
+const saved = store.get(KEY) || {};
+const state = {
+  q: typeof saved.q === "string" ? saved.q : "",
+  sel: Object.fromEntries(DATA.facets.map((f) => [f, new Set((saved.sel?.[f] || []).filter((v) => facetValues[f].includes(v)))])),
+  sort: sorts.some((s) => s.id === saved.sort) ? saved.sort : "name",
+};
+const save = () => store.set(KEY, { q: state.q, sort: state.sort, sel: Object.fromEntries(DATA.facets.map((f) => [f, [...state.sel[f]]])) });
+
+const hay = DATA.items.map((it) => [it.name, it.summary, ...(it.tags || [])].join(" ").toLowerCase());
+function matches(i, skipFacet) {
+  const it = DATA.items[i];
+  const terms = state.q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.every((t) => hay[i].includes(t))) return false;
+  return DATA.facets.every((f) => f === skipFacet || !state.sel[f].size || state.sel[f].has(it[f]));
+}
+
+// ── controls built once; chips re-labelled with live counts on each render ──
+const qInput = $("q");
+const sortSel = $("sort");
+qInput.value = state.q;
+sortSel.replaceChildren(...sorts.map((s) => { const o = el("option", null, s.label); o.value = s.id; return o; }));
+sortSel.value = state.sort;
+
+const chipEls = {};
+$("facets").replaceChildren(...DATA.facets.map((f) => {
+  const wrap = el("div", "facet");
+  const name = el("span", "facet-name", cap(f));
+  name.id = "facet-" + slug(f);
+  const row = el("div", "chips");
+  row.setAttribute("role", "group");
+  row.setAttribute("aria-labelledby", name.id);
+  chipEls[f] = facetValues[f].map((v) => {
+    const b = el("button", "chip");
+    b.type = "button";
+    b.dataset.facet = f;
+    b.dataset.value = v;
+    if (f === colorFacet) { const sw = el("span", "swatch"); sw.style.setProperty("--swatch", colorOf(v)); b.append(sw); }
+    b.append(document.createTextNode(v), el("span", "n num"));
+    row.append(b);
+    return b;
+  });
+  wrap.append(name, row);
+  return wrap;
+}));
+
+function card(it) {
+  const li = el("li", "card");
+  li.style.setProperty("--swatch", colorOf(it[colorFacet]));
+  const head = el("div", "card-head");
+  const h = el("h3");
+  if (it.url) {
+    const a = el("a", null, it.name);
+    a.href = it.url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    h.append(a);
+  } else h.textContent = it.name;
+  head.append(h);
+  const meta = el("div", "meta");
+  DATA.facets.forEach((f, i) => {
+    if (!it[f]) return;
+    if (i === 0) {
+      const c = el("span", "cat");
+      const sw = el("span", "swatch");
+      sw.style.setProperty("--swatch", colorOf(it[f]));
+      c.append(sw, document.createTextNode(it[f]));
+      meta.append(c);
+    } else {
+      const s = el("span", "status");
+      s.dataset.s = slug(it[f]);
+      s.append(el("span", "dot"), document.createTextNode(it[f]));
+      meta.append(s);
+    }
+  });
+  li.append(head, el("p", "summary", it.summary), meta);
+  if (it.tags?.length) {
+    const tags = el("ul", "tags");
+    tags.setAttribute("aria-label", "Tags");
+    tags.append(...it.tags.map((t) => el("li", null, t)));
+    li.append(tags);
+  }
+  if (it.fields?.length) {
+    const dl = el("dl", "fields");
+    dl.append(...it.fields.map((fd) => { const d = el("div"); d.append(el("dt", null, fd.label), el("dd", null, fd.value)); return d; }));
+    li.append(dl);
+  }
+  return li;
+}
+
+function render() {
+  const idx = DATA.items.map((_, i) => i).filter((i) => matches(i));
+  const [key, dir] = state.sort.split(":");
+  idx.sort((a, b) => {
+    const A = DATA.items[a], B = DATA.items[b];
+    if (key === "name") return A.name.localeCompare(B.name);
+    const d = (A[key] ?? -Infinity) - (B[key] ?? -Infinity);
+    return (dir === "asc" ? d : -d) || A.name.localeCompare(B.name);
+  });
+  $("grid").replaceChildren(...idx.map((i) => card(DATA.items[i])));
+  $("empty").hidden = idx.length > 0;
+
+  // Count beside each chip: items that would match if that value were the only one picked in its facet.
+  DATA.facets.forEach((f) => chipEls[f].forEach((b) => {
+    const v = b.dataset.value;
+    const on = state.sel[f].has(v);
+    const n = DATA.items.filter((it, i) => it[f] === v && matches(i, f)).length;
+    b.setAttribute("aria-pressed", String(on));
+    b.lastChild.textContent = n;
+    b.disabled = !n && !on;
+  }));
+
+  const active = state.q.trim() || DATA.facets.some((f) => state.sel[f].size);
+  const count = $("count");
+  count.replaceChildren(el("strong", "num", String(idx.length)), document.createTextNode(` of ${DATA.items.length} ${DATA.items.length === 1 ? "item" : "items"}`));
+  $("reset").hidden = !active;
+}
+
+function clearFilters() {
+  state.q = "";
+  qInput.value = "";
+  DATA.facets.forEach((f) => state.sel[f].clear());
+  save();
+  render();
+  qInput.focus();
+}
+
+// ── events: input events and button clicks only; there is no form to submit ──
+qInput.addEventListener("input", () => { state.q = qInput.value; save(); render(); });
+qInput.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.preventDefault(); state.q = ""; qInput.value = ""; save(); render(); }
+  if (e.key === "Enter") e.preventDefault();
+});
+sortSel.addEventListener("change", () => { state.sort = sortSel.value; save(); render(); });
+$("facets").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-facet]");
+  if (!b) return;
+  const set = state.sel[b.dataset.facet];
+  if (set.has(b.dataset.value)) set.delete(b.dataset.value); else set.add(b.dataset.value);
+  save();
+  render();
+});
+$("reset").addEventListener("click", clearFilters);
+$("empty-reset").addEventListener("click", clearFilters);
+
+render();
+</script>
+</body>
+</html>

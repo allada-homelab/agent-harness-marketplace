@@ -1,0 +1,485 @@
+<!doctype html>
+<!-- template: dashboard · slots: title, description, line-heading, bars-heading, table-heading, notes-heading, notes, DATA -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Checkout API Weekly</title>
+<meta name="description" content="Traffic, p95 latency by region, error rate and deploys for the checkout API over one week, with a per-endpoint breakdown.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: header, KPI row, two charts (side by side when wide), sortable table, notes. */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --sunken: #eaeef2;
+  --fg: #17202b; --muted: #586474; --line: #d8dee6;
+  --accent: #1d4f91; --accent-fg: #ffffff; --danger: #b3261e; --ok: #1b6e3c;
+  --shadow: rgb(23 32 43 / 0.14);
+  --c1: #0072B2; --c2: #009E73; --c3: #D55E00; --c4: #B2548F; --c5: #C77F00;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem; --step-0: 0.9375rem; --step-1: 1.0625rem; --step-2: 1.375rem; --step-3: 1.75rem;
+  --radius: 10px;
+  color-scheme: light;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1318; --surface: #161d25; --sunken: #1d252f;
+    --fg: #e4e9ef; --muted: #96a3b3; --line: #2a3440;
+    --accent: #7fb2ee; --accent-fg: #0e1318; --danger: #f2867e; --ok: #6fcf97;
+    --shadow: rgb(0 0 0 / 0.45);
+    --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1318; --surface: #161d25; --sunken: #1d252f;
+  --fg: #e4e9ef; --muted: #96a3b3; --line: #2a3440;
+  --accent: #7fb2ee; --accent-fg: #0e1318; --danger: #f2867e; --ok: #6fcf97;
+  --shadow: rgb(0 0 0 / 0.45);
+  --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box }
+[hidden] { display: none !important }
+img { max-width: 100% }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 400 var(--step-0)/1.5 var(--font-body);
+  padding-inline: 16px; padding-block: 20px 40px;
+  -webkit-text-size-adjust: 100%;
+}
+.page { max-width: 64rem; margin-inline: auto; display: grid; gap: 20px }
+h1, h2 { margin: 0; text-wrap: balance; font-weight: 600 }
+h1 { font-size: var(--step-3); line-height: 1.15; letter-spacing: -0.015em }
+h2 { font-size: var(--step-1); line-height: 1.3 }
+p { margin: 0 }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums }
+.lede { color: var(--muted); max-width: 60ch }
+
+header.top { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px }
+header.top .intro { display: grid; gap: 6px; min-width: 0; flex: 1 1 16rem }
+.period { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; font-size: var(--step--1); color: var(--muted) }
+.period .num { color: var(--fg); font-weight: 500 }
+
+.seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--sunken); border-radius: 999px; flex: none }
+.seg button {
+  font: 500 var(--step--1)/1 var(--font-body); color: var(--muted); background: none;
+  border: 0; border-radius: 999px; padding: 7px 12px; min-height: 32px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px var(--shadow) }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: 10px; margin: 0 }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: grid; gap: 4px; min-width: 0; align-content: start }
+.kpi dt { font-size: var(--step--1); color: var(--muted) }
+.kpi dd { margin: 0; min-width: 0 }
+.kpi .val { display: block; font-size: var(--step-2); font-weight: 500; line-height: 1.2; overflow-wrap: anywhere }
+.kpi .unit { font-size: var(--step-0); color: var(--muted); margin-left: 3px }
+.delta { display: flex; flex-wrap: wrap; gap: 0 6px; font-size: var(--step--1); color: var(--muted) }
+.delta b { font-weight: 500 }
+.delta.good b { color: var(--ok) }
+.delta.bad b { color: var(--danger) }
+
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: 20px }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 14px; min-width: 0; align-content: start }
+.panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 4px 12px; flex-wrap: wrap }
+.panel-head .meta { color: var(--muted); font-size: var(--step--1) }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; list-style: none; margin: 0; padding: 0; font-size: var(--step--1) }
+.legend li { display: flex; align-items: center; gap: 6px }
+.swatch { display: block; width: 10px; height: 10px; border-radius: 3px; flex: none }
+
+.chart { position: relative; min-width: 0 }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y }
+.chart svg:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px }
+.grid { stroke: var(--line); stroke-width: 1 }
+.base { stroke: var(--muted); stroke-width: 1 }
+.tick { fill: var(--muted); font-family: var(--font-data); font-size: 11px; font-variant-numeric: tabular-nums }
+.lbl { fill: var(--fg); font-family: var(--font-body); font-size: 12px }
+.lbl .v, .val-lbl { font-family: var(--font-data); font-weight: 500; font-variant-numeric: tabular-nums }
+.val-lbl { fill: var(--fg); font-size: 12px }
+.ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round }
+.dot { stroke: var(--surface); stroke-width: 2 }
+.cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3 }
+.hit { fill: var(--bg); fill-opacity: 0; cursor: crosshair }
+.bar-row.dim .bar { opacity: 0.35 }
+.ln-0 { stroke: var(--c1) } .ln-1 { stroke: var(--c2) } .ln-2 { stroke: var(--c3) } .ln-3 { stroke: var(--c4) } .ln-4 { stroke: var(--c5) }
+.fl-0 { fill: var(--c1); background: var(--c1) } .fl-1 { fill: var(--c2); background: var(--c2) } .fl-2 { fill: var(--c3); background: var(--c3) }
+.fl-3 { fill: var(--c4); background: var(--c4) } .fl-4 { fill: var(--c5); background: var(--c5) }
+.tip {
+  position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; display: grid; gap: 3px;
+  min-width: 8.5rem; padding: 8px 10px; font-size: var(--step--1); line-height: 1.35;
+  background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 4px 14px var(--shadow);
+}
+.tip strong { font-weight: 600 }
+.tip .row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 8px }
+.tip .num { text-align: right }
+
+.table-wrap { overflow-x: auto; min-width: 0; margin-inline: -16px; padding-inline: 16px }
+table { border-collapse: collapse; width: 100%; font-size: var(--step--1) }
+th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap }
+th:first-child, td:first-child { padding-left: 0 }
+th:last-child, td:last-child { padding-right: 0 }
+tbody tr:last-child td { border-bottom: 0 }
+th { font-weight: 500; color: var(--muted); vertical-align: bottom }
+th.n, td.n { text-align: right }
+td.n { font-family: var(--font-data); font-variant-numeric: tabular-nums }
+th button {
+  font: inherit; color: inherit; background: none; border: 0; padding: 4px 0; min-height: 32px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+th[aria-sort="ascending"] button, th[aria-sort="descending"] button { color: var(--fg) }
+th button .arrow { display: inline-block; width: 0.8em; text-align: center }
+th[aria-sort="ascending"] .arrow::after { content: "↑" }
+th[aria-sort="descending"] .arrow::after { content: "↓" }
+:is(button, svg):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+
+.notes { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 65ch }
+.notes li::marker { color: var(--muted) }
+@media (max-width: 420px) {
+  .kpis { gap: 8px }
+  .kpi { padding: 10px }
+  .kpi .val { font-size: var(--step-1) }
+}
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="top">
+    <div class="intro">
+      <h1 data-slot="title">Checkout API Weekly</h1>
+      <p class="lede" data-slot="description">Traffic, latency, errors and deploys for the checkout API, compared with the week before.</p>
+      <p class="period"><span>Period</span><span class="num" id="period"></span><span>· deltas vs the previous period</span></p>
+    </div>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+      <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+    </div>
+  </header>
+
+  <dl class="kpis" id="kpis"></dl>
+
+  <div class="charts">
+    <section class="panel" aria-labelledby="line-h">
+      <div class="panel-head"><h2 id="line-h" data-slot="line-heading">p95 latency by region (ms)</h2><span class="meta">daily</span></div>
+      <ul class="legend" id="line-legend" hidden></ul>
+      <div class="chart" id="line-chart"><div class="tip" id="line-tip" hidden></div></div>
+    </section>
+    <section class="panel" aria-labelledby="bars-h">
+      <div class="panel-head"><h2 id="bars-h" data-slot="bars-heading">Latest p95 by region (ms)</h2><span class="meta" id="bars-meta"></span></div>
+      <div class="chart" id="bar-chart"><div class="tip" id="bar-tip" hidden></div></div>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="table-h">
+    <div class="panel-head"><h2 id="table-h" data-slot="table-heading">By endpoint</h2><span class="meta">select a column to sort</span></div>
+    <div class="table-wrap"><table id="table"><thead></thead><tbody></tbody></table></div>
+  </section>
+
+  <section class="panel" aria-labelledby="notes-h">
+    <h2 id="notes-h" data-slot="notes-heading">What changed</h2>
+    <ul class="notes" data-slot="notes">
+      <li>Wed: v2.14.3 raised the eu-west database pool from 20 to 60 connections; eu-west p95 fell from about 240 ms to 160 ms and stayed there.</li>
+      <li>Fri: shipping quotes now cache carrier rates for 10 minutes, which brought ap-south down through the weekend.</li>
+      <li>Errors rose 0.04 points, almost all carrier timeouts on <code>GET /v1/shipping/quotes</code>; a retry budget lands next week.</li>
+    </ul>
+  </section>
+</main>
+
+<script>
+const DATA = {
+  period: "21–27 Sep 2026",
+  // better: "down" when a fall is good news (latency, errors); omitted means up is good.
+  kpis: [
+    { label: "Requests", value: 4.82, delta: 0.31, unit: "M" },
+    { label: "p95 latency", value: 184, delta: -22, unit: "ms", better: "down" },
+    { label: "Error rate", value: 0.2, delta: 0.04, unit: "%", better: "down" },
+    { label: "Deploys", value: 9, delta: 3, unit: "" },
+  ],
+  // At most five series: the categorical palette has five validated slots, assigned by index.
+  series: [
+    { label: "eu-west", values: [248, 251, 236, 171, 164, 160, 158] },
+    { label: "us-east", values: [192, 188, 195, 184, 179, 181, 176] },
+    { label: "ap-south", values: [265, 270, 262, 255, 241, 226, 219] },
+  ],
+  labels: ["Mon 21", "Tue 22", "Wed 23", "Thu 24", "Fri 25", "Sat 26", "Sun 27"],
+  rows: [
+    { "Endpoint": "GET /v1/cart", "Requests": 1284900, "p95 (ms)": 96, "Errors (%)": 0.08 },
+    { "Endpoint": "GET /v1/promotions", "Requests": 1262450, "p95 (ms)": 58, "Errors (%)": 0.03 },
+    { "Endpoint": "POST /v1/cart/items", "Requests": 806450, "p95 (ms)": 121, "Errors (%)": 0.11 },
+    { "Endpoint": "GET /v1/shipping/quotes", "Requests": 655200, "p95 (ms)": 312, "Errors (%)": 0.61 },
+    { "Endpoint": "POST /v1/checkout", "Requests": 412300, "p95 (ms)": 238, "Errors (%)": 0.42 },
+    { "Endpoint": "POST /v1/payments/intent", "Requests": 398700, "p95 (ms)": 274, "Errors (%)": 0.35 },
+  ],
+};
+
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+const NS = "http://www.w3.org/2000/svg";
+
+// Storage throws in the sandboxed preview; it is a convenience, so failure just means "not kept".
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* not kept */ } },
+};
+
+// ── theme: Auto sets nothing, so prefers-color-scheme decides ──
+function setTheme(mode) {
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode; else delete root.dataset.theme;
+  document.querySelectorAll("[data-theme-set]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === (mode || "auto"))));
+}
+document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => {
+  setTheme(b.dataset.themeSet);
+  store.set("theme", b.dataset.themeSet);
+}));
+setTheme(store.get("theme"));
+
+// ── helpers ──
+const nf = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
+const withUnit = (v, u) => u === "%" ? v + "%" : u ? `${v} ${u}` : v;
+function el(tag, cls, content) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (content != null) n.textContent = content;
+  return n;
+}
+function svg(tag, attrs, parent) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (parent) parent.append(n);
+  return n;
+}
+const swatch = (i) => el("span", `swatch fl-${i}`);
+
+// ── KPI tiles: direction is the sign and an arrow; color only says whether it is good news ──
+$("period").textContent = DATA.period;
+$("kpis").replaceChildren(...DATA.kpis.map((k) => {
+  const tile = el("div", "kpi");
+  const dd = el("dd");
+  const val = el("span", "val num", nf.format(k.value));
+  if (k.unit) val.append(el("span", "unit", k.unit));
+  const d = k.delta;
+  const good = d === 0 ? null : (d > 0) === (k.better !== "down");
+  const delta = el("span", "delta" + (good == null ? "" : good ? " good" : " bad"));
+  const sign = d > 0 ? "▲ +" : d < 0 ? "▼ −" : "";
+  const dUnit = k.unit === "%" ? "pp" : k.unit; // a change in a percentage is in points
+  delta.append(el("b", "num", sign + withUnit(nf.format(Math.abs(d)), dUnit)), el("span", null, d === 0 ? "no change" : "vs prev."));
+  dd.append(val, delta);
+  tile.append(el("dt", null, k.label), dd);
+  return tile;
+}));
+
+// ── one scale shared by both charts: zero baseline, ticks at round values ──
+const all = DATA.series.flatMap((s) => s.values);
+function niceStep(span, count) {
+  const raw = span / count, p = 10 ** Math.floor(Math.log10(raw)), m = raw / p;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p;
+}
+const step = niceStep((Math.max(...all, 0) - Math.min(...all, 0)) || 1, 4);
+const lo = Math.floor(Math.min(...all, 0) / step) * step;
+const hi = Math.ceil(Math.max(...all, 0) / step) * step || step;
+const ticks = [];
+for (let v = lo; v <= hi + step / 2; v += step) ticks.push(Number(v.toFixed(6)));
+const tickW = Math.max(...ticks.map((t) => nf.format(t).length)) * 7 + 8;
+const textW = (s) => s.length * 7; // 12px label ≈ 7px per character; leaves slack for proportional faces
+
+// Tooltip: positioned beside x inside the chart box, flipped to the left near the right edge.
+function placeTip(tip, box, x, y) {
+  tip.hidden = false;
+  const w = tip.offsetWidth, W = box.clientWidth;
+  tip.style.left = Math.max(0, x + 12 + w > W ? x - 12 - w : x + 12) + "px";
+  tip.style.top = Math.max(0, y) + "px";
+}
+function tipRow(i, label, value) {
+  const r = el("span", "row");
+  r.append(swatch(i), el("span", null, label), el("span", "num", nf.format(value)));
+  return r;
+}
+const hideOnLeave = (node, hide) => {
+  node.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") hide(); });
+  node.addEventListener("blur", hide);
+};
+document.addEventListener("pointerdown", (e) => { if (!e.target.closest(".chart")) hideAll(); });
+const hiders = [];
+const hideAll = () => hiders.forEach((h) => h());
+
+// ── line chart: series over labels, end points emphasised and directly labelled ──
+let lineIdx = -1;
+function drawLine() {
+  const box = $("line-chart"), tip = $("line-tip");
+  const W = Math.max(box.clientWidth, 240), H = 220, T = 10, B = 26, L = tickW;
+  const n = DATA.labels.length;
+  const ends = DATA.series.map((s) => [s.label, nf.format(s.values.at(-1))]);
+  let R = Math.max(...ends.map(([a, b]) => textW(a + " " + b))) + 14;
+  const legend = W - L - R < 150; // labels would crush the plot: fall back to a legend
+  if (legend) R = 16;
+  $("line-legend").hidden = !legend;
+  $("line-legend").replaceChildren(...DATA.series.map((s, i) => { const li = el("li"); li.append(swatch(i), s.label); return li; }));
+  const pw = W - L - R, ph = H - T - B;
+  const x = (i) => L + (n === 1 ? pw / 2 : i * pw / (n - 1));
+  const y = (v) => T + ph - (v - lo) / (hi - lo) * ph;
+  const g = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, tabindex: 0, role: "group",
+    "aria-label": "Line chart. Use the arrow keys to read each day; the table below has the endpoint figures." });
+  ticks.forEach((v) => {
+    svg("line", { x1: L, x2: L + pw, y1: y(v), y2: y(v), class: v === 0 ? "base" : "grid" }, g);
+    svg("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", class: "tick" }, g).textContent = nf.format(v);
+  });
+  const every = Math.max(1, Math.ceil(n / Math.max(1, Math.floor(pw / 52))));
+  DATA.labels.forEach((t, i) => {
+    if (i % every && i !== n - 1) return;
+    if (i !== n - 1 && n - 1 - i < every) return; // keep the last label clear of its neighbour
+    svg("text", { x: x(i), y: H - 6, "text-anchor": "middle", class: "tick" }, g).textContent = t;
+  });
+  const cross = svg("line", { y1: T, y2: T + ph, class: "cross", visibility: "hidden" }, g);
+  DATA.series.forEach((s, i) => {
+    svg("path", { d: s.values.map((v, j) => `${j ? "L" : "M"}${x(j).toFixed(1)},${y(v).toFixed(1)}`).join(""), class: `ln ln-${i}` }, g);
+    svg("circle", { cx: x(n - 1), cy: y(s.values.at(-1)), r: 4, class: `dot fl-${i}` }, g);
+  });
+  if (!legend) {
+    // Nudge end labels apart (min 15px) while keeping them inside the plot's height.
+    const pos = DATA.series.map((s, i) => ({ i, y: y(s.values.at(-1)) + 4 })).sort((a, b) => a.y - b.y);
+    pos.forEach((p, k) => { if (k) p.y = Math.max(p.y, pos[k - 1].y + 15); });
+    for (let k = pos.length - 1; k >= 0; k--) pos[k].y = Math.min(pos[k].y, k === pos.length - 1 ? T + ph + 4 : pos[k + 1].y - 15);
+    pos.forEach(({ i, y: ly }) => {
+      const t = svg("text", { x: L + pw + 8, y: ly, class: "lbl" }, g);
+      svg("tspan", {}, t).textContent = ends[i][0] + " ";
+      svg("tspan", { class: "v" }, t).textContent = ends[i][1];
+    });
+  }
+  const hover = DATA.series.map((s, i) => svg("circle", { r: 4, class: `dot fl-${i}`, visibility: "hidden" }, g));
+  const hit = svg("rect", { x: L, y: T, width: pw, height: ph, class: "hit" }, g);
+  function show(i) {
+    lineIdx = i;
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+    hover.forEach((c, k) => { c.setAttribute("cx", x(i)); c.setAttribute("cy", y(DATA.series[k].values[i])); c.setAttribute("visibility", "visible"); });
+    tip.replaceChildren(el("strong", null, DATA.labels[i]), ...DATA.series.map((s, k) => tipRow(k, s.label, s.values[i])));
+    placeTip(tip, box, x(i), T);
+  }
+  function hide() {
+    lineIdx = -1; tip.hidden = true;
+    cross.setAttribute("visibility", "hidden");
+    hover.forEach((c) => c.setAttribute("visibility", "hidden"));
+  }
+  hiders[0] = hide;
+  const at = (e) => {
+    const px = e.clientX - g.getBoundingClientRect().left;
+    show(Math.min(n - 1, Math.max(0, Math.round((px - L) / pw * (n - 1)))));
+  };
+  hit.addEventListener("pointermove", at);
+  hit.addEventListener("pointerdown", at);
+  hideOnLeave(hit, hide);
+  g.addEventListener("blur", hide);
+  g.addEventListener("keydown", (e) => {
+    const k = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+    if (k) { e.preventDefault(); show(Math.min(n - 1, Math.max(0, (lineIdx < 0 ? (k > 0 ? -1 : n) : lineIdx) + k))); }
+    if (e.key === "Escape") hide();
+  });
+  box.replaceChildren(g, tip);
+}
+
+// ── bar chart: latest value of each series, same scale, value at the bar's end ──
+let barIdx = -1;
+function drawBars() {
+  const box = $("bar-chart"), tip = $("bar-tip");
+  const last = DATA.labels.length - 1;
+  $("bars-meta").textContent = DATA.labels[last];
+  const W = Math.max(box.clientWidth, 240), rowH = 34, barH = 14, T = 6, B = 26;
+  const L = Math.max(...DATA.series.map((s) => textW(s.label))) + 10;
+  const R = Math.max(...DATA.series.map((s) => textW(nf.format(s.values[last])))) + 12;
+  const pw = W - L - R, H = T + DATA.series.length * rowH + B;
+  const x = (v) => L + (v - lo) / (hi - lo) * pw;
+  const g = svg("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, tabindex: 0, role: "group",
+    "aria-label": "Bar chart of the latest value per series. Use the arrow keys to read each bar." });
+  const bottom = T + DATA.series.length * rowH;
+  ticks.forEach((v) => {
+    svg("line", { x1: x(v), x2: x(v), y1: T, y2: bottom, class: v === 0 ? "base" : "grid" }, g);
+    svg("text", { x: x(v), y: H - 6, "text-anchor": "middle", class: "tick" }, g).textContent = nf.format(v);
+  });
+  const rows = DATA.series.map((s, i) => {
+    const v = s.values[last], cy = T + i * rowH + rowH / 2;
+    const row = svg("g", { class: "bar-row" }, g);
+    svg("text", { x: L - 10, y: cy + 4, "text-anchor": "end", class: "lbl" }, row).textContent = s.label;
+    // Square at the baseline, 4px rounded at the data end.
+    const x0 = x(0), w = x(v) - x0, dir = Math.sign(w) || 1, a = Math.min(4, Math.abs(w)), top = cy - barH / 2;
+    svg("path", { class: `bar fl-${i}`, d: `M${x0},${top}h${w - dir * a}a${a},${a} 0 0 ${dir > 0 ? 1 : 0} ${dir * a},${a}v${barH - 2 * a}a${a},${a} 0 0 ${dir > 0 ? 1 : 0} ${-dir * a},${a}h${-(w - dir * a)}z` }, row);
+    svg("text", { x: x(v) + dir * 6, y: cy + 4, "text-anchor": dir > 0 ? "start" : "end", class: "val-lbl" }, row).textContent = nf.format(v);
+    const hit = svg("rect", { x: 0, y: cy - rowH / 2, width: W, height: rowH, class: "hit" }, row);
+    hit.addEventListener("pointermove", () => show(i));
+    hit.addEventListener("pointerdown", () => show(i));
+    hideOnLeave(hit, hide);
+    return { row, cy, v };
+  });
+  function show(i) {
+    barIdx = i;
+    rows.forEach((r, k) => r.row.classList.toggle("dim", k !== i));
+    tip.replaceChildren(el("strong", null, DATA.labels[last]), tipRow(i, DATA.series[i].label, rows[i].v));
+    placeTip(tip, box, x(Math.max(rows[i].v, 0)), rows[i].cy - rowH);
+  }
+  function hide() { barIdx = -1; tip.hidden = true; rows.forEach((r) => r.row.classList.remove("dim")); }
+  hiders[1] = hide;
+  g.addEventListener("blur", hide);
+  g.addEventListener("keydown", (e) => {
+    const k = { ArrowDown: 1, ArrowUp: -1 }[e.key];
+    if (k) { e.preventDefault(); show(Math.min(rows.length - 1, Math.max(0, (barIdx < 0 ? (k > 0 ? -1 : rows.length) : barIdx) + k))); }
+    if (e.key === "Escape") hide();
+  });
+  box.replaceChildren(g, tip);
+}
+
+// ── table: header buttons sort; numeric columns are the ones that are numbers in every row ──
+const cols = Object.keys(DATA.rows[0] || {});
+const numeric = cols.map((c) => DATA.rows.every((r) => typeof r[c] === "number"));
+let sort = { col: -1, dir: 1 };
+function drawTable() {
+  const tr = el("tr");
+  cols.forEach((c, i) => {
+    const th = el("th", numeric[i] ? "n" : null);
+    th.scope = "col";
+    th.setAttribute("aria-sort", sort.col !== i ? "none" : sort.dir > 0 ? "ascending" : "descending");
+    const b = el("button");
+    b.type = "button";
+    b.append(c, el("span", "arrow"));
+    b.addEventListener("click", () => {
+      sort = sort.col === i ? { col: i, dir: -sort.dir } : { col: i, dir: numeric[i] ? -1 : 1 };
+      drawTable();
+      $("table").querySelectorAll("th button")[i].focus();
+    });
+    th.append(b);
+    tr.append(th);
+  });
+  $("table").tHead.replaceChildren(tr);
+  const rows = [...DATA.rows];
+  if (sort.col >= 0) {
+    const c = cols[sort.col];
+    rows.sort((a, b) => sort.dir * (numeric[sort.col] ? a[c] - b[c] : String(a[c]).localeCompare(String(b[c]))));
+  }
+  $("table").tBodies[0].replaceChildren(...rows.map((r) => {
+    const row = el("tr");
+    cols.forEach((c, i) => row.append(el("td", numeric[i] ? "n" : null, numeric[i] ? nf.format(r[c]) : r[c])));
+    return row;
+  }));
+}
+
+// Charts are sized in real pixels, so redraw when their box changes width.
+// The redraw waits a frame so it never resizes inside the observer's own callback.
+const widths = new Map();
+const ro = new ResizeObserver((items) => items.forEach(({ target }) => requestAnimationFrame(() => {
+  if (widths.get(target) === target.clientWidth) return;
+  widths.set(target, target.clientWidth);
+  (target.id === "line-chart" ? drawLine : drawBars)();
+})));
+drawTable();
+drawLine();
+drawBars();
+widths.set($("line-chart"), $("line-chart").clientWidth);
+widths.set($("bar-chart"), $("bar-chart").clientWidth);
+ro.observe($("line-chart"));
+ro.observe($("bar-chart"));
+</script>
+</body>
+</html>
