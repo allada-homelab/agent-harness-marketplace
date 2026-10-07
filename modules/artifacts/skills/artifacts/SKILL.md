@@ -59,5 +59,7 @@ loaded from); the script sits beside it. Run it with `python3`, never import it.
 - One file per artifact; no sibling assets, no multi-page sites.
 - Phone width first: dsh is used from a phone.
 - Never a download link, never `window.claude`, never a claude.ai URL.
+- Action buttons are `type="button"` with click handlers; a `submit` event never fires in the dsh
+  preview.
 - Say one plain sentence about the design direction at most; the token plan lives in the
   file, not in the reply.

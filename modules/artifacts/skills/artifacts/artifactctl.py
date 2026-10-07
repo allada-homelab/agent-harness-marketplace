@@ -34,6 +34,13 @@ _JS_IMPORT = re.compile(
     r"""\bimport\s*\(\s*(["'])([^"']*)\1"""  # dynamic import("x")
     r"""|\bimport\s+(?:[\w$*{},\s]+?\s*\bfrom\s*)?(["'])([^"']*)\3""")  # import x from "y" / import "y"
 _CSS_IMPORT = re.compile(r"""@import\s+(?:url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s]*))\s*\)|"([^"]*)"|'([^']*)')""", re.I)
+_SUBMIT_LISTENER = re.compile(r"""addEventListener\(\s*(["'])submit\1""")
+_ONSUBMIT = re.compile(r"\bonsubmit\s*=", re.I)  # .onsubmit = f  and  <form onsubmit=...>
+_FORM_TAG = re.compile(r"<form\b[^>]*>", re.I)
+_FORM_SEND = re.compile(r"\b(action|method)\s*=", re.I)
+_SUBMIT_CONTROL = re.compile(r"<(button|input)\b[^>]*?\btype\s*=\s*" + _VAL, re.I)
+_SANDBOX_WHY = (" — form submission never fires in the dsh preview (sandbox lacks allow-forms); "
+                'use type="button" with a click handler and Enter on keydown')
 _SCHEME = re.compile(r"^[a-z][\w+.-]*:", re.I)
 _URL = re.compile(r"^(?:https?:)?//([^/]+)(/.*)?$", re.I)
 
@@ -124,6 +131,16 @@ def check_html(text: str, size: int) -> tuple[list[str], list[str]]:
                 fails.append(_local("@import", url))
             elif h[0] != STYLE_HOST:
                 fails.append(f"host: @import from {url} is not {STYLE_HOST}")
+    for _ in _SUBMIT_LISTENER.finditer(text):
+        fails.append("sandbox: a submit listener" + _SANDBOX_WHY)
+    for _ in _ONSUBMIT.finditer(text):
+        fails.append("sandbox: an onsubmit handler" + _SANDBOX_WHY)
+    for tag in _FORM_TAG.findall(text):
+        for m in _FORM_SEND.finditer(tag):
+            fails.append(f"sandbox: <form {m.group(1).lower()}=>" + _SANDBOX_WHY)
+    for m in _SUBMIT_CONTROL.finditer(text):
+        if "".join(g or "" for g in m.groups()[1:]).strip().lower() == "submit":
+            fails.append(f'sandbox: <{m.group(1).lower()} type="submit">' + _SANDBOX_WHY)
     if size > SIZE_CAP:
         fails.append(f"size: {size} bytes exceeds the 16 MB cap")
     return fails, warns

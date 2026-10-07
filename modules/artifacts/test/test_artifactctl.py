@@ -282,6 +282,47 @@ def test_open_missing_file(run, tmp_path):
     assert r.returncode == 2
 
 
+# ── sandbox: form submission never fires in dsh's allow-scripts-only frame ──
+
+SANDBOX_TAIL = ' — form submission never fires in the dsh preview (sandbox lacks allow-forms); ' \
+               'use type="button" with a click handler and Enter on keydown'
+
+
+@pytest.mark.parametrize("snippet", [
+    '<script>f.addEventListener("submit", e => e.preventDefault())</script>',
+    "<script>f.addEventListener( 'submit', add)</script>",
+    "<script>document.forms[0].onsubmit = add</script>",
+    '<form onsubmit="add(); return false"><input id="a"></form>',
+    '<form action="/add"><input id="a"></form>',
+    "<form method=post><input id=\"a\"></form>",
+    '<form><button type="submit">Add</button></form>',
+    "<form><button class=x type='submit'>Add</button></form>",
+    "<form><input type=submit value=Add></form>",
+])
+def test_check_fails_form_submission(snippet):
+    fails, _ = artifactctl.check_html(GOOD_PAGE.replace("</body>", snippet + "</body>"), size=1024)
+    assert len(fails) == 1, fails
+    assert fails[0].startswith("sandbox: ") and fails[0].endswith(SANDBOX_TAIL), fails
+
+
+def test_check_reports_each_submission_hit():
+    snippet = '<form method="post"><button type="submit">Add</button></form>' \
+              '<script>document.querySelector("form").addEventListener("submit", add)</script>'
+    fails, _ = artifactctl.check_html(GOOD_PAGE.replace("</body>", snippet + "</body>"), size=1024)
+    assert len(fails) == 3 and all(f.startswith("sandbox: ") for f in fails), fails
+
+
+def test_check_passes_button_form_with_keydown():
+    snippet = ('<form id="f"><label for="a">Item</label><input id="a">'
+               '<button type="button" id="add">Add</button></form>'
+               '<script>const add = () => {};'
+               'document.getElementById("add").addEventListener("click", add);'
+               'document.getElementById("a").addEventListener("keydown", e => { if (e.key === "Enter") add(); });'
+               '</script>')
+    fails, _ = artifactctl.check_html(GOOD_PAGE.replace("</body>", snippet + "</body>"), size=1024)
+    assert fails == []
+
+
 # ── allowlist bypass forms ───────────────────────────────────────────────
 
 @pytest.mark.parametrize("tag, kind", [
