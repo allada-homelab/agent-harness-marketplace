@@ -1102,6 +1102,142 @@ def test_a_v2_database_gains_the_cache_columns_and_reparses(tmp_path):
     conn.close()
 
 
+# ------------------------------------------- claude subagents and per-call usage
+
+
+def _claude_user(uuid: str, text: str) -> dict:
+    return {
+        "type": "user",
+        "uuid": uuid,
+        "parentUuid": None,
+        "timestamp": "2026-01-01T00:00:01.000Z",
+        "cwd": "/tmp/proj",
+        "message": {"role": "user", "content": text},
+    }
+
+
+def _claude_block_row(uuid: str, parent: str, msg_id: str, block: dict, usage: dict) -> dict:
+    """One row of a multi-block API response: Claude Code writes a row per content
+    block, each repeating the response's message.id and usage."""
+    return {
+        "type": "assistant",
+        "uuid": uuid,
+        "parentUuid": parent,
+        "timestamp": "2026-01-01T00:00:02.000Z",
+        "message": {
+            "id": msg_id,
+            "role": "assistant",
+            "model": "model-alpha",
+            "usage": usage,
+            "content": [block],
+        },
+    }
+
+
+def test_a_workflow_agent_nested_under_subagents_is_a_subagent_of_its_session(tmp_path):
+    """Workflow agents live at `<session>/subagents/workflows/<run>/agent-<id>.jsonl`,
+    two levels below a direct subagent; both belong to the session that owns `subagents/`."""
+    root = tmp_path / "cache"
+    proj = root / "raw/claude/host/projects/-tmp-proj"
+    _write_lines(proj / "sess-1.jsonl", [_claude_user("m1", "main")])
+    _write_lines(proj / "sess-1/subagents/agent-d1.jsonl", [_claude_user("d1", "direct")])
+    _write_lines(
+        proj / "sess-1/subagents/workflows/wf_run1/agent-w1.jsonl",
+        [_claude_user("w1", "workflow")],
+    )
+
+    errors, conn = _ingested(root)
+    assert errors == 0
+    assert _rows(
+        conn,
+        "SELECT native_id, kind, parent_native_id, project_key FROM sessions"
+        " WHERE harness = 'claude' ORDER BY native_id",
+    ) == [
+        ("agent-d1", "subagent", "sess-1", "-tmp-proj"),
+        ("agent-w1", "subagent", "sess-1", "-tmp-proj"),
+        ("sess-1", "main", None, "-tmp-proj"),
+    ]
+    conn.close()
+
+
+def _token_rows(conn, native_id: str):
+    return _rows(
+        conn,
+        "SELECT m.native_id, m.input_tokens, m.output_tokens, m.cache_read_tokens,"
+        " m.cache_write_tokens FROM messages m JOIN sessions s ON s.id = m.session_id"
+        " WHERE s.native_id = ? AND m.role = 'assistant' ORDER BY m.ord",
+        native_id,
+    )
+
+
+def test_streamed_partial_usage_is_counted_once_at_its_final_value(tmp_path):
+    """Subagent files carry partial streaming usage on a response's early rows; the
+    response must count once, at each field's maximum, not summed and not first-row."""
+    root = tmp_path / "cache"
+    partial = {"input_tokens": 5, "output_tokens": 1, "cache_read_input_tokens": 100}
+    final = {
+        "input_tokens": 5,
+        "output_tokens": 40,
+        "cache_read_input_tokens": 100,
+        "cache_creation_input_tokens": 20,
+    }
+    _write_lines(
+        root / "raw/claude/host/projects/-tmp-proj/sess-2/subagents/agent-s1.jsonl",
+        [
+            _claude_user("u1", "go"),
+            _claude_block_row("b1", "u1", "msg_1", {"type": "text", "text": "a"}, partial),
+            _claude_block_row(
+                "b2", "b1", "msg_1", {"type": "tool_use", "id": "t1", "name": "X", "input": {}},
+                partial,
+            ),
+            _claude_block_row(
+                "b3", "b2", "msg_1", {"type": "tool_use", "id": "t2", "name": "Y", "input": {}},
+                final,
+            ),
+        ],
+    )
+
+    errors, conn = _ingested(root)
+    assert errors == 0
+    assert _token_rows(conn, "agent-s1") == [
+        ("b1", None, None, None, None),
+        ("b2", None, None, None, None),
+        ("b3", 5, 40, 100, 20),
+    ]
+    conn.close()
+
+
+def test_usage_repeated_across_a_responses_rows_is_counted_once(tmp_path):
+    """Main-session files repeat the identical usage on every row of a response, so
+    storing it per row would double a SUM over messages."""
+    root = tmp_path / "cache"
+    usage = {
+        "input_tokens": 3,
+        "output_tokens": 7,
+        "cache_read_input_tokens": 50,
+        "cache_creation_input_tokens": 10,
+    }
+    _write_lines(
+        root / "raw/claude/host/projects/-tmp-proj/sess-3.jsonl",
+        [
+            _claude_user("u1", "go"),
+            _claude_block_row("c1", "u1", "msg_2", {"type": "text", "text": "a"}, usage),
+            _claude_block_row(
+                "c2", "c1", "msg_2", {"type": "tool_use", "id": "t1", "name": "X", "input": {}},
+                usage,
+            ),
+        ],
+    )
+
+    errors, conn = _ingested(root)
+    assert errors == 0
+    assert _token_rows(conn, "sess-3") == [
+        ("c1", None, None, None, None),
+        ("c2", 3, 7, 50, 10),
+    ]
+    conn.close()
+
+
 # ---------------------------------------------------- native-id dedup (aliasing)
 
 

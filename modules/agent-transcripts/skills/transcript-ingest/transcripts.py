@@ -452,7 +452,8 @@ def export_sources(
 
 # --------------------------------------------------------------- ingest: model
 
-PARSER_VERSION = 5
+# 6: Claude Workflow agents are subagents, and a response's usage counts once.
+PARSER_VERSION = 6
 
 # Migrations keyed on PRAGMA user_version (SQLITE-008). MIGRATIONS[0] is the
 # schema as of 0.6.3, idempotent for a database that already has it.
@@ -782,18 +783,22 @@ def _json_lines(path: Path) -> list[str]:
 
 
 def parse_claude(path: Path, relpath: str) -> ParsedFile:
-    """One JSONL per session; `<session>/subagents/<name>.jsonl` are its subagents."""
+    """One JSONL per session; `<session>/subagents/**/<name>.jsonl` are its subagents
+    (Workflow agents sit at `subagents/workflows/<run>/agent-<id>.jsonl`)."""
     parts = Path(relpath).parts
     project_key = None
     if "projects" in parts and parts.index("projects") + 1 < len(parts):
         project_key = parts[parts.index("projects") + 1]
     # The file name is the session id for a main session and the agent id for a subagent.
     session = Session(native_id=path.stem, project_key=project_key)
-    if path.parent.name == "subagents":
+    if "subagents" in parts:
         session.kind = "subagent"
-        session.parent_native_id = path.parent.parent.name
+        # The session that owns `subagents/` is the directory just above it.
+        idx = len(parts) - 1 - parts[::-1].index("subagents")
+        session.parent_native_id = parts[idx - 1]
 
     messages: list[Message] = []
+    rows_by_response: dict[str, list[Message]] = {}
     for line in _json_lines(path):
         rec = json.loads(line)
         rtype = rec.get("type")
@@ -852,6 +857,16 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
                 results=results,
             )
         )
+        if msg.get("id"):
+            rows_by_response.setdefault(msg["id"], []).append(messages[-1])
+    # A row per content block repeats its response's usage (early rows may hold partial
+    # streaming counts): store each field's max once, on the response's last row.
+    for rows in rows_by_response.values():
+        for f in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"):
+            seen = [getattr(r, f) for r in rows if getattr(r, f) is not None]
+            for r in rows:
+                setattr(r, f, None)
+            setattr(rows[-1], f, max(seen) if seen else None)
     _mark_main_path(messages)
     return _finalize(session, messages)
 

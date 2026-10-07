@@ -83,9 +83,21 @@ Main conversations versus subagent transcripts:
 SELECT harness, kind, count(*) FROM sessions GROUP BY 1, 2
 ```
 
+A Claude `subagent` is any file under a session's `subagents/` directory, and its
+`parent_native_id` is that session. That includes Workflow agents, which sit at
+`subagents/workflows/<run>/agent-<id>.jsonl`; each run's `journal.jsonl` there is a
+`subagent` row with no messages. Count Workflow agents by their file:
+
+```sql
+SELECT count(*) AS workflow_agents
+FROM sessions s JOIN files f ON f.id = s.file_id
+WHERE s.harness = 'claude' AND f.relpath LIKE '%/subagents/workflows/%/agent-%'
+```
+
 Tokens processed per harness. `input_tokens` excludes the prompt cache on every harness,
 so summing it alone undercounts a cache-heavy session by an order of magnitude; add the
-cache columns (`NULL` where the harness did not report them):
+cache columns (`NULL` where the harness did not report them). Each Claude API call's usage
+sits on one row of its response, the others `NULL`, so these sums count every call once:
 
 ```sql
 SELECT harness, sum(input_tokens) AS uncached, sum(cache_read_tokens) AS cache_read,
