@@ -39,8 +39,10 @@ _CSS_IMPORT = re.compile(r"""@import\s+(?:url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s]
 _SUBMIT_LISTENER = re.compile(r"""addEventListener\(\s*(["'])submit\1""")
 _ONSUBMIT = re.compile(r"\bonsubmit\s*=", re.I)  # .onsubmit = f  and  <form onsubmit=...>
 _FORM_TAG = re.compile(r"<form\b[^>]*>", re.I)
-_FORM_SEND = re.compile(r"\b(action|method)\s*=", re.I)
-_SUBMIT_CONTROL = re.compile(r"<(button|input)\b[^>]*?\btype\s*=\s*" + _VAL, re.I)
+_FORM_SEND = re.compile(r"(?<![\w-])(action|method)\s*=", re.I)  # not data-action=
+_SUBMIT_CONTROL = re.compile(r"<(button|input)\b[^>]*?(?<![\w-])type\s*=\s*" + _VAL, re.I)
+_CODE_BODY = re.compile(r"(<(pre|code)\b[^>]*>).*?(</\2\s*>)", re.I | re.S)
+_CSS_STRING = re.compile(r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'", re.S)
 _SANDBOX_WHY = (" — form submission never fires in the dsh preview (sandbox lacks allow-forms); "
                 'use type="button" with a click handler and Enter on keydown')
 _SCHEME = re.compile(r"^[a-z][\w+.-]*:", re.I)
@@ -81,6 +83,7 @@ def _theme_literals(css: str) -> list[tuple[str, str]]:
     buf: list[str] = []
     paren = 0
     quote = ""
+    escaped = False
 
     def declaration(decl: str) -> None:
         if not stack or ":" not in decl:
@@ -91,14 +94,18 @@ def _theme_literals(css: str) -> list[tuple[str, str]]:
         if ":root" in stack[-1].lower() or any(
                 p.lower().startswith("@media") and "prefers-color-scheme" in p.lower() for p in stack):
             return
-        m = _COLOR_LITERAL.search(_CSS_URL.sub("", value))
+        m = _COLOR_LITERAL.search(_CSS_STRING.sub(" ", _CSS_URL.sub("", value)))
         if m:
             hits.append((m.group(0), " ".join(stack[-1].split())))
 
     for ch in css:
         if quote:
             buf.append(ch)
-            if ch == quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
                 quote = ""
         elif ch in "\"'":
             quote = ch
@@ -194,14 +201,15 @@ def check_html(text: str, size: int) -> tuple[list[str], list[str]]:
                 fails.append(_local("@import", url))
             elif h[0] != STYLE_HOST:
                 fails.append(f"host: @import from {url} is not {STYLE_HOST}")
-    for _ in _SUBMIT_LISTENER.finditer(text):
+    code_free = _CODE_BODY.sub(r"\1 \3", text)  # a code sample about submit listeners is not one
+    for _ in _SUBMIT_LISTENER.finditer(code_free):
         fails.append("sandbox: a submit listener" + _SANDBOX_WHY)
-    for _ in _ONSUBMIT.finditer(text):
+    for _ in _ONSUBMIT.finditer(code_free):
         fails.append("sandbox: an onsubmit handler" + _SANDBOX_WHY)
-    for tag in _FORM_TAG.findall(text):
+    for tag in _FORM_TAG.findall(code_free):
         for m in _FORM_SEND.finditer(tag):
             fails.append(f"sandbox: <form {m.group(1).lower()}=>" + _SANDBOX_WHY)
-    for m in _SUBMIT_CONTROL.finditer(text):
+    for m in _SUBMIT_CONTROL.finditer(code_free):
         if "".join(g or "" for g in m.groups()[1:]).strip().lower() == "submit":
             fails.append(f'sandbox: <{m.group(1).lower()} type="submit">' + _SANDBOX_WHY)
     if size > SIZE_CAP:
@@ -307,7 +315,7 @@ def parse_console(stderr: str) -> tuple[list[str], list[str]]:
 # its own uncaught errors to the host, which keeps them in document.title for --dump-dom to read.
 _SANDBOX_PROBE = (
     '<script>window.addEventListener("error", e => parent.postMessage({artifactctlError: String(e.message)}, "*"));'
-    'window.addEventListener("unhandledrejection", e => parent.postMessage({artifactctlError: String(e.reason)}, "*"));'
+    'window.addEventListener("unhandledrejection", e => parent.postMessage({artifactctlError: "Uncaught (in promise) " + String(e.reason)}, "*"));'
     "</script>")
 _SANDBOX_COLLECTOR = (
     '<script>const errs = []; window.addEventListener("message", e => {'
@@ -316,11 +324,14 @@ _SANDBOX_COLLECTOR = (
     "</script>")
 _SANDBOX_ERRORS = "artifactctl-errors:"
 _HEAD = re.compile(r"<head\b[^>]*>", re.I)
+_HTML_TAG = re.compile(r"<html\b[^>]*>", re.I)
+_DOCTYPE_TAG = re.compile(r"<!doctype\b[^>]*>", re.I)
 
 
 def sandbox_host(inner_html: str) -> str:
     """A host page framing `inner_html` the way dsh does: <iframe sandbox="allow-scripts" srcdoc>."""
-    m = _HEAD.search(inner_html)
+    # never ahead of the doctype: a probe there would drop the page into quirks mode
+    m = _HEAD.search(inner_html) or _HTML_TAG.search(inner_html) or _DOCTYPE_TAG.search(inner_html)
     at = m.end() if m else 0
     inner = inner_html[:at] + _SANDBOX_PROBE + inner_html[at:]
     return ('<!doctype html><html><head><meta charset="utf-8"><title>sandbox host</title>'
@@ -354,7 +365,8 @@ def render(path: Path, out: Path, width: int, height: int, sandbox: bool = False
     cmd = [chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
            "--no-default-browser-check", f"--user-data-dir={tmpdir}", f"--window-size={width},{height}",
            f"--screenshot={out}", "--enable-logging=stderr", "--v=0", "--virtual-time-budget=4000",
-           *(["--dump-dom"] if sandbox else []), f"file://{target}"]
+           # an isolated sandboxed frame runs outside virtual time, so its timers never fire before the dump
+           *(["--dump-dom", "--disable-features=IsolateSandboxedIframes"] if sandbox else []), f"file://{target}"]
     if os.geteuid() == 0:  # the sandbox refuses root, which is what containers run as
         cmd.insert(1, "--no-sandbox")
     out.unlink(missing_ok=True)

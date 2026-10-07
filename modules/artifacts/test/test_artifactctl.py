@@ -1,3 +1,4 @@
+import html
 import os
 import shutil
 import subprocess
@@ -323,6 +324,26 @@ def test_check_passes_button_form_with_keydown():
     assert fails == []
 
 
+@pytest.mark.parametrize("snippet, n", [
+    ('<form data-action="x"><input id="a"></form>', 0),
+    ('<form action="x"><input id="a"></form>', 1),
+    ('<form><button data-type="submit" type="button">Add</button></form>', 0),
+    ('<form><button type="submit">Add</button></form>', 1),
+])
+def test_check_sandbox_ignores_data_attributes(snippet, n):
+    fails, _ = artifactctl.check_html(GOOD_PAGE.replace("</body>", snippet + "</body>"), size=1024)
+    assert len(fails) == n, fails
+
+
+@pytest.mark.parametrize("snippet, n", [
+    ('<pre><code>form.addEventListener("submit", f)</code></pre>', 0),
+    ('<pre><code>form.addEventListener("submit", f)</code></pre><script>form.addEventListener("submit", f)</script>', 1),
+])
+def test_check_sandbox_ignores_code_samples(snippet, n):
+    fails, _ = artifactctl.check_html(GOOD_PAGE.replace("</body>", snippet + "</body>"), size=1024)
+    assert len(fails) == n, fails
+
+
 # ── allowlist bypass forms ───────────────────────────────────────────────
 
 @pytest.mark.parametrize("tag, kind", [
@@ -452,6 +473,27 @@ def test_render_sandbox_good_page_ok(run, tmp_path):
     assert r.stdout.strip().splitlines()[-1] == "ok"
 
 
+@needs_chrome
+@pytest.mark.parametrize("delay", [1000, 2500])
+def test_render_sandbox_reports_deferred_error(run, tmp_path, delay):
+    p = tmp_path / "late.html"
+    p.write_text(GOOD_PAGE.replace(
+        "</body>", f'<script>setTimeout(() => {{ throw new Error("late{delay}") }}, {delay})</script></body>'))
+    r = run("render", str(p), "--sandbox", env=dict(os.environ))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert f"FAIL console: Uncaught Error: late{delay}" in r.stdout.splitlines(), r.stdout
+
+
+@needs_chrome
+def test_render_sandbox_reports_rejection_once(run, tmp_path):
+    p = tmp_path / "rej.html"
+    p.write_text(GOOD_PAGE.replace("</body>", '<script>Promise.reject(new Error("rej"))</script></body>'))
+    r = run("render", str(p), "--sandbox", env=dict(os.environ))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert [l for l in r.stdout.splitlines() if l.startswith("FAIL console:")] == [
+        "FAIL console: Uncaught (in promise) Error: rej"], r.stdout
+
+
 def test_sandbox_host_escapes_inner_and_probes_once():
     host = artifactctl.sandbox_host(GOOD_PAGE)
     assert '<iframe sandbox="allow-scripts" srcdoc="' in host
@@ -460,6 +502,16 @@ def test_sandbox_host_escapes_inner_and_probes_once():
     assert host.count("unhandledrejection") == 1
     # the probe lands at the top of the inner <head>, before the page's own markup
     assert srcdoc.index("unhandledrejection") < srcdoc.index("&lt;meta charset")
+
+
+@pytest.mark.parametrize("page, after", [
+    ("<!doctype html><title>T</title><p>x", "<!doctype html>"),
+    ('<!doctype html><html lang="en"><title>T</title><p>x', '<html lang="en">'),
+])
+def test_sandbox_host_probe_follows_doctype_without_head(page, after):
+    srcdoc = html.unescape(artifactctl.sandbox_host(page).split('srcdoc="', 1)[1].split('"', 1)[0])
+    assert srcdoc.startswith("<!doctype html>")
+    assert srcdoc.index("unhandledrejection") > srcdoc.index(after)
 
 
 # ── theme: color literals outside the token blocks ───────────────────────
@@ -496,3 +548,12 @@ def test_check_theme_warns_functions_and_caps_at_ten():
 def test_good_page_has_no_theme_warnings():
     _, warns = artifactctl.check_html(GOOD_PAGE, size=1024)
     assert warns == []
+
+
+def test_check_theme_skips_escaped_quote():
+    assert _theme_warns('.a::after{content:"\\"";} .b{color:#123}') == [
+        'theme: color literal #123 in rule ".b" — define it as a token on :root so both themes stay readable']
+
+
+def test_check_theme_ignores_quoted_strings():
+    assert _theme_warns('.a::after{content:"#add"}') == []

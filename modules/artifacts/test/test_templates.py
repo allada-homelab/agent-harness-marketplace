@@ -54,10 +54,11 @@ def test_template_size_budget(tpl):
 
 
 @needs_chrome
+@pytest.mark.parametrize("mode", [[], ["--sandbox"]], ids=["plain", "sandbox"])
 @pytest.mark.parametrize("tpl", TEMPLATES, ids=lambda p: p.name)
-def test_template_renders_clean(tpl, tmp_path):
+def test_template_renders_clean(tpl, mode, tmp_path):
     r = subprocess.run([sys.executable, "-I", str(SKILL / "artifactctl.py"), "render", str(tpl),
-                        "--out", str(tmp_path / f"{tpl.stem}.png")], text=True, capture_output=True)
+                        "--out", str(tmp_path / f"{tpl.stem}.png"), *mode], text=True, capture_output=True)
     assert r.returncode == 0, r.stdout + r.stderr
     lines = r.stdout.strip().splitlines()
     assert lines[-1] == "ok" and not [l for l in lines if l.startswith("WARN console")], r.stdout
