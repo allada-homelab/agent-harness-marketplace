@@ -106,7 +106,7 @@ modules:
       tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized
       results or sessions in the findings store beside it.
 - name: artifacts
-  version: 0.1.3
+  version: 0.1.4
   kinds:
   - skills
   - dsh-plugin

@@ -213,38 +213,68 @@ def repo(tmp_path):
     return root
 
 
-def test_prepare_creates_dir_and_excludes_it(run, repo):
-    r = run("prepare", cwd=repo)
+def test_prepare_defaults_to_cache_per_project(run, repo, tmp_path):
+    cache = tmp_path / "cache"
+    r = run("prepare", cwd=repo, env={"XDG_CACHE_HOME": str(cache), "PATH": os.environ["PATH"]})
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == str(cache / "agent-artifacts" / "repo")
+    assert (cache / "agent-artifacts" / "repo").is_dir()
+    assert not (repo / ".artifacts").exists()
+    assert git("status", "--porcelain", cwd=repo) == ""
+
+
+def test_prepare_env_root_wins_and_worktree_shares_project(run, repo, tmp_path):
+    wt = tmp_path / "wt"
+    git("worktree", "add", "-q", "-b", "feat", str(wt), cwd=repo)
+    root = tmp_path / "elsewhere"
+    env = {"AGENT_ARTIFACTS_DIR": str(root), "XDG_CACHE_HOME": str(tmp_path / "unused"),
+           "PATH": os.environ["PATH"]}
+    r = run("prepare", cwd=wt, env=env)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == str(root / "repo")  # the main checkout's name, not "wt"
+    assert run("prepare", cwd=repo, env=env).stdout.strip() == str(root / "repo")
+
+
+def test_prepare_outside_git_uses_dir_name(run, tmp_path):
+    proj = tmp_path / "notes"
+    proj.mkdir()
+    r = run("prepare", cwd=proj, env={"XDG_CACHE_HOME": str(tmp_path / "c"), "PATH": os.environ["PATH"]})
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == str(tmp_path / "c" / "agent-artifacts" / "notes")
+
+
+def test_prepare_here_creates_dir_and_excludes_it(run, repo):
+    r = run("prepare", "--here", cwd=repo)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == str(repo / ".artifacts")
     assert (repo / ".artifacts").is_dir()
     assert ".artifacts/\n" in (repo / ".git" / "info" / "exclude").read_text()
     # idempotent
-    run("prepare", cwd=repo)
+    run("prepare", "--here", cwd=repo)
     assert (repo / ".git" / "info" / "exclude").read_text().count(".artifacts/\n") == 1
     assert git("status", "--porcelain", cwd=repo) == ""
 
 
-def test_prepare_excludes_in_worktree(run, repo, tmp_path):
+def test_prepare_here_excludes_in_worktree(run, repo, tmp_path):
     wt = tmp_path / "wt"
     git("worktree", "add", "-q", "-b", "feat", str(wt), cwd=repo)
-    r = run("prepare", cwd=wt)
+    r = run("prepare", "--here", cwd=wt)
     assert r.returncode == 0, r.stderr
     assert (wt / ".artifacts").is_dir()
     assert ".artifacts/\n" in (repo / ".git" / "info" / "exclude").read_text()
     assert not (wt / ".git" / "info").exists()  # .git is a file here; nothing was written beside it
 
 
-def test_prepare_outside_git(run, tmp_path):
-    r = run("prepare", cwd=tmp_path)
+def test_prepare_here_outside_git(run, tmp_path):
+    r = run("prepare", "--here", cwd=tmp_path)
     assert r.returncode == 0, r.stderr
     assert (tmp_path / ".artifacts").is_dir()
 
 
-def test_prepare_takes_explicit_dir(run, repo):
+def test_prepare_here_takes_explicit_dir(run, repo):
     sub = repo / "docs"
     sub.mkdir()
-    r = run("prepare", str(sub), cwd=repo)
+    r = run("prepare", str(sub), "--here", cwd=repo)
     assert r.stdout.strip() == str(sub / ".artifacts")
 
 

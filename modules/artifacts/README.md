@@ -2,7 +2,10 @@
 
 Local HTML artifacts for pi and dsh. One skill (`artifacts`) carries Claude Code's artifact
 craft — design, dataviz, diagramming — rewritten for a self-contained file with no hosting,
-plus `artifactctl.py` (`prepare | check | open`, stdlib). Viewing is each harness's own:
+plus `artifactctl.py` (`prepare | check | render | open`, stdlib). Pages land in one folder per
+project under `$AGENT_ARTIFACTS_DIR`, else `~/.cache/agent-artifacts/` (beside the
+agent-transcripts cache), never inside a repo; `prepare --here` keeps a git-excluded
+`.artifacts/` under the working directory instead. Viewing is each harness's own:
 dsh's `present` tool → Document Preview (scripts run with *Coding Tools* on); pi opens the
 system browser or prints the path.
 
