@@ -8,7 +8,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "artifacts"))
 import artifactctl  # noqa: E402
 
-from conftest import GOOD_PAGE  # noqa: E402
+# Sibling modules each have a conftest.py; `import conftest` would resolve to whichever pytest
+# put on sys.path first when all module suites run in one session, so load ours by path.
+import importlib.util  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("artifacts_conftest", Path(__file__).with_name("conftest.py"))
+_conf = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_conf)
+GOOD_PAGE = _conf.GOOD_PAGE
 
 
 # ── check ────────────────────────────────────────────────────────────────
