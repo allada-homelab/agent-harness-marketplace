@@ -6,6 +6,7 @@ Stdlib only. Exit codes: 0 ok, 1 check failures, 2 usage or missing file.
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -26,6 +27,12 @@ _VAL = r"(?:\"([^\"]*)\"|'([^']*)'|([^\s\"'>]+))"  # double-quoted, single-quote
 _SCRIPT_SRC = re.compile(r"<script\s[^>]*?\bsrc\s*=\s*" + _VAL, re.I)
 _LINK = re.compile(r"<link\s[^>]*>", re.I)
 _ATTR = re.compile(r"\b(rel|href)\s*=\s*" + _VAL, re.I)
+_SCRIPT_BODY = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.I | re.S)
+_STYLE_BODY = re.compile(r"<style\b[^>]*>(.*?)</style\s*>", re.I | re.S)
+_JS_IMPORT = re.compile(
+    r"""\bimport\s*\(\s*(["'])([^"']*)\1"""  # dynamic import("x")
+    r"""|\bimport\s+(?:[\w$*{},\s]+?\s*\bfrom\s*)?(["'])([^"']*)\3""")  # import x from "y" / import "y"
+_CSS_IMPORT = re.compile(r"""@import\s+(?:url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s]*))\s*\)|"([^"]*)"|'([^']*)')""", re.I)
 _SCHEME = re.compile(r"^[a-z][\w+.-]*:", re.I)
 _URL = re.compile(r"^(?:https?:)?//([^/]+)(/.*)?$", re.I)
 
@@ -40,6 +47,17 @@ def _host(url: str) -> tuple[str, str] | None:
     if _SCHEME.match(url) or "\\" in url:
         return "", url
     return None
+
+
+def _script_host_ok(host: str, path: str) -> bool:
+    if host not in SCRIPT_HOSTS:
+        return False
+    # normpath first: /npm/../gh/... must not ride the /npm/ prefix
+    return host != "cdn.jsdelivr.net" or posixpath.normpath(path).startswith("/npm/")
+
+
+def _local(kind: str, value: str) -> str:
+    return f'local: {kind} references a local file "{value}"; the artifact is one self-contained file, inline it'
 
 
 def check_html(text: str, size: int) -> tuple[list[str], list[str]]:
@@ -69,18 +87,42 @@ def check_html(text: str, size: int) -> tuple[list[str], list[str]]:
         src = "".join(groups)
         h = _host(src)
         if h is None:
-            continue  # relative or inline: ships with the page
-        host, path = h
-        ok = host in SCRIPT_HOSTS and (host != "cdn.jsdelivr.net" or path.startswith("/npm/"))
-        if not ok:
+            fails.append(_local("script", src))
+        elif not _script_host_ok(*h):
             fails.append(f"host: script from {src} is not on the CDN allowlist")
     for tag in _LINK.findall(text):
         attrs = {k.lower(): "".join(v) for k, *v in _ATTR.findall(tag)}
-        if "stylesheet" not in attrs.get("rel", "").lower().split():
+        rels = attrs.get("rel", "").lower().split()
+        if "href" not in attrs:
             continue
-        h = _host(attrs.get("href", ""))
-        if h is not None and h[0] != STYLE_HOST:
-            fails.append(f"host: stylesheet from {attrs['href']} is not {STYLE_HOST}")
+        href = attrs["href"]
+        h = _host(href)
+        if "stylesheet" in rels:
+            if h is None:
+                fails.append(_local("stylesheet", href))
+            elif h[0] != STYLE_HOST:
+                fails.append(f"host: stylesheet from {href} is not {STYLE_HOST}")
+        if "modulepreload" in rels:
+            if h is None:
+                fails.append(_local("modulepreload", href))
+            elif not _script_host_ok(*h):
+                fails.append(f"host: modulepreload from {href} is not on the CDN allowlist")
+    for body in _SCRIPT_BODY.findall(text):
+        for m in _JS_IMPORT.finditer(body):
+            url = m.group(2) if m.group(1) else m.group(4)
+            h = _host(url)
+            if h is None:
+                fails.append(_local("import", url))
+            elif not _script_host_ok(*h):
+                fails.append(f"host: import from {url} is not on the CDN allowlist")
+    for body in _STYLE_BODY.findall(text):
+        for m in _CSS_IMPORT.finditer(body):
+            url = next(g for g in m.groups() if g is not None)
+            h = _host(url)
+            if h is None:
+                fails.append(_local("@import", url))
+            elif h[0] != STYLE_HOST:
+                fails.append(f"host: @import from {url} is not {STYLE_HOST}")
     if size > SIZE_CAP:
         fails.append(f"size: {size} bytes exceeds the 16 MB cap")
     return fails, warns
