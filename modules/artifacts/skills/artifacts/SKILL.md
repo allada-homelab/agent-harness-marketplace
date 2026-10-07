@@ -29,8 +29,11 @@ acceptable. A single fact, a short list or an answer the user will act on at onc
 2. **Prepare the output dir.** `python3 <skill dir>/artifactctl.py prepare` prints the
    directory (`.artifacts/` under the working directory, git-excluded). The file is
    `<slug-of-title>.html` inside it; a revision overwrites the same file.
-3. **Write the page** with the `write` tool: a complete document (doctype, head, title,
-   description meta, viewport with `viewport-fit=cover`, tokens on `:root`, body), scripts only
+3. **Write the page.** Start from the closest template: read `./templates/README.md`, copy
+   that file to the output dir as `<slug>.html`, replace its slots and its `DATA`, and keep its
+   token block and interaction code — they already satisfy the contract. Only when no template
+   is close write the document from scratch with the `write` tool: doctype, head, title,
+   description meta, viewport with `viewport-fit=cover`, tokens on `:root`, body; scripts only
    from the CDN allowlist, everything else inline.
 4. **Check, then look.** `python3 <skill dir>/artifactctl.py check <file>` — fix every `FAIL`,
    re-run, stop when it prints `ok`. A `WARN` is advice. Then
