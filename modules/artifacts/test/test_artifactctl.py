@@ -417,3 +417,82 @@ def test_render_reports_uncaught_error(run, tmp_path):
     assert r.returncode == 1, r.stdout + r.stderr
     assert any(l.startswith("FAIL console: Uncaught ReferenceError") for l in r.stdout.splitlines())
     assert r.stdout.strip().splitlines()[-1] == "fail"
+
+
+@needs_chrome
+def test_render_sandbox_reports_error_inside_frame(run, tmp_path):
+    p = tmp_path / "bad.html"
+    p.write_text(GOOD_PAGE.replace("</body>", "<script>nope()</script></body>"))
+    r = run("render", str(p), "--sandbox", env=dict(os.environ))
+    assert r.returncode == 1, r.stdout + r.stderr
+    lines = r.stdout.strip().splitlines()
+    assert lines[0] == f"rendered {tmp_path / 'bad.png'} (sandbox)"
+    assert any(l.startswith("FAIL console:") and "nope" in l for l in lines), r.stdout
+    assert lines[-1] == "fail"
+
+
+@needs_chrome
+def test_render_sandbox_surfaces_unguarded_storage(run, tmp_path):
+    p = tmp_path / "store.html"
+    p.write_text(GOOD_PAGE.replace("</body>", '<script>localStorage.getItem("k")</script></body>'))
+    r = run("render", str(p), "--sandbox", env=dict(os.environ))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert any(l.startswith("FAIL console:") and "localStorage" in l for l in r.stdout.splitlines()), r.stdout
+    r = run("render", str(p), env=dict(os.environ))
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+@needs_chrome
+def test_render_sandbox_good_page_ok(run, tmp_path):
+    p = tmp_path / "good.html"
+    p.write_text(GOOD_PAGE)
+    r = run("render", str(p), "--sandbox", env=dict(os.environ))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (tmp_path / "good.png").stat().st_size > 0
+    assert r.stdout.strip().splitlines()[-1] == "ok"
+
+
+def test_sandbox_host_escapes_inner_and_probes_once():
+    host = artifactctl.sandbox_host(GOOD_PAGE)
+    assert '<iframe sandbox="allow-scripts" srcdoc="' in host
+    srcdoc = host.split('srcdoc="', 1)[1].split('"', 1)[0]
+    assert "&lt;script" in srcdoc and "<" not in srcdoc
+    assert host.count("unhandledrejection") == 1
+    # the probe lands at the top of the inner <head>, before the page's own markup
+    assert srcdoc.index("unhandledrejection") < srcdoc.index("&lt;meta charset")
+
+
+# ── theme: color literals outside the token blocks ───────────────────────
+
+def _theme_warns(css):
+    _, warns = artifactctl.check_html(GOOD_PAGE.replace("</style>", css + "\n</style>"), size=1024)
+    return [w for w in warns if w.startswith("theme:")]
+
+
+@pytest.mark.parametrize("css", [
+    ":root { --card: #333; --shade: rgb(0 0 0 / 0.2) }",
+    '@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --card: #ccc; --x: oklch(70% 0.1 200) } }',
+    ".hero { background: url(data:image/png;base64,AAAA#notacolor) }",
+    ".hero { color-scheme: dark }",
+    "/* .card { color: #333 } */ .card { color: var(--fg) }",
+])
+def test_check_theme_allows_tokens_and_non_colors(css):
+    assert _theme_warns(css) == []
+
+
+def test_check_theme_warns_literal_outside_tokens():
+    fails, warns = artifactctl.check_html(GOOD_PAGE.replace("</style>", ".card{color:#333}\n</style>"), size=1024)
+    assert fails == []
+    assert warns == ['theme: color literal #333 in rule ".card" — define it as a token on :root so both themes stay readable']
+
+
+def test_check_theme_warns_functions_and_caps_at_ten():
+    assert _theme_warns(".a { border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent) }") == [
+        'theme: color literal color-mix(in srgb, var(--fg) 20%, transparent) in rule ".a" — '
+        "define it as a token on :root so both themes stay readable"]
+    assert len(_theme_warns("".join(f".c{i} {{ color: rgba(0,0,0,.{i}) }}" for i in range(15)))) == 10
+
+
+def test_good_page_has_no_theme_warnings():
+    _, warns = artifactctl.check_html(GOOD_PAGE, size=1024)
+    assert warns == []

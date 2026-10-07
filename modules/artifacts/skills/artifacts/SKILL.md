@@ -38,7 +38,7 @@ acceptable. A single fact, a short list or an answer the user will act on at onc
 4. **Check, then look.** `python3 <skill dir>/artifactctl.py check <file>` — fix every `FAIL`,
    re-run, stop when it prints `ok`. A `WARN` is advice. Then
    `python3 <skill dir>/artifactctl.py render <file>`: it renders the page in headless Chrome
-   at phone width, writes `<stem>.png` beside the file and prints any console error; `skipped:`
+   at phone width, writes `<stem>.png` beside the file and prints any console error; add `--sandbox` to render it inside the same `allow-scripts` frame dsh uses, which surfaces storage access and other runtime errors (a blocked form submit stays silent; the static `sandbox:` rule in `check` catches that); `skipped:`
    means no Chrome is installed and is not a defect. Read the PNG with your file-reading tool
    and look at it the way the user will: an empty bar, overlapping text, an unstyled block or a
    missing section is a defect the static check cannot see. Fix, re-check, re-render. If the
