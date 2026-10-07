@@ -1,0 +1,561 @@
+<!doctype html>
+<!-- template: diagram · slots: title, description, caption, DATA -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Paperless Request Path</title>
+<meta name="description" content="How one document request travels through the homelab: proxy, single sign-on, the app, its cache and database, and where it fails.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one 44rem column; the diagram panel (toolbar, SVG, legend, caption) above the steps as text. */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --sunken: #eaeef2;
+  --fg: #17202b; --muted: #586474; --line: #d8dee6;
+  --accent: #1d4f91; --accent-fg: #ffffff; --danger: #b3261e; --ok: #1b6e3c;
+  --edge: #737f8f; --selected: #e3ecf7; --shadow: rgb(0 0 0 / 0.12);
+  --c1: #0072B2; --c2: #009E73; --c3: #D55E00; --c4: #B2548F; --c5: #C77F00;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem; --step-0: 0.9375rem; --step-1: 1.0625rem; --step-2: 1.375rem; --step-3: 1.75rem;
+  --radius: 10px;
+  color-scheme: light;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1318; --surface: #161d25; --sunken: #1d252f;
+    --fg: #e4e9ef; --muted: #96a3b3; --line: #2a3440;
+    --accent: #7fb2ee; --accent-fg: #0e1318; --danger: #f2867e; --ok: #6fcf97;
+    --edge: #7f8c9c; --selected: #1f2e40; --shadow: rgb(0 0 0 / 0.4);
+    --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1318; --surface: #161d25; --sunken: #1d252f;
+  --fg: #e4e9ef; --muted: #96a3b3; --line: #2a3440;
+  --accent: #7fb2ee; --accent-fg: #0e1318; --danger: #f2867e; --ok: #6fcf97;
+  --edge: #7f8c9c; --selected: #1f2e40; --shadow: rgb(0 0 0 / 0.4);
+  --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box }
+[hidden] { display: none !important }
+img { max-width: 100% }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 400 var(--step-0)/1.5 var(--font-body);
+  padding-inline: 16px; padding-block: 20px 40px;
+  -webkit-text-size-adjust: 100%;
+}
+.page { max-width: 44rem; margin-inline: auto; display: grid; gap: 20px }
+h1, h2 { margin: 0; text-wrap: balance; font-weight: 600 }
+h1 { font-size: var(--step-3); line-height: 1.15; letter-spacing: -0.015em }
+h2 { font-size: var(--step-1); line-height: 1.3 }
+p { margin: 0 }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums }
+.lede { color: var(--muted); max-width: 60ch }
+
+header.top { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px }
+header.top .intro { display: grid; gap: 6px; min-width: 0; flex: 1 1 16rem }
+
+.seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--sunken); border-radius: 999px; flex: none }
+.seg button {
+  font: 500 var(--step--1)/1 var(--font-body); color: var(--muted); background: none;
+  border: 0; border-radius: 999px; padding: 7px 12px; min-height: 32px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px var(--shadow) }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 14px; min-width: 0 }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 10px 12px; flex-wrap: wrap }
+.panel-head .meta { color: var(--muted); font-size: var(--step--1) }
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px }
+.status { font-size: var(--step--1); color: var(--muted); min-width: 0; flex: 1 1 10rem }
+.status strong { color: var(--fg); font-weight: 600 }
+.btn {
+  font: 500 var(--step--1)/1 var(--font-body); border-radius: 8px; padding: 9px 12px; min-height: 36px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer;
+}
+.btn:disabled { color: var(--muted); cursor: default; opacity: 0.6 }
+:is(button, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+
+figure { margin: 0; display: grid; gap: 12px; min-width: 0 }
+.canvas { overflow-x: auto; background: var(--bg); border-radius: 8px; padding: 12px 6px; overscroll-behavior-x: contain }
+.canvas svg { display: block; margin-inline: auto; height: auto }
+figcaption { color: var(--muted); font-size: var(--step--1); max-width: 65ch }
+
+/* SVG: every paint comes from a token; a node's kind color arrives as --k from the script. */
+.edge { fill: none; stroke: var(--edge); stroke-width: 1.5 }
+.edge.back { stroke-dasharray: 5 4 }
+.arrowhead { fill: var(--edge) }
+.edge-label rect { fill: var(--surface); stroke: var(--line); stroke-width: 1 }
+.edge-text { fill: var(--muted); font: 500 13px var(--font-body) }
+.node { cursor: pointer; outline: none }
+.node-box { fill: var(--surface); stroke: var(--k); stroke-width: 2 }
+.node-label { fill: var(--fg); font: 500 14px var(--font-body) }
+.node:focus-visible .node-box { stroke-width: 4 }
+.node.sel .node-box { fill: var(--selected); stroke-width: 3.5 }
+.edge.on { stroke: var(--accent); stroke-width: 2.5 }
+.edge-label.on .edge-text { fill: var(--fg) }
+.has-sel :is(.node, .edge, .edge-label):not(.on) { opacity: 0.2 }
+.measure { visibility: hidden }
+
+.legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: var(--step--1) }
+.legend li { display: flex; align-items: center; gap: 8px; min-width: 0 }
+.swatch { display: block; width: 14px; height: 10px; border-radius: 3px; border: 2px solid var(--k); background: var(--surface); flex: none }
+.swatch.dash { width: 22px; height: 0; border: 0; border-top: 2px dashed var(--edge); border-radius: 0 }
+
+.steps { margin: 0; padding-left: 1.6em; display: grid; gap: 6px }
+.steps li { padding-left: 4px; overflow-wrap: anywhere }
+.steps li::marker { color: var(--muted); font-family: var(--font-data); font-variant-numeric: tabular-nums; font-size: var(--step--1) }
+.steps li.on { color: var(--fg); font-weight: 500 }
+.steps.has-sel li:not(.on) { color: var(--muted) }
+.steps .via { color: var(--muted); font-weight: 400 }
+textarea.copy-fallback {
+  width: 100%; min-height: 9rem; font: 400 var(--step--1)/1.45 var(--font-data); color: var(--fg);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+}
+@media (max-width: 420px) {
+  .panel { padding: 12px }
+  .canvas { padding-inline: 2px }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .node, .edge, .edge-label { transition: opacity 0.15s ease-out }
+}
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="top">
+    <div class="intro">
+      <h1 data-slot="title">Paperless Request Path</h1>
+      <p class="lede" data-slot="description">How one request for a scanned document travels through the homelab, from the phone to the database and back, including the two ways it can fail.</p>
+    </div>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+      <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+    </div>
+  </header>
+
+  <section class="panel" aria-label="Diagram">
+    <div class="toolbar">
+      <div class="seg" role="group" aria-label="Diagram scale">
+        <button type="button" data-scale="fit" aria-pressed="true">Fit</button>
+        <button type="button" data-scale="1" aria-pressed="false">1:1</button>
+      </div>
+      <button type="button" class="btn" id="clear-sel" disabled>Clear highlight</button>
+      <span class="status" id="sel-status" role="status">Tap a step to trace its connections.</span>
+    </div>
+    <figure>
+      <div class="canvas" id="canvas">
+        <svg id="diagram" xmlns="http://www.w3.org/2000/svg" role="group" aria-describedby="steps-h"></svg>
+      </div>
+      <ul class="legend" id="legend" aria-label="Legend"></ul>
+      <figcaption data-slot="caption">A cache hit skips Postgres entirely; a miss reads the row and refills Redis for five minutes. The dashed line is Authelia sending an unauthenticated browser back round to log in.</figcaption>
+    </figure>
+  </section>
+
+  <section class="panel" aria-labelledby="steps-h">
+    <div class="panel-head">
+      <h2 id="steps-h">Every step in words</h2>
+      <span class="meta num" id="steps-count"></span>
+    </div>
+    <ol class="steps" id="steps"></ol>
+    <div><button type="button" class="btn" id="copy">Copy as text</button></div>
+    <textarea class="copy-fallback" id="copy-fallback" readonly hidden aria-label="Steps as text"></textarea>
+  </section>
+</main>
+
+<script>
+const DATA = {
+  // kind → legend entry and color, by order of first appearance: kind i gets var(--c<i+1>); kinds past the fifth fold into "Other".
+  nodes: [
+    { id: "browser", label: "Browser on a phone", kind: "Client" },
+    { id: "proxy", label: "Caddy reverse proxy", kind: "Gateway" },
+    { id: "auth", label: "Authelia session check", kind: "Gateway" },
+    { id: "login", label: "Authelia login portal", kind: "Failure path" },
+    { id: "app", label: "Paperless-ngx web app", kind: "Service" },
+    { id: "cache", label: "Redis cache", kind: "Data store" },
+    { id: "db", label: "PostgreSQL", kind: "Data store" },
+    { id: "render", label: "Render document page", kind: "Service" },
+    { id: "fail", label: "503 error page", kind: "Failure path" },
+    { id: "ok", label: "200 OK to the browser", kind: "Client" },
+  ],
+  // An edge that points back up the flow (a retry, a redirect) is drawn dashed, beside the diagram.
+  edges: [
+    { from: "browser", to: "proxy", label: "HTTPS :443" },
+    { from: "proxy", to: "auth", label: "forward_auth" },
+    { from: "auth", to: "login", label: "no session" },
+    { from: "auth", to: "app", label: "session valid" },
+    { from: "app", to: "cache", label: "GET doc:4127" },
+    { from: "cache", to: "render", label: "hit" },
+    { from: "cache", to: "db", label: "miss" },
+    { from: "db", to: "render", label: "row, cached 5 min" },
+    { from: "db", to: "fail", label: "no reply in 5 s" },
+    { from: "render", to: "ok", label: "HTML" },
+    { from: "login", to: "browser", label: "302 redirect" },
+  ],
+};
+
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+const NS = "http://www.w3.org/2000/svg";
+
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* not kept */ } },
+};
+
+// ── theme: Auto sets nothing, so prefers-color-scheme decides ──
+function setTheme(mode) {
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode; else delete root.dataset.theme;
+  document.querySelectorAll("[data-theme-set]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === (mode || "auto"))));
+}
+document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => {
+  setTheme(b.dataset.themeSet);
+  store.set("theme", b.dataset.themeSet);
+}));
+setTheme(store.get("theme"));
+
+// ── model: validate once, loudly; a typo in an id should not draw half a diagram ──
+const nodeById = new Map(DATA.nodes.map((n) => [n.id, n]));
+DATA.edges.forEach((e, k) => {
+  if (!nodeById.has(e.from) || !nodeById.has(e.to)) throw new Error(`DATA.edges[${k}]: unknown node id "${nodeById.has(e.from) ? e.to : e.from}"`);
+});
+const kinds = [...new Set(DATA.nodes.map((n) => n.kind))];
+const kindIndex = (kind) => Math.min(kinds.indexOf(kind), 4);
+const kindColor = (kind) => `var(--c${kindIndex(kind) + 1})`;
+
+const G = { padX: 12, padY: 10, lineH: 18, wrap: 118, gap: 22, rankGap: 58, dummyW: 16, minScale: 12 / 13 };
+
+function svgEl(tag, attrs, parent) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (parent) parent.append(n);
+  return n;
+}
+function el(tag, cls, content) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (content != null) n.textContent = content;
+  return n;
+}
+
+// ── layout: layered top-to-bottom (rank = longest path from a source), barycenter ordering ──
+function layout(svg) {
+  const probe = svgEl("text", { class: "measure" }, svg);
+  const width = (s, cls) => { probe.setAttribute("class", "measure " + cls); probe.textContent = s; return probe.getComputedTextLength(); };
+  const wrap = (label) => {
+    const lines = [];
+    for (const word of label.split(/\s+/)) {
+      const last = lines.length - 1;
+      if (last >= 0 && width(lines[last] + " " + word, "node-label") <= G.wrap) lines[last] += " " + word;
+      else lines.push(word);
+    }
+    return lines;
+  };
+  const items = new Map(DATA.nodes.map((n) => {
+    const lines = wrap(n.label);
+    const w = Math.max(88, Math.max(...lines.map((l) => width(l, "node-label"))) + G.padX * 2);
+    return [n.id, { node: n, id: n.id, lines, w, h: lines.length * G.lineH + G.padY * 2, up: [], down: [] }];
+  }));
+  const labelWidths = new Map(DATA.edges.map((e) => [e.label, e.label ? width(e.label, "edge-text") + 12 : 0]));
+  const labelW = (s) => labelWidths.get(s) || 0;
+
+  // Back edges (a DFS edge to a node still on the stack) are left out of ranking, which breaks every cycle.
+  const out = new Map(DATA.nodes.map((n) => [n.id, []]));
+  DATA.edges.forEach((e, k) => out.get(e.from).push(k));
+  const hasIn = new Set(DATA.edges.map((e) => e.to));
+  const state = new Map();
+  const back = new Set();
+  const visit = (id) => {
+    state.set(id, 1);
+    for (const k of out.get(id)) {
+      const s = state.get(DATA.edges[k].to);
+      if (s === 1) back.add(k); else if (!s) visit(DATA.edges[k].to);
+    }
+    state.set(id, 2);
+  };
+  DATA.nodes.filter((n) => !hasIn.has(n.id)).forEach((n) => visit(n.id));
+  DATA.nodes.forEach((n) => { if (!state.has(n.id)) visit(n.id); });
+
+  const rank = new Map(DATA.nodes.map((n) => [n.id, 0]));
+  const indeg = new Map(DATA.nodes.map((n) => [n.id, 0]));
+  DATA.edges.forEach((e, k) => { if (!back.has(k)) indeg.set(e.to, indeg.get(e.to) + 1); });
+  const queue = DATA.nodes.filter((n) => !indeg.get(n.id)).map((n) => n.id);
+  while (queue.length) {
+    const u = queue.shift();
+    for (const k of out.get(u)) {
+      if (back.has(k)) continue;
+      const v = DATA.edges[k].to;
+      rank.set(v, Math.max(rank.get(v), rank.get(u) + 1));
+      indeg.set(v, indeg.get(v) - 1);
+      if (!indeg.get(v)) queue.push(v);
+    }
+  }
+  const rows = [];
+  const put = (it, r) => { it.rank = r; (rows[r] = rows[r] || []).push(it); };
+  DATA.nodes.forEach((n) => put(items.get(n.id), rank.get(n.id)));
+
+  // An edge spanning several ranks gets a thin dummy per rank in between, so it is routed around nodes.
+  const edges = DATA.edges.map((e, k) => {
+    const a = items.get(e.from), b = items.get(e.to);
+    const edge = { k, e, back: back.has(k), chain: [a] };
+    if (edge.back) return edge;
+    for (let r = a.rank + 1; r < b.rank; r++) {
+      const d = { dummy: true, w: G.dummyW, h: 0, up: [], down: [] };
+      put(d, r);
+      edge.chain.push(d);
+    }
+    edge.chain.push(b);
+    for (let i = 1; i < edge.chain.length; i++) { edge.chain[i - 1].down.push(edge.chain[i]); edge.chain[i].up.push(edge.chain[i - 1]); }
+    return edge;
+  });
+
+  const place = (row) => {
+    const total = row.reduce((s, it) => s + it.w, 0) + G.gap * (row.length - 1);
+    let x = -total / 2;
+    row.forEach((it) => { it.x = x + it.w / 2; x += it.w + G.gap; });
+  };
+  rows.forEach(place);
+  const sweep = (r, key) => {
+    const row = rows[r];
+    const bc = (it) => (it[key].length ? it[key].reduce((s, n) => s + n.x, 0) / it[key].length : it.x);
+    const keyed = row.map((it, i) => [bc(it), i, it]).sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+    rows[r] = keyed.map((p) => p[2]);
+    place(rows[r]);
+  };
+  for (let pass = 0; pass < 4; pass++) {
+    for (let r = 1; r < rows.length; r++) sweep(r, "up");
+    for (let r = rows.length - 2; r >= 0; r--) sweep(r, "down");
+  }
+
+  let y = 0;
+  rows.forEach((row) => {
+    const bandH = Math.max(...row.map((it) => it.h), 24);
+    row.forEach((it) => { it.top = y + (bandH - it.h) / 2; it.bottom = it.top + it.h; it.bandTop = y; it.bandBottom = y + bandH; });
+    y += bandH + G.rankGap;
+  });
+  probe.remove();
+  return { items, edges, rows, labelW };
+}
+
+// ── draw ──
+const svg = $("diagram");
+let selected = null;
+let natural = { w: 0, h: 0 };
+let scaleMode = "fit";
+let hasBack = false;
+
+function draw() {
+  svg.replaceChildren();
+  const marker = svgEl("marker", { id: "arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "10", markerHeight: "10", markerUnits: "userSpaceOnUse", orient: "auto-start-reverse" }, svgEl("defs", {}, svg));
+  svgEl("path", { d: "M0 1 L10 5 L0 9 Z", class: "arrowhead" }, marker);
+  const L = layout(svg);
+  hasBack = L.edges.some((edge) => edge.back);
+  const gEdges = svgEl("g", {}, svg), gLabels = svgEl("g", {}, svg), gNodes = svgEl("g", {}, svg);
+
+  // Ports: a node's outgoing edges leave from points spread along its bottom, ordered by where they go.
+  const ports = (it, list) => {
+    const sorted = [...list].sort((a, b) => a.x - b.x);
+    const step = Math.min(18, (it.w - 28) / Math.max(1, sorted.length - 1));
+    return (other) => it.x + (sorted.indexOf(other) - (sorted.length - 1) / 2) * step;
+  };
+  const outPort = new Map(), inPort = new Map();
+  L.items.forEach((it) => { outPort.set(it, ports(it, it.down)); inPort.set(it, ports(it, it.up)); });
+
+  const xs = [...L.items.values()];
+  const minX = Math.min(...xs.map((it) => it.x - it.w / 2)), maxX = Math.max(...xs.map((it) => it.x + it.w / 2));
+  const bezier = ([p0, p1, p2, p3], t) => [0, 1].map((i) =>
+    (1 - t) ** 3 * p0[i] + 3 * (1 - t) ** 2 * t * p1[i] + 3 * (1 - t) * t * t * p2[i] + t ** 3 * p3[i]);
+  // A label sits on its own curve: near the target where the source fans out (siblings have parted),
+  // near the source where the target fans in, else midway; then at the first point clear of placed labels.
+  const placed = [];
+  const spot = (curve, w, a, b) => {
+    const t0 = a.down.length > 1 ? 0.72 : b.up.length > 1 ? 0.3 : 0.5;
+    const boxes = [t0, 0.5, 0.66, 0.34, 0.8, 0.2].map((t) => { const [x, y] = bezier(curve, t); return { x: x - w / 2, y: y - 11, w, h: 22 }; });
+    const free = boxes.find((b) => !placed.some((o) => b.x < o.x + o.w + 4 && o.x < b.x + b.w + 4 && b.y < o.y + o.h + 2 && o.y < b.y + b.h + 2)) || boxes[0];
+    placed.push(free);
+    return free;
+  };
+  const sides = { left: 0, right: 0 };
+
+  L.edges.forEach((edge) => {
+    const { e } = edge;
+    let d, curve, ends = [{ down: [] }, { up: [] }];
+    if (edge.back) {
+      const a = L.items.get(e.from), b = L.items.get(e.to);
+      const side = a.x <= 0 ? "left" : "right", dir = side === "left" ? -1 : 1;
+      const gx = (side === "left" ? minX : maxX) + dir * (24 + L.labelW(e.label) / 2 + sides[side]);
+      sides[side] += 14;
+      const p0 = [a.x + dir * a.w / 2, (a.top + a.bottom) / 2], p3 = [b.x + dir * b.w / 2, (b.top + b.bottom) / 2];
+      const p1 = [gx, p0[1]], p2 = [gx, p3[1]];
+      d = `M${p0} C${p1} ${p2} ${p3}`;
+      curve = [p0, p1, p2, p3];
+    } else {
+      const c = edge.chain;
+      const pts = [[outPort.get(c[0])(c[1]), c[0].bottom]];
+      for (let i = 1; i < c.length - 1; i++) pts.push([c[i].x, c[i].bandTop], [c[i].x, c[i].bandBottom]);
+      const last = c[c.length - 1];
+      pts.push([inPort.get(last)(c[c.length - 2]), last.top]);
+      d = `M${pts[0]}`;
+      for (let i = 1; i < pts.length; i++) {
+        const [a, b] = [pts[i - 1], pts[i]];
+        if (i % 2 === 0) { d += ` L${b}`; continue; } // the straight run through a dummy's band
+        const dy = (b[1] - a[1]) / 2;
+        d += ` C${a[0]},${a[1] + dy} ${b[0]},${b[1] - dy} ${b}`;
+        if (i === 1) curve = [a, [a[0], a[1] + dy], [b[0], b[1] - dy], b];
+      }
+      ends = [c[0], c[1]];
+    }
+    const path = svgEl("path", { d, class: "edge" + (edge.back ? " back" : ""), "marker-end": "url(#arrow)" }, gEdges);
+    path.dataset.from = e.from; path.dataset.to = e.to;
+    if (e.label) {
+      const g = svgEl("g", { class: "edge-label" }, gLabels);
+      g.dataset.from = e.from; g.dataset.to = e.to;
+      const b = spot(curve, L.labelW(e.label), ...ends);
+      svgEl("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx: 6 }, g);
+      svgEl("text", { class: "edge-text", x: b.x + b.w / 2, y: b.y + 15.5, "text-anchor": "middle" }, g).textContent = e.label;
+    }
+  });
+
+  L.items.forEach((it) => {
+    const n = it.node;
+    const g = svgEl("g", { class: "node", tabindex: "0", role: "button", "aria-pressed": "false", "aria-label": `${n.label}, ${kinds.indexOf(n.kind) > 4 ? "Other" : n.kind}` }, gNodes);
+    g.dataset.id = n.id;
+    g.style.setProperty("--k", kindColor(n.kind));
+    svgEl("rect", { class: "node-box", x: it.x - it.w / 2, y: it.top, width: it.w, height: it.h, rx: 10 }, g);
+    const t = svgEl("text", { class: "node-label", "text-anchor": "middle" }, g);
+    it.lines.forEach((line, i) => {
+      svgEl("tspan", { x: it.x, y: it.top + G.padY + G.lineH * i + 13.5 }, t).textContent = line;
+    });
+  });
+
+  const box = gNodes.parentNode.getBBox();
+  const pad = 6;
+  natural = { w: Math.ceil(box.width + pad * 2), h: Math.ceil(box.height + pad * 2) };
+  svg.setAttribute("viewBox", `${Math.floor(box.x - pad)} ${Math.floor(box.y - pad)} ${natural.w} ${natural.h}`);
+  svg.setAttribute("aria-label", `${document.title}: ${DATA.nodes.length} steps and ${DATA.edges.length} connections; the steps are listed in words below.`);
+  applyScale();
+  highlight(selected);
+}
+
+// ── scale: Fit shrinks to the panel but never below 12px text (the canvas scrolls); 1:1 is the drawn size ──
+function applyScale() {
+  const fit = scaleMode === "fit";
+  svg.style.width = fit ? "100%" : natural.w + "px";
+  svg.style.maxWidth = fit ? Math.round(natural.w * 1.2) + "px" : "none";
+  svg.style.minWidth = fit ? Math.ceil(natural.w * G.minScale) + "px" : "0";
+  document.querySelectorAll("[data-scale]").forEach((b) =>
+    b.setAttribute("aria-pressed", String((b.dataset.scale === "fit") === fit)));
+}
+document.querySelectorAll("[data-scale]").forEach((b) => b.addEventListener("click", () => {
+  scaleMode = b.dataset.scale;
+  applyScale();
+}));
+
+// ── highlight: a node, its incident edges and its neighbours stay; everything else dims ──
+function highlight(id) {
+  selected = id && nodeById.has(id) ? id : null;
+  const near = new Set(selected ? [selected] : []);
+  let ins = 0, outs = 0;
+  svg.querySelectorAll(".edge, .edge-label").forEach((p) => {
+    const on = !!selected && (p.dataset.from === selected || p.dataset.to === selected);
+    p.classList.toggle("on", on);
+    if (on && p.classList.contains("edge")) {
+      near.add(p.dataset.from); near.add(p.dataset.to);
+      if (p.dataset.to === selected) ins++;
+      if (p.dataset.from === selected) outs++;
+    }
+  });
+  svg.querySelectorAll(".node").forEach((g) => {
+    g.classList.toggle("on", near.has(g.dataset.id));
+    g.classList.toggle("sel", g.dataset.id === selected);
+    g.setAttribute("aria-pressed", String(g.dataset.id === selected));
+  });
+  svg.classList.toggle("has-sel", !!selected);
+  $("steps").classList.toggle("has-sel", !!selected);
+  $("steps").querySelectorAll("li").forEach((li) =>
+    li.classList.toggle("on", !!selected && (li.dataset.from === selected || li.dataset.to === selected)));
+  $("clear-sel").disabled = !selected;
+  const status = $("sel-status");
+  if (!selected) { status.textContent = "Tap a step to trace its connections."; return; }
+  const strong = el("strong", null, nodeById.get(selected).label);
+  status.replaceChildren(strong, document.createTextNode(`: ${ins} in, ${outs} out.`));
+}
+svg.addEventListener("click", (e) => {
+  const g = e.target.closest(".node");
+  highlight(g && g.dataset.id !== selected ? g.dataset.id : null);
+});
+svg.addEventListener("keydown", (e) => {
+  const g = e.target.closest(".node");
+  if (g && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); highlight(g.dataset.id === selected ? null : g.dataset.id); }
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && selected) highlight(null); });
+$("clear-sel").addEventListener("click", () => highlight(null));
+
+// ── legend and the text alternative ──
+function renderLegend() {
+  const shown = kinds.slice(0, 5).map((k, i) => (i === 4 && kinds.length > 5 ? "Other" : k));
+  const lis = shown.map((k, i) => {
+    const li = el("li");
+    const sw = el("span", "swatch");
+    sw.style.setProperty("--k", `var(--c${i + 1})`);
+    li.append(sw, el("span", null, k));
+    return li;
+  });
+  if (hasBack) {
+    const li = el("li");
+    li.append(el("span", "swatch dash"), el("span", null, "Loops back"));
+    lis.push(li);
+  }
+  $("legend").replaceChildren(...lis);
+}
+
+const sentence = (e) => `${nodeById.get(e.from).label} leads to ${nodeById.get(e.to).label}`;
+function renderSteps() {
+  $("steps").replaceChildren(...DATA.edges.map((e) => {
+    const li = el("li", null, sentence(e));
+    li.dataset.from = e.from; li.dataset.to = e.to;
+    if (e.label) li.append(el("span", "via", ` (${e.label})`));
+    li.append(document.createTextNode("."));
+    return li;
+  }));
+  $("steps-count").textContent = `${DATA.edges.length} connections`;
+}
+const asText = () => [document.title, ...DATA.edges.map((e, i) => `${i + 1}. ${sentence(e)}${e.label ? ` (${e.label})` : ""}.`)].join("\n");
+
+// ── copy: clipboard inside the click handler, else show the text selected ──
+$("copy").addEventListener("click", (e) => {
+  const btn = e.currentTarget;
+  const value = asText();
+  const fallback = () => {
+    const ta = $("copy-fallback");
+    ta.value = value;
+    ta.hidden = false;
+    ta.focus();
+    ta.select();
+    btn.textContent = "Selected: copy it";
+  };
+  if (!navigator.clipboard) { fallback(); return; }
+  navigator.clipboard.writeText(value).then(() => {
+    btn.textContent = "Copied";
+    setTimeout(() => { btn.textContent = "Copy as text"; }, 2000);
+  }, fallback);
+});
+
+renderSteps();
+draw();
+renderLegend();
+// Labels are measured in the web font, so lay out again once it has loaded.
+if (document.fonts) document.fonts.ready.then(draw);
+</script>
+</body>
+</html>

@@ -1,0 +1,609 @@
+<!doctype html>
+<!-- template: components · slots: title, description, DATA -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Component Sheet</title>
+<meta name="description" content="Tested building blocks for a single-file artifact, each liftable as one markup, CSS and script piece.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Lift a block as its marked markup, CSS and script; every block also needs the tokens and base. */
+/* component: tokens */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --sunken: #eaeef2;
+  --fg: #17202b; --muted: #586474; --line: #d8dee6;
+  --accent: #1d4f91; --accent-fg: #ffffff; --danger: #b3261e; --ok: #1b6e3c; --warn: #8a5300; --shadow: rgb(0 0 0 / 0.12);
+  --c1: #0072B2; --c2: #009E73; --c3: #D55E00; --c4: #B2548F; --c5: #C77F00;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem; --step-0: 0.9375rem; --step-1: 1.0625rem; --step-2: 1.375rem; --step-3: 1.75rem;
+  --radius: 10px;
+  color-scheme: light;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1318; --surface: #161d25; --sunken: #1d252f;
+    --fg: #e4e9ef; --muted: #96a3b3; --line: #2a3440;
+    --accent: #7fb2ee; --accent-fg: #0e1318; --danger: #f2867e; --ok: #6fcf97; --warn: #e3b55a; --shadow: rgb(0 0 0 / 0.5);
+    --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1318; --surface: #161d25; --sunken: #1d252f;
+  --fg: #e4e9ef; --muted: #96a3b3; --line: #2a3440;
+  --accent: #7fb2ee; --accent-fg: #0e1318; --danger: #f2867e; --ok: #6fcf97; --warn: #e3b55a; --shadow: rgb(0 0 0 / 0.5);
+  --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+  color-scheme: dark;
+}
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 400 var(--step-0)/1.5 var(--font-body);
+  padding-inline: 16px; padding-block: 0 40px;
+  -webkit-text-size-adjust: 100%;
+}
+/* base */
+*, *::before, *::after { box-sizing: border-box }
+[hidden] { display: none !important }
+img { max-width: 100% }
+.page { max-width: 44rem; margin-inline: auto; display: grid; gap: 16px; padding-top: 16px }
+h1, h2 { margin: 0; text-wrap: balance; font-weight: 600 }
+h1 { font-size: var(--step-2); line-height: 1.2; letter-spacing: -0.01em }
+h2 { font-size: var(--step-1); line-height: 1.3; scroll-margin-top: 76px }
+p { margin: 0 }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums }
+.lede, .hint { color: var(--muted); max-width: 62ch }
+.hint { font-size: var(--step--1) }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 12px; min-width: 0 }
+.btn {
+  font: 500 var(--step-0)/1 var(--font-body); border-radius: 8px; padding: 11px 16px; min-height: 42px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer;
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg) }
+.btn.quiet { border-color: transparent; background: none; color: var(--muted); padding-inline: 8px }
+:is(button, input, a, summary, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.status { font-size: var(--step--1); color: var(--ok) }
+.panel > .btn { justify-self: start }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center }
+/* component: theme-switch */
+.seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--sunken); border-radius: 999px; flex: none }
+.seg button {
+  font: 500 var(--step--1)/1 var(--font-body); color: var(--muted); background: none;
+  border: 0; border-radius: 999px; padding: 7px 12px; min-height: 32px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px var(--shadow) }
+/* component: header */
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; margin-inline: -16px; padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--line) }
+.bar > div { max-width: 44rem; margin-inline: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px }
+.bar h1 { min-width: 0 }
+/* component: kpi */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(5.75rem, 1fr)); gap: 8px; margin: 0 }
+.kpi { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; display: grid; gap: 2px; min-width: 0 }
+.kpi dt { font-size: var(--step--1); color: var(--muted) }
+.kpi dd { margin: 0; font-size: var(--step-2); font-weight: 500; line-height: 1.2; overflow-wrap: anywhere }
+.kpi dd small { font-size: var(--step--1); color: var(--muted); margin-left: 2px }
+.delta { font-size: var(--step--1); font-weight: 500; white-space: nowrap }
+.delta.good { color: var(--ok) } .delta.bad { color: var(--danger) }
+/* component: bar-chart */
+.chart { display: block; min-width: 0 }
+.ch { display: block; width: 100%; height: auto; overflow: visible }
+.ch text { font: 400 12px var(--font-data); font-variant-numeric: tabular-nums }
+.ch .lab, .ch .val { fill: var(--fg) } .ch .tick { fill: var(--muted) }
+.ch .grid { stroke: var(--line); stroke-width: 1 } .ch .base { stroke: var(--muted); stroke-width: 1 }
+.ch .bar { fill: var(--c1) }
+/* component: line-chart (plus the bar-chart rules above) */
+.ch .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round }
+.ch .dot { stroke: var(--surface); stroke-width: 2 }
+.legend { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--step--1); color: var(--muted) }
+.legend li { display: flex; align-items: center; gap: 6px }
+.legend i { display: block; width: 14px; height: 3px; border-radius: 2px }
+/* component: table */
+.tablewrap { overflow: auto; max-height: 15rem; border: 1px solid var(--line); border-radius: 8px; min-width: 0 }
+table { border-collapse: collapse; width: 100%; font-size: var(--step--1) }
+th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap }
+th { position: sticky; top: 0; background: var(--sunken); padding: 0 }
+th button { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 8px 10px; font-weight: 600; cursor: pointer }
+th button::after { content: " ↕"; color: var(--muted) }
+th[aria-sort="ascending"] button::after { content: " ▲" } th[aria-sort="descending"] button::after { content: " ▼" }
+th button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px }
+.n { text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums }
+tbody tr:last-child td { border-bottom: 0 }
+/* component: field */
+.field { display: grid; gap: 4px; min-width: 0 }
+label { font-size: var(--step--1); font-weight: 500 }
+input {
+  font: 400 var(--step-0)/1.3 var(--font-body); color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; min-height: 42px; width: 100%; min-width: 0;
+}
+input[inputmode="numeric"] { font-family: var(--font-data); font-variant-numeric: tabular-nums }
+input[aria-invalid="true"] { border-color: var(--danger) }
+.err { font-size: var(--step--1); color: var(--danger); min-height: 1.25em }
+/* component: confirm */
+.btn.armed { border-color: var(--danger); color: var(--danger); background: var(--surface) }
+/* component: toast */
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 9;
+  max-width: calc(100% - 32px); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: var(--step--1);
+}
+.toast:empty { display: none }
+@media (prefers-reduced-motion: no-preference) { .toast { animation: rise 0.2s ease-out } @keyframes rise { from { opacity: 0; translate: 0 8px } } }
+/* component: callout */
+.callout { border-left: 4px solid var(--tone); background: var(--sunken); border-radius: 0 8px 8px 0; padding: 10px 14px; display: grid; gap: 2px; max-width: 65ch }
+.callout b { color: var(--tone); font-size: var(--step--1); letter-spacing: 0.06em; text-transform: uppercase }
+.callout.note { --tone: var(--accent) } .callout.warning { --tone: var(--warn) } .callout.decision { --tone: var(--ok) }
+/* component: empty */
+.empty { border: 1px dashed var(--line); border-radius: var(--radius); padding: 24px 16px; display: grid; gap: 10px; justify-items: center; text-align: center }
+.empty p { color: var(--muted); max-width: 40ch }
+/* component: pill */
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor; font-size: var(--step--1); font-weight: 500; color: var(--tone) }
+.pill::before { content: ""; display: block; width: 7px; height: 7px; border-radius: 50%; background: currentColor }
+.pill.ok { --tone: var(--ok) } .pill.warn { --tone: var(--warn) } .pill.fail { --tone: var(--danger) } .pill.neutral { --tone: var(--muted) }
+/* component: tabs */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto }
+.tabs button { font: 500 var(--step--1)/1 var(--font-body); background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 10px 12px; cursor: pointer; flex: none }
+.tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent) }
+/* component: details */
+details { border: 1px solid var(--line); border-radius: 8px }
+summary { cursor: pointer; padding: 10px 12px; font-weight: 500 }
+details > :not(summary) { margin: 0; padding: 0 12px 12px 32px }
+/* component: code */
+.code { border: 1px solid var(--line); border-radius: 8px; background: var(--sunken); min-width: 0 }
+.code .row { justify-content: space-between; padding: 6px 6px 0 12px; font-size: var(--step--1); color: var(--muted) }
+.code .btn { min-height: 32px; padding: 6px 10px; font-size: var(--step--1) }
+.code pre { margin: 0; padding: 10px 12px 12px; overflow-x: auto; font: 400 var(--step--1)/1.5 var(--font-data) }
+textarea.copy-fallback { width: 100%; min-height: 4rem; font: 400 var(--step--1)/1.45 var(--font-data); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px }
+/* component: toc */
+.toc ol { margin: 0; padding-left: 1.4em; columns: 2 12rem; column-gap: 24px; font-size: var(--step--1) }
+.toc a { color: var(--accent) }
+</style>
+</head>
+<body>
+<!-- component: header -->
+<header class="bar"><div>
+  <h1 data-slot="title">Component Sheet</h1>
+  <!-- component: theme-switch -->
+  <div class="seg" role="group" aria-label="Theme">
+    <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+    <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+    <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+  </div>
+  <!-- /component: theme-switch -->
+</div></header>
+<!-- /component: header -->
+<main class="page">
+  <p class="lede" data-slot="description">Building blocks for a single-file page, shown on a weekly review of checkout-api. Lift the markup, CSS and script of a block together.</p>
+
+  <section class="panel"><h2 data-toc>Tokens</h2>
+    <!-- component: tokens -->
+    <p class="hint">Every color is a token defined on bare <code>:root</code>, then redefined in the guarded <code>prefers-color-scheme: dark</code> block and in <code>[data-theme="dark"]</code>, so Auto, Light and Dark all hold. <code>body</code> paints <code>--bg</code>; <code>--c1</code>…<code>--c5</code> are the chart palette, by series index.</p>
+    <!-- /component: tokens -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Theme switch</h2>
+    <p class="hint">The Auto / Light / Dark group in the header. Auto removes <code>data-theme</code>; the choice is remembered when storage allows.</p>
+  </section>
+
+  <section class="panel"><h2 data-toc>Sticky header</h2>
+    <p class="hint">The bar at the top sticks below the phone's safe-area inset and spans the 16px gutter edge to edge.</p>
+  </section>
+
+  <section class="panel"><h2 data-toc>KPI tiles</h2>
+    <p class="hint">This week, with the change against last week.</p>
+    <!-- component: kpi -->
+    <dl class="kpis" id="kpis"></dl>
+    <!-- /component: kpi -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Bar chart</h2>
+    <p class="hint">Requests by region this week, millions. One scale from zero, values labelled at the bar end.</p>
+    <!-- component: bar-chart -->
+    <div class="chart" id="bars" data-label="Requests by region, millions"></div>
+    <!-- /component: bar-chart -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Line chart</h2>
+    <p class="hint">p95 latency per region by day, milliseconds. Last point marked and labelled.</p>
+    <!-- component: line-chart -->
+    <div class="chart" id="lines" data-label="p95 latency by day, ms"></div>
+    <!-- /component: line-chart -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Sortable table</h2>
+    <!-- component: table -->
+    <div class="tablewrap"><table id="endpoints"><thead><tr></tr></thead><tbody></tbody></table></div>
+    <!-- /component: table -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Field and action</h2>
+    <!-- component: field -->
+    <form class="field" id="thr-form" novalidate>
+      <label for="thr">Alert threshold (ms)</label>
+      <input id="thr" inputmode="numeric" autocomplete="off" placeholder="250" aria-describedby="thr-err">
+      <span class="err" id="thr-err" aria-live="polite"></span>
+      <div class="row">
+        <button type="button" class="btn primary" id="thr-set">Set threshold</button>
+        <span class="status" id="thr-status" role="status"></span>
+      </div>
+    </form>
+    <!-- /component: field -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Two-click confirm</h2>
+    <!-- component: confirm -->
+    <div class="row">
+      <button type="button" class="btn" id="purge">Purge CDN cache</button>
+      <span class="status" id="purge-status" role="status"></span>
+    </div>
+    <!-- /component: confirm -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Toast</h2>
+    <!-- component: toast -->
+    <button type="button" class="btn" id="toast-demo">Show toast</button>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <!-- /component: toast -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Callouts</h2>
+    <!-- component: callout -->
+    <div class="callout note"><b>Note</b><p>Traffic from the Black Friday rehearsal is included in Thursday's numbers.</p></div>
+    <div class="callout warning"><b>Warning</b><p>The ap-south-1 pool runs at 78% CPU at peak; one more node before November.</p></div>
+    <div class="callout decision"><b>Decision</b><p>Keep the 250 ms p95 alert and page only after two consecutive breaches.</p></div>
+    <!-- /component: callout -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Empty state</h2>
+    <!-- component: empty -->
+    <div class="empty" id="empty">
+      <p>No saved views yet. Save the current filters to come back to them.</p>
+      <button type="button" class="btn primary" id="empty-act">Save this view</button>
+    </div>
+    <p class="status" id="empty-done" hidden>Saved “checkout-api, last 7 days”.</p>
+    <!-- /component: empty -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Status pills</h2>
+    <!-- component: pill -->
+    <div class="row">
+      <span class="pill ok">Healthy</span><span class="pill warn">Degraded</span><span class="pill fail">Down</span><span class="pill neutral">Paused</span>
+    </div>
+    <!-- /component: pill -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Tabs</h2>
+    <!-- component: tabs -->
+    <div class="tabs" role="tablist" aria-label="Release 4.18">
+      <button type="button" role="tab" id="tab-a" aria-controls="tp-a" aria-selected="true">Summary</button>
+      <button type="button" role="tab" id="tab-b" aria-controls="tp-b" aria-selected="false" tabindex="-1">Changes</button>
+      <button type="button" role="tab" id="tab-c" aria-controls="tp-c" aria-selected="false" tabindex="-1">Rollback</button>
+    </div>
+    <div role="tabpanel" id="tp-a" aria-labelledby="tab-a"><p>Release 4.18 moved card tokenisation to the edge and cut p95 by 14 ms.</p></div>
+    <div role="tabpanel" id="tp-b" aria-labelledby="tab-b" hidden><p>Three services changed: checkout-api, token-edge and ledger-writer.</p></div>
+    <div role="tabpanel" id="tp-c" aria-labelledby="tab-c" hidden><p>Undo the deployment and flip <code>edge_tokenise</code> off; no data migration to reverse.</p></div>
+    <!-- /component: tabs -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Collapsible section</h2>
+    <!-- component: details -->
+    <details>
+      <summary>Runbook: p95 above threshold</summary>
+      <ol><li>Check the region breakdown above.</li><li>Look for a deploy in the last hour.</li><li>Roll back if one lines up.</li></ol>
+    </details>
+    <!-- /component: details -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Code with copy</h2>
+    <!-- component: code -->
+    <div class="code">
+      <div class="row"><span>shell</span><button type="button" class="btn" data-copy="rollback">Copy</button></div>
+      <pre id="rollback"><code>kubectl rollout undo deployment/checkout-api -n payments
+kubectl rollout status deployment/checkout-api -n payments</code></pre>
+    </div>
+    <textarea class="copy-fallback" id="copy-fallback" readonly hidden aria-label="Text to copy"></textarea>
+    <!-- /component: code -->
+  </section>
+
+  <section class="panel"><h2 data-toc>Contents</h2>
+    <!-- component: toc -->
+    <nav class="toc" aria-label="Contents"><ol id="toc"></ol></nav>
+    <!-- /component: toc -->
+  </section>
+</main>
+
+<script>
+const DATA = {
+  // better: which direction is good news, so the delta's color is semantic, not just its sign.
+  kpis: [
+    { label: "Requests", value: 4.82, unit: "M", delta: 6.1, deltaUnit: "%", better: "up" },
+    { label: "p95 latency", value: 182, unit: "ms", delta: -14, deltaUnit: " ms", better: "down" },
+    { label: "Error rate", value: 0.42, unit: "%", delta: 0.09, deltaUnit: "pp", better: "down" },
+  ],
+  bars: [
+    { label: "eu-west-1", value: 1.92 },
+    { label: "us-east-1", value: 1.57 },
+    { label: "ap-south-1", value: 0.88 },
+    { label: "sa-east-1", value: 0.45 },
+  ],
+  labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+  // At most five series: the palette has five validated slots, assigned by index.
+  series: [
+    { label: "EU west", values: [176, 181, 174, 205, 188, 162, 158] },
+    { label: "US east", values: [168, 172, 170, 196, 179, 151, 149] },
+    { label: "AP south", values: [221, 230, 226, 248, 236, 214, 209] },
+  ],
+  rows: [
+    { Endpoint: "POST /orders", Requests: 1240000, "p95 ms": 212, "Errors %": 0.61 },
+    { Endpoint: "GET /cart", Requests: 1910000, "p95 ms": 96, "Errors %": 0.08 },
+    { Endpoint: "POST /payments", Requests: 860000, "p95 ms": 248, "Errors %": 0.94 },
+    { Endpoint: "GET /orders/:id", Requests: 540000, "p95 ms": 74, "Errors %": 0.05 },
+    { Endpoint: "POST /refunds", Requests: 27000, "p95 ms": 301, "Errors %": 1.2 },
+    { Endpoint: "GET /health", Requests: 250000, "p95 ms": 4, "Errors %": 0 },
+  ],
+};
+
+// base: helpers every block uses
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+function el(tag, cls, content) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (content != null) n.textContent = content;
+  return n;
+}
+// Storage throws in the sandboxed preview; failure just means "not kept".
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* not kept */ } },
+};
+
+// component: theme-switch
+function setTheme(mode) {
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode; else delete root.dataset.theme;
+  document.querySelectorAll("[data-theme-set]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === (mode || "auto"))));
+}
+document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => {
+  setTheme(b.dataset.themeSet);
+  store.set("theme", b.dataset.themeSet);
+}));
+setTheme(store.get("theme"));
+
+// component: kpi
+function kpis(dl, items) {
+  dl.replaceChildren(...items.map((k) => {
+    const box = el("div", "kpi");
+    const dd = el("dd", "num", String(k.value));
+    dd.append(el("small", null, k.unit));
+    const good = (k.delta > 0) === (k.better === "up");
+    const d = el("span", "delta num " + (k.delta === 0 ? "" : good ? "good" : "bad"),
+      `${k.delta > 0 ? "▲ +" : k.delta < 0 ? "▼ −" : ""}${Math.abs(k.delta)}${k.deltaUnit}`);
+    box.append(el("dt", null, k.label), dd, d);
+    return box;
+  }));
+}
+kpis($("kpis"), DATA.kpis);
+
+// base: SVG helpers both charts use
+const NS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs, parent, text) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (text != null) n.textContent = text;
+  if (parent) parent.append(n);
+  return n;
+}
+// Round tick step (1, 2 or 5 × 10^n) giving about n intervals; the axis top is a multiple of it.
+function scale(max, n) {
+  const raw = max / n, p = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((m) => m * p).find((s) => s >= raw);
+  return { step, top: Math.ceil(max / step - 1e-9) * step };
+}
+const fmt = (v) => +v.toFixed(2) + "";
+// Charts draw at their real width so 12px text stays 12px; redraw only when the width changes.
+function onWidth(host, draw) {
+  let w = 0;
+  new ResizeObserver(() => { if (host.clientWidth !== w) { w = host.clientWidth; requestAnimationFrame(draw); } }).observe(host);
+}
+
+// component: bar-chart
+function barChart(host, rows) {
+  const W = Math.max(280, host.clientWidth), L = 84, R = 44, H = 28, ph = rows.length * H;
+  const { step, top } = scale(Math.max(...rows.map((r) => r.value)), 4);
+  const x = (v) => L + (v / top) * (W - L - R);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${ph + 20}`, class: "ch", role: "img", "aria-label": host.dataset.label });
+  for (let t = 0; t <= top + 1e-9; t += step) {
+    svgEl("line", { x1: x(t), x2: x(t), y1: 0, y2: ph, class: t ? "grid" : "base" }, svg);
+    svgEl("text", { x: x(t), y: ph + 15, class: "tick", "text-anchor": "middle" }, svg, fmt(t));
+  }
+  rows.forEach((r, i) => {
+    const y = i * H + 6;
+    svgEl("text", { x: L - 8, y: y + 12, class: "lab", "text-anchor": "end" }, svg, r.label);
+    const bar = svgEl("rect", { x: L, y, width: Math.max(1, x(r.value) - L), height: H - 12, rx: 3, class: "bar" }, svg);
+    svgEl("title", {}, bar, `${r.label}: ${fmt(r.value)}`);
+    svgEl("text", { x: x(r.value) + 6, y: y + 12, class: "val" }, svg, fmt(r.value));
+  });
+  host.replaceChildren(svg);
+}
+onWidth($("bars"), () => barChart($("bars"), DATA.bars));
+
+// component: line-chart
+function lineChart(host, labels, series) {
+  const W = Math.max(280, host.clientWidth), H = 190, L = 34, R = 92, T = 8, B = 22;
+  const { step, top } = scale(Math.max(...series.flatMap((s) => s.values)), 4);
+  const x = (i) => L + (i * (W - L - R)) / (labels.length - 1);
+  const y = (v) => T + (1 - v / top) * (H - T - B);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "ch", role: "img", "aria-label": host.dataset.label });
+  for (let t = 0; t <= top + 1e-9; t += step) {
+    svgEl("line", { x1: L, x2: W - R, y1: y(t), y2: y(t), class: t ? "grid" : "base" }, svg);
+    svgEl("text", { x: L - 6, y: y(t) + 4, class: "tick", "text-anchor": "end" }, svg, fmt(t));
+  }
+  const every = Math.ceil(labels.length / Math.floor((W - L - R) / 34));
+  labels.forEach((lab, i) => {
+    if (i % every === 0 || i === labels.length - 1)
+      svgEl("text", { x: x(i), y: H - 5, class: "tick", "text-anchor": "middle" }, svg, lab);
+  });
+  const ends = [];
+  const legend = el("ul", "legend");
+  series.forEach((s, i) => {
+    const color = `var(--c${i + 1})`, last = s.values.length - 1, v = s.values[last];
+    const line = svgEl("polyline", { points: s.values.map((val, j) => `${x(j)},${y(val)}`).join(" "), class: "line" }, svg);
+    line.style.stroke = color;
+    svgEl("title", {}, line, `${s.label}: ${s.values.map((val, j) => `${labels[j]} ${val}`).join(", ")}`);
+    const dot = svgEl("circle", { cx: x(last), cy: y(v), r: 4, class: "dot" }, svg);
+    dot.style.fill = color;
+    ends.push({ y: y(v) + 4, text: `${s.label} ${fmt(v)}` });
+    const li = el("li"), sw = el("i");
+    sw.style.background = color;
+    li.append(sw, s.label);
+    legend.append(li);
+  });
+  // Direct end labels stay in text color; nudge them apart so none overlap.
+  ends.sort((a, b) => a.y - b.y).forEach((e, i, a) => {
+    if (i && e.y - a[i - 1].y < 14) e.y = a[i - 1].y + 14;
+    svgEl("text", { x: W - R + 8, y: e.y, class: "lab" }, svg, e.text);
+  });
+  host.replaceChildren(svg, legend);
+}
+onWidth($("lines"), () => lineChart($("lines"), DATA.labels, DATA.series));
+
+// component: table
+function sortableTable(table, rows) {
+  const cols = Object.keys(rows[0]);
+  const isNum = (c) => typeof rows[0][c] === "number";
+  let key = null, dir = 1;
+  const heads = cols.map((c) => {
+    const th = el("th", isNum(c) ? "n" : null), b = el("button", null, c);
+    th.scope = "col";
+    b.type = "button";
+    b.addEventListener("click", () => { dir = key === c ? -dir : isNum(c) ? -1 : 1; key = c; draw(); });
+    th.append(b);
+    return th;
+  });
+  table.tHead.rows[0].replaceChildren(...heads);
+  function draw() {
+    const sorted = key == null ? rows : [...rows].sort((a, b) =>
+      dir * (isNum(key) ? a[key] - b[key] : String(a[key]).localeCompare(String(b[key]))));
+    heads.forEach((th, i) => {
+      if (cols[i] === key) th.setAttribute("aria-sort", dir > 0 ? "ascending" : "descending");
+      else th.removeAttribute("aria-sort");
+    });
+    table.tBodies[0].replaceChildren(...sorted.map((r) => {
+      const tr = el("tr");
+      cols.forEach((c) => tr.append(el("td", isNum(c) ? "n" : null, isNum(c) ? r[c].toLocaleString("en-US") : r[c])));
+      return tr;
+    }));
+  }
+  draw();
+}
+sortableTable($("endpoints"), DATA.rows);
+
+// component: field
+// A type="button" click plus Enter on keydown; submit never fires in the sandbox.
+function setThreshold() {
+  const input = $("thr"), raw = input.value.trim(), n = Number(raw);
+  const msg = !raw ? "Enter a threshold in milliseconds."
+    : !(Number.isInteger(n) && n >= 1 && n <= 5000) ? "Use a whole number from 1 to 5000." : "";
+  $("thr-err").textContent = msg;
+  input.setAttribute("aria-invalid", String(!!msg));
+  $("thr-status").textContent = msg ? "" : `Alerts when p95 passes ${n} ms.`;
+  if (msg) input.focus();
+}
+$("thr-set").addEventListener("click", setThreshold);
+$("thr-form").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.matches("input")) { e.preventDefault(); setThreshold(); }
+});
+
+// component: confirm
+// The first click arms and relabels; a second within 3 s acts; otherwise it disarms.
+function armed(btn, label, armedLabel, act) {
+  if (btn.classList.contains("armed")) {
+    clearTimeout(btn._t);
+    btn.classList.remove("armed");
+    btn.textContent = label;
+    act();
+    return;
+  }
+  btn.classList.add("armed");
+  btn.textContent = armedLabel;
+  btn._t = setTimeout(() => { btn.classList.remove("armed"); btn.textContent = label; }, 3000);
+}
+$("purge").addEventListener("click", (e) => armed(e.currentTarget, "Purge CDN cache", "Tap again to purge", () => {
+  $("purge-status").textContent = "Purged at " + new Date().toTimeString().slice(0, 5) + ".";
+}));
+
+// component: toast
+let toastTimer;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.textContent = ""; }, 2600);
+}
+$("toast-demo").addEventListener("click", () => toast("Threshold saved for checkout-api."));
+
+// component: empty
+$("empty-act").addEventListener("click", () => {
+  $("empty").hidden = true;
+  $("empty-done").hidden = false;
+});
+
+// component: tabs
+document.querySelectorAll('[role="tablist"]').forEach((list) => {
+  const tabs = [...list.querySelectorAll('[role="tab"]')];
+  const select = (tab) => tabs.forEach((t) => {
+    const on = t === tab;
+    t.setAttribute("aria-selected", String(on));
+    t.tabIndex = on ? 0 : -1;
+    $(t.getAttribute("aria-controls")).hidden = !on;
+  });
+  tabs.forEach((t, i) => {
+    t.addEventListener("click", () => select(t));
+    t.addEventListener("keydown", (e) => {
+      const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (!d) return;
+      const next = tabs[(i + d + tabs.length) % tabs.length];
+      select(next);
+      next.focus();
+    });
+  });
+});
+
+// component: code
+// Clipboard inside the click handler; on rejection or absence, show the text selected.
+document.querySelectorAll("[data-copy]").forEach((btn) => btn.addEventListener("click", () => {
+  const value = $(btn.dataset.copy).textContent;
+  const fallback = () => {
+    const ta = $("copy-fallback");
+    ta.value = value;
+    ta.hidden = false;
+    ta.focus();
+    ta.select();
+    btn.textContent = "Selected";
+  };
+  if (!navigator.clipboard) { fallback(); return; }
+  navigator.clipboard.writeText(value).then(() => {
+    btn.textContent = "Copied";
+    setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+  }, fallback);
+}));
+
+// component: toc
+const used = new Set();
+$("toc").replaceChildren(...[...document.querySelectorAll("h2[data-toc]")].map((h) => {
+  let id = h.id || h.textContent.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  while (used.has(id)) id += "-2";
+  used.add(id);
+  h.id = id;
+  const li = el("li"), a = el("a", null, h.textContent);
+  a.href = "#" + id;
+  li.append(a);
+  return li;
+}));
+</script>
+</body>
+</html>

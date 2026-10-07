@@ -1,0 +1,480 @@
+<!doctype html>
+<!-- template: timeline · slots: title, description, caption, DATA -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Payments Q4 Roadmap</title>
+<meta name="description" content="When each piece of the payments platform rework lands this quarter, lane by lane, from the ledger migration to the Black Friday change freeze.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one 52rem column; legend and view switch, then Chart or List, then the detail panel. */
+:root {
+  --bg: #f5f5f2; --surface: #ffffff; --sunken: #ebebe6;
+  --fg: #1c1f24; --muted: #5d636c; --line: #dcdcd5; --grid: #ecece6; --axis: #9a9ea4;
+  --accent: #6a3fb5; --accent-fg: #ffffff; --ok: #1b6e3c; --shadow: rgb(0 0 0 / 0.12);
+  --c1: #0072B2; --c2: #009E73; --c3: #D55E00; --c4: #B2548F; --c5: #C77F00;
+  --font-body: "Public Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-data: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem; --step-0: 0.9375rem; --step-1: 1.0625rem; --step-2: 1.375rem; --step-3: 1.75rem;
+  --radius: 10px;
+  color-scheme: light;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111317; --surface: #191c21; --sunken: #22262c;
+    --fg: #e6e7ea; --muted: #9da3ad; --line: #2e333a; --grid: #262a30; --axis: #6b717b;
+    --accent: #b99cf0; --accent-fg: #111317; --ok: #6fcf97; --shadow: rgb(0 0 0 / 0.45);
+    --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111317; --surface: #191c21; --sunken: #22262c;
+  --fg: #e6e7ea; --muted: #9da3ad; --line: #2e333a; --grid: #262a30; --axis: #6b717b;
+  --accent: #b99cf0; --accent-fg: #111317; --ok: #6fcf97; --shadow: rgb(0 0 0 / 0.45);
+  --c1: #357FB5; --c2: #009E73; --c3: #D55E00; --c4: #A64E97; --c5: #C77F00;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box }
+[hidden] { display: none !important }
+img { max-width: 100% }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 400 var(--step-0)/1.5 var(--font-body);
+  padding-inline: 16px; padding-block: 20px 40px;
+  -webkit-text-size-adjust: 100%;
+}
+.page { max-width: 52rem; margin-inline: auto; display: grid; gap: 18px }
+h1, h2, h3 { margin: 0; text-wrap: balance; font-weight: 600 }
+h1 { font-size: var(--step-3); line-height: 1.15; letter-spacing: -0.015em }
+h2 { font-size: var(--step-1); line-height: 1.3 }
+h3 { font-size: var(--step-0); line-height: 1.3 }
+p { margin: 0 }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-size: 0.92em }
+.lede { color: var(--muted); max-width: 60ch }
+.caption { color: var(--muted); font-size: var(--step--1); max-width: 65ch }
+
+header.top { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px }
+header.top .intro { display: grid; gap: 6px; min-width: 0; flex: 1 1 16rem }
+
+.seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--sunken); border-radius: 999px; flex: none }
+.seg button {
+  font: 500 var(--step--1)/1 var(--font-body); color: var(--muted); background: none;
+  border: 0; border-radius: 999px; padding: 7px 12px; min-height: 32px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px var(--shadow) }
+
+.bar-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px }
+.legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: var(--step--1); color: var(--muted) }
+.legend li { display: flex; align-items: center; gap: 6px }
+.swatch { display: block; width: 12px; height: 12px; border-radius: 3px; background: var(--kc); flex: none }
+.swatch.point { width: 10px; height: 10px; border-radius: 1px; transform: rotate(45deg) }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 14px; min-width: 0 }
+.scroller { overflow-x: auto; margin: -16px; padding: 12px 0 }
+.chart { display: block; max-width: none }
+.chart text { font: 500 12px var(--font-body) }
+.chart .t-month { fill: var(--fg); font-weight: 700 }
+.chart .t-tick { fill: var(--muted); font: 400 11.5px var(--font-data); font-variant-numeric: tabular-nums }
+.chart .t-lane { fill: var(--fg); font-weight: 600 }
+.chart .t-item { fill: var(--fg) }
+.chart .t-today { fill: var(--accent); font-weight: 600 }
+.chart .lane-bg { fill: var(--sunken) }
+.chart .g-week { stroke: var(--grid); stroke-width: 1 }
+.chart .g-month { stroke: var(--axis); stroke-width: 1 }
+.chart .g-axis { stroke: var(--axis); stroke-width: 1 }
+.chart .g-today { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 3 }
+.chart .range { fill: var(--kc); fill-opacity: 0.2; stroke: var(--kc); stroke-width: 1.5 }
+.chart .cap { fill: var(--kc) }
+.chart .point { fill: var(--kc); stroke: var(--surface); stroke-width: 2 }
+.chart .hit { fill: transparent }
+.chart .item { cursor: pointer; outline: none }
+.chart .item.sel .range { fill-opacity: 0.38; stroke-width: 2.5 }
+.chart .item:focus-visible .hit { stroke: var(--accent); stroke-width: 2 }
+
+.lanes { display: grid; gap: 18px }
+.lane { display: grid; gap: 6px; min-width: 0 }
+.lane-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line) }
+.lane-head .meta { color: var(--muted); font-size: var(--step--1) }
+.items { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px }
+.it {
+  width: 100%; display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 2px 10px; align-items: baseline;
+  text-align: left; font: inherit; color: inherit; background: none; border: 1px solid transparent;
+  border-radius: 8px; padding: 8px 10px; cursor: pointer;
+}
+.it .swatch { align-self: center }
+.it[aria-pressed="true"] { background: var(--sunken); border-color: var(--line) }
+.it .what { min-width: 0; font-weight: 500; overflow-wrap: anywhere }
+.it .when { grid-column: 2; display: flex; flex-wrap: wrap; gap: 2px 10px; color: var(--muted); font-size: var(--step--1) }
+.it .note { grid-column: 2; color: var(--muted); font-size: var(--step--1); overflow-wrap: anywhere }
+.now { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); font-weight: 600 }
+.now::before { content: ""; display: block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent) }
+
+.detail { gap: 10px }
+.detail .empty { color: var(--muted); font-size: var(--step--1) }
+.detail .kind { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--step--1) }
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 }
+.facts div { display: grid; gap: 2px; min-width: 0 }
+.facts dt { font-size: var(--step--1); color: var(--muted) }
+.facts dd { margin: 0; font-weight: 500; overflow-wrap: anywhere }
+.detail .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap }
+.btn {
+  font: 500 var(--step--1)/1 var(--font-body); border-radius: 8px; padding: 9px 14px; min-height: 36px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer;
+}
+:is(button, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+@media (max-width: 420px) {
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+  .facts .wide { grid-column: 1 / -1 }
+}
+@media (prefers-reduced-motion: no-preference) { .it, .chart .range { transition: background-color 0.15s, fill-opacity 0.15s } }
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="top">
+    <div class="intro">
+      <h1 data-slot="title">Payments Q4 Roadmap</h1>
+      <p class="lede" data-slot="description">When each piece of the payments platform rework lands this quarter, lane by lane, from the ledger migration to the Black Friday change freeze.</p>
+    </div>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+      <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+    </div>
+  </header>
+
+  <div class="bar-row">
+    <div class="seg" role="group" aria-label="View">
+      <button type="button" data-view="chart" aria-pressed="false">Chart</button>
+      <button type="button" data-view="list" aria-pressed="false">List</button>
+    </div>
+    <ul class="legend" id="legend" aria-label="Kinds"></ul>
+  </div>
+
+  <section class="panel" id="chart-view" aria-label="Timeline chart" hidden>
+    <div class="scroller" id="scroller"><svg class="chart" id="chart" role="group" aria-label="Timeline"></svg></div>
+  </section>
+  <section class="panel lanes" id="list-view" aria-label="Timeline list" hidden></section>
+
+  <section class="panel detail" id="detail" aria-live="polite">
+    <p class="empty" id="detail-empty">Tap a bar, a diamond or a list row to see its dates, duration and note.</p>
+    <div id="detail-body" class="detail" hidden>
+      <p class="kind"><span class="swatch" id="d-swatch"></span><span id="d-kind"></span></p>
+      <h2 id="d-label"></h2>
+      <dl class="facts">
+        <div class="wide"><dt>Dates</dt><dd class="num" id="d-dates"></dd></div>
+        <div><dt>Duration</dt><dd class="num" id="d-len"></dd></div>
+        <div><dt>Status</dt><dd id="d-status"></dd></div>
+      </dl>
+      <div class="row"><p class="lede" id="d-note"></p><button type="button" class="btn" id="d-close">Close</button></div>
+    </div>
+  </section>
+
+  <p class="caption" data-slot="caption">Planned dates as of the 5 October planning review; bars run from the first to the last working day inclusive. The change freeze is fixed by the finance calendar and does not move.</p>
+</main>
+
+<script>
+const DATA = {
+  unit: "week",
+  lanes: [
+    { name: "API & ledger", items: [
+      { label: "Idempotency keys on /charges", start: "2026-09-01", end: "2026-09-18", kind: "Engineering", note: "Retries from the mobile SDK no longer double-charge; keys are kept for 24 hours." },
+      { label: "Ledger double-entry migration", start: "2026-09-21", end: "2026-10-16", kind: "Engineering", note: "Backfills 41 M historical rows in nightly 2 M batches; reads switch once totals reconcile." },
+      { label: "API v3 freeze", start: "2026-10-19", kind: "Milestone", note: "No breaking changes after this date; additive fields only." },
+      { label: "Webhooks v3 dark launch", start: "2026-10-26", end: "2026-11-13", kind: "Rollout", note: "v3 events are sent to a shadow endpoint and diffed against v2 before any merchant sees them." },
+    ] },
+    { name: "Web checkout", items: [
+      { label: "One-page checkout redesign", start: "2026-09-07", end: "2026-10-02", kind: "Engineering", note: "Address, shipping and payment on one screen; saved cards prefilled." },
+      { label: "3-D Secure 2 challenge flow", start: "2026-10-05", end: "2026-10-23", kind: "Engineering", note: "Frictionless path for low-risk cards; the bank challenge opens in a modal instead of a redirect." },
+      { label: "Web checkout GA", start: "2026-11-09", kind: "Milestone", note: "Old checkout kept behind a kill switch until the freeze ends." },
+    ] },
+    { name: "Mobile apps", items: [
+      { label: "Apple Pay and Google Pay sheets", start: "2026-09-14", end: "2026-10-09", kind: "Engineering", note: "Native wallet sheets replace the web view on both platforms." },
+      { label: "App store review", start: "2026-10-12", end: "2026-10-16", kind: "Rollout", note: "Budget a week; Apple has rejected wallet changes for missing merchant IDs before." },
+      { label: "iOS and Android 5.2 release", start: "2026-10-20", kind: "Milestone", note: "Phased release over seven days on both stores." },
+    ] },
+    { name: "Launch & ops", items: [
+      { label: "Load test at 3× Black Friday peak", start: "2026-10-28", end: "2026-11-04", kind: "Engineering", note: "Target 2,400 authorisations per second with p99 under 900 ms." },
+      { label: "Staged rollout 1% → 100%", start: "2026-11-09", end: "2026-11-20", kind: "Rollout", note: "Doubles traffic each working day while the error budget holds." },
+      { label: "Black Friday change freeze", start: "2026-11-23", kind: "Milestone", note: "Only incident fixes ship until 1 December." },
+    ] },
+  ],
+};
+
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+const SVGNS = "http://www.w3.org/2000/svg";
+const DAY = 864e5;
+
+// Storage throws in the sandboxed preview; it is a convenience, so failure just means "not kept".
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* not kept */ } },
+};
+
+// ── theme: Auto sets nothing, so prefers-color-scheme decides ──
+function setTheme(mode) {
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode; else delete root.dataset.theme;
+  document.querySelectorAll("[data-theme-set]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === (mode || "auto"))));
+}
+document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => {
+  setTheme(b.dataset.themeSet);
+  store.set("theme", b.dataset.themeSet);
+}));
+setTheme(store.get("theme"));
+
+// ── dates: everything in UTC days so no time zone shifts a bar ──
+const utc = (iso) => new Date(iso + "T00:00:00Z").getTime();
+const fmtDay = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
+const fmtFull = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const fmtMonth = new Intl.DateTimeFormat(undefined, { month: "short", timeZone: "UTC" });
+const todayIso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+const TODAY = utc(todayIso());
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+// ── flatten: kinds get a fixed color index by first appearance (≤5; the palette has five slots) ──
+const kinds = [];
+const items = DATA.lanes.flatMap((lane, li) => lane.items.map((it, ii) => {
+  const kind = it.kind || "Item";
+  if (!kinds.includes(kind)) kinds.push(kind);
+  const s = utc(it.start);
+  const e = it.end ? utc(it.end) : s;
+  return { ...it, id: `${li}-${ii}`, lane: lane.name, li, kind, k: Math.min(kinds.indexOf(kind), 4), s, e, point: !it.end };
+}));
+const kc = (i) => `var(--c${i + 1})`;
+const byId = new Map(items.map((it) => [it.id, it]));
+const dates = (it) => it.point ? fmtFull.format(it.s) : `${fmtDay.format(it.s)} – ${fmtFull.format(it.e)}`;
+const days = (it) => Math.round((it.e - it.s) / DAY) + 1;
+const live = (it) => !it.point && it.s <= TODAY && TODAY <= it.e;
+function status(it) {
+  if (it.e < TODAY) return `Done ${plural(Math.round((TODAY - it.e) / DAY), "day")} ago`;
+  if (it.s > TODAY) return `In ${plural(Math.round((it.s - TODAY) / DAY), "day")}`;
+  return it.point ? "Today" : `Under way, day ${Math.round((TODAY - it.s) / DAY) + 1} of ${days(it)}`;
+}
+
+function el(tag, cls, content) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (content != null) n.textContent = content;
+  return n;
+}
+function sv(tag, attrs, content) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
+  if (content != null) n.textContent = content;
+  return n;
+}
+function swatch(it) {
+  const s = el("span", "swatch" + (it.point ? " point" : ""));
+  s.style.setProperty("--kc", kc(it.k));
+  return s;
+}
+
+// ── legend ──
+$("legend").replaceChildren(...kinds.slice(0, 5).map((k, i) => {
+  const li = el("li");
+  li.append(swatch({ k: i, point: items.filter((x) => x.kind === k).every((x) => x.point) }), document.createTextNode(k));
+  return li;
+}));
+
+// ── chart view ──
+const PPD = { day: 28, week: 9, month: 3 }[DATA.unit] || 9;
+const PAD = 14, TOP = 48, LANE_H = 26, ROW_H = 30, BAR_H = 20, GAP = 8;
+const isTick = (t) => {
+  const d = new Date(t);
+  return DATA.unit === "day" || (DATA.unit === "month" ? d.getUTCDate() === 1 : d.getUTCDay() === 1);
+};
+const all = items.flatMap((it) => [it.s, it.e]);
+let t0 = Math.min(...all), t1 = Math.max(...all) + DAY;
+while (!isTick(t0)) t0 -= DAY;
+while (!isTick(t1)) t1 += DAY;
+const W = PAD * 2 + Math.round((t1 - t0) / DAY) * PPD;
+const X = (t) => PAD + (t - t0) / DAY * PPD;
+
+const measure = (() => {
+  const ctx = document.createElement("canvas").getContext("2d");
+  return (s) => {
+    if (!ctx) return s.length * 6.8;
+    ctx.font = "500 12px " + getComputedStyle(document.body).fontFamily;
+    return ctx.measureText(s).width + 2;
+  };
+})();
+
+// Each lane packs its items into rows greedily; an item's extent includes a label drawn beside it.
+function layout(lane) {
+  const rows = [];
+  return [...lane].sort((a, b) => a.s - b.s).map((it) => {
+    const tw = measure(it.label);
+    const x0 = X(it.s), x1 = it.point ? x0 : X(it.e + DAY);
+    let inside = !it.point && x1 - x0 >= tw + 14, side = "right", ext;
+    if (it.point) ext = x0 + 8 + tw + 2 > W - PAD ? (side = "left", [x0 - 10 - tw, x0 + 8]) : [x0 - 8, x0 + 10 + tw];
+    else if (inside) ext = [x0, x1];
+    else ext = x1 + 6 + tw > W - PAD ? (side = "left", [x0 - 6 - tw, x1]) : [x0, x1 + 6 + tw];
+    let r = rows.findIndex((end) => end + 6 <= ext[0]);
+    if (r < 0) { r = rows.length; rows.push(0); }
+    rows[r] = ext[1];
+    return { it, x0, x1, tw, inside, side, r };
+  }).map((p, _, arr) => Object.assign(p, { rowCount: Math.max(...arr.map((q) => q.r)) + 1 }));
+}
+
+function drawChart() {
+  const svg = $("chart");
+  const lanes = DATA.lanes.map((_, li) => layout(items.filter((it) => it.li === li)));
+  const H = TOP + lanes.reduce((h, l) => h + LANE_H + (l[0] ? l[0].rowCount : 1) * ROW_H + GAP, 0) + 22;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", W);
+  svg.setAttribute("height", H);
+  const grid = sv("g"), body = sv("g"), pins = sv("g", { id: "lane-names" });
+
+  // axis: a gridline per unit tick, a stronger line and a label at each month boundary
+  const months = [];
+  for (let t = t0; t <= t1; t += DAY) {
+    const d = new Date(t), x = X(t);
+    if (d.getUTCDate() === 1) months.push(t);
+    if (isTick(t) && d.getUTCDate() !== 1) {
+      grid.append(sv("line", { class: "g-week", x1: x, x2: x, y1: 38, y2: H - 22 }));
+      if (DATA.unit !== "month" && t < t1) grid.append(sv("text", { class: "t-tick", x: x + 3, y: 34 }, d.getUTCDate()));
+    }
+  }
+  if (!months.length || X(months[0]) - X(t0) > 40) months.unshift(t0);
+  months.forEach((t) => {
+    const x = X(t);
+    if (new Date(t).getUTCDate() === 1) grid.append(sv("line", { class: "g-month", x1: x, x2: x, y1: 4, y2: H - 22 }));
+    grid.append(sv("text", { class: "t-month", x: x + 4, y: 16 }, fmtMonth.format(t)));
+    // only a day axis labels the 1st: on a week axis a "1" beside the next Monday reads as one number
+    if (DATA.unit === "day" && new Date(t).getUTCDate() === 1 && t < t1)
+      grid.append(sv("text", { class: "t-tick", x: x + 3, y: 34 }, 1));
+  });
+  grid.append(sv("line", { class: "g-axis", x1: PAD, x2: W - PAD, y1: 40, y2: 40 }));
+
+  let y = TOP;
+  lanes.forEach((placed, li) => {
+    body.append(sv("rect", { class: "lane-bg", x: 0, y, width: W, height: LANE_H - 4, rx: 4 }));
+    pins.append(sv("text", { class: "t-lane", x: PAD, y: y + 16 }, DATA.lanes[li].name));
+    y += LANE_H;
+    placed.forEach((p) => {
+      const { it } = p, cy = y + p.r * ROW_H + ROW_H / 2;
+      const g = sv("g", { class: "item", tabindex: 0, role: "button", "data-id": it.id, "aria-label": `${it.label}, ${dates(it)}` });
+      g.style.setProperty("--kc", kc(it.k));
+      g.append(sv("title", null, `${it.label} · ${dates(it)}`));
+      let lx, anchor = "start";
+      if (it.point) {
+        const r = 7;
+        g.append(sv("rect", { class: "hit", x: p.x0 - 12, y: cy - 13, width: 24, height: 26 }),
+          sv("path", { class: "point", d: `M${p.x0} ${cy - r}L${p.x0 + r} ${cy}L${p.x0} ${cy + r}L${p.x0 - r} ${cy}Z` }));
+        lx = p.side === "left" ? (anchor = "end", p.x0 - 10) : p.x0 + 10;
+      } else {
+        const w = Math.max(p.x1 - p.x0, 3);
+        g.append(sv("rect", { class: "hit", x: p.x0 - 2, y: cy - 13, width: w + 4, height: 26 }),
+          sv("rect", { class: "range", x: p.x0 + 0.75, y: cy - BAR_H / 2, width: w - 1.5, height: BAR_H, rx: 4 }),
+          sv("rect", { class: "cap", x: p.x0, y: cy - BAR_H / 2, width: 3, height: BAR_H, rx: 1.5 }));
+        lx = p.inside ? p.x0 + 9 : p.side === "left" ? (anchor = "end", p.x0 - 6) : p.x1 + 6;
+      }
+      g.append(sv("text", { class: "t-item", x: lx, y: cy + 4, "text-anchor": anchor }, it.label));
+      body.append(g);
+    });
+    y += (placed[0] ? placed[0].rowCount : 1) * ROW_H + GAP;
+  });
+
+  if (TODAY >= t0 && TODAY < t1) {
+    const x = X(TODAY);
+    body.append(sv("line", { class: "g-today", x1: x, x2: x, y1: 40, y2: H - 18 }),
+      sv("text", { class: "t-today", x, y: H - 4, "text-anchor": "middle" }, "Today"));
+  }
+  svg.replaceChildren(grid, body, pins);
+}
+
+// ── list view: lanes as headings, items in date order ──
+function drawList() {
+  $("list-view").replaceChildren(...DATA.lanes.map((lane, li) => {
+    const sec = el("section", "lane");
+    const head = el("div", "lane-head");
+    const mine = items.filter((it) => it.li === li).sort((a, b) => a.s - b.s || a.e - b.e);
+    head.append(el("h3", null, lane.name), el("span", "meta", plural(mine.length, "item")));
+    const ol = el("ol", "items");
+    ol.append(...mine.map((it) => {
+      const b = el("button", "it");
+      b.type = "button";
+      b.dataset.id = it.id;
+      b.setAttribute("aria-pressed", "false");
+      const when = el("span", "when");
+      when.append(el("span", "num", dates(it)), el("span", null, it.point ? it.kind : plural(days(it), "day")));
+      if (live(it)) when.append(el("span", "now", "Under way"));
+      b.append(swatch(it), el("span", "what", it.label), when);
+      if (it.note) b.append(el("span", "note", it.note));
+      const li2 = el("li");
+      li2.append(b);
+      return li2;
+    }));
+    sec.append(head, ol);
+    return sec;
+  }));
+}
+
+// ── selection: one detail panel shared by both views ──
+let selected = null;
+function select(id, reveal) {
+  selected = byId.has(id) ? id : null;
+  document.querySelectorAll("[data-id]").forEach((n) => {
+    const on = n.dataset.id === selected;
+    if (n.tagName === "BUTTON") n.setAttribute("aria-pressed", String(on)); else n.classList.toggle("sel", on);
+  });
+  const it = selected && byId.get(selected);
+  $("detail-empty").hidden = !!it;
+  $("detail-body").hidden = !it;
+  if (!it) return;
+  $("d-swatch").className = "swatch" + (it.point ? " point" : "");
+  $("d-swatch").style.setProperty("--kc", kc(it.k));
+  $("d-kind").textContent = `${it.kind} · ${it.lane}`;
+  $("d-label").textContent = it.label;
+  $("d-dates").textContent = dates(it);
+  $("d-len").textContent = it.point ? "Single date" : `${plural(days(it), "day")}`;
+  $("d-status").textContent = status(it);
+  $("d-note").textContent = it.note || "";
+  if (reveal) $("detail").scrollIntoView({ block: "nearest" });
+}
+document.addEventListener("click", (e) => {
+  const n = e.target.closest("[data-id]");
+  if (n) select(n.dataset.id === selected ? null : n.dataset.id, true);
+});
+$("chart").addEventListener("keydown", (e) => {
+  const n = e.target.closest("[data-id]");
+  if (n && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); select(n.dataset.id, true); }
+});
+$("d-close").addEventListener("click", () => select(null));
+
+// ── view switch: List by default at phone width, Chart otherwise; the choice is remembered ──
+function setView(v) {
+  $("chart-view").hidden = v !== "chart";
+  $("list-view").hidden = v !== "list";
+  document.querySelectorAll("[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === v)));
+  if (v === "chart" && selected) {
+    const g = document.querySelector(`.item[data-id="${selected}"]`);
+    if (g) $("scroller").scrollLeft = Math.max(0, Number(g.querySelector(".hit").getAttribute("x")) - 40);
+  } else if (v === "chart" && TODAY >= t0 && TODAY < t1) {
+    $("scroller").scrollLeft = Math.max(0, X(TODAY) - $("scroller").clientWidth / 2);
+  }
+}
+// lane names ride along with horizontal scroll so every lane stays named
+$("scroller").addEventListener("scroll", (e) =>
+  $("lane-names").setAttribute("transform", `translate(${e.currentTarget.scrollLeft} 0)`), { passive: true });
+document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => {
+  setView(b.dataset.view);
+  store.set("timeline-view:" + document.title, b.dataset.view);
+}));
+
+drawChart();
+drawList();
+const savedView = store.get("timeline-view:" + document.title);
+setView(savedView === "chart" || savedView === "list" ? savedView
+  : matchMedia("(max-width: 640px)").matches ? "list" : "chart");
+</script>
+</body>
+</html>

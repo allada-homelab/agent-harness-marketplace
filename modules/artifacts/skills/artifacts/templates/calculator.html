@@ -1,0 +1,477 @@
+<!doctype html>
+<!-- template: calculator · slots: title, description, intro, formula, DATA -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Home Server Power Cost</title>
+<meta name="description" content="Estimate what an always-on home server costs in electricity per month and per year, from its idle and load draw.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one 44rem column; outputs (primary first, larger) above presets, inputs and the breakdown. */
+:root {
+  --bg: #f6f4ef; --surface: #ffffff; --sunken: #ece8df;
+  --fg: #1f1c17; --muted: #645d52; --line: #ddd7cb;
+  --accent: #8a4600; --accent-fg: #ffffff; --accent-soft: #f6e6d2; --danger: #b3261e; --ok: #1b6e3c;
+  --shadow: 0 1px 2px rgb(31 28 23 / 0.14);
+  --font-body: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-data: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.8125rem; --step-0: 0.9375rem; --step-1: 1.0625rem; --step-2: 1.375rem; --step-3: 1.75rem; --step-4: 2.5rem;
+  --radius: 10px;
+  color-scheme: light;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14120f; --surface: #1d1a16; --sunken: #26221d;
+    --fg: #ece6dc; --muted: #a59c8e; --line: #353029;
+    --accent: #f0b45a; --accent-fg: #14120f; --accent-soft: #3a2b17; --danger: #f2867e; --ok: #6fcf97;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14120f; --surface: #1d1a16; --sunken: #26221d;
+  --fg: #ece6dc; --muted: #a59c8e; --line: #353029;
+  --accent: #f0b45a; --accent-fg: #14120f; --accent-soft: #3a2b17; --danger: #f2867e; --ok: #6fcf97;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box }
+[hidden] { display: none !important }
+img { max-width: 100% }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 400 var(--step-0)/1.5 var(--font-body);
+  padding-inline: 16px; padding-block: 20px 40px;
+  -webkit-text-size-adjust: 100%;
+}
+.page { max-width: 44rem; margin-inline: auto; display: grid; gap: 20px }
+h1, h2 { margin: 0; text-wrap: balance; font-weight: 600 }
+h1 { font-size: var(--step-3); line-height: 1.15; letter-spacing: -0.015em }
+h2 { font-size: var(--step-1); line-height: 1.3 }
+p { margin: 0 }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums }
+.lede { color: var(--muted); max-width: 60ch }
+
+header.top { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px }
+header.top .intro { display: grid; gap: 6px; min-width: 0; flex: 1 1 16rem }
+
+.seg { display: inline-flex; padding: 3px; gap: 2px; background: var(--sunken); border-radius: 999px; flex: none }
+.seg button {
+  font: 500 var(--step--1)/1 var(--font-body); color: var(--muted); background: none;
+  border: 0; border-radius: 999px; padding: 7px 12px; min-height: 32px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: var(--shadow) }
+
+.kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: grid; gap: 4px; align-content: start; min-width: 0 }
+.kpi dt { font-size: var(--step--1); color: var(--muted) }
+.kpi dd { margin: 0; font-size: var(--step-2); font-weight: 500; line-height: 1.2; overflow-wrap: anywhere }
+.kpi .unit { font: 400 var(--step--1)/1.3 var(--font-body); color: var(--muted) }
+.kpi.primary { grid-column: 1 / -1; border-color: var(--accent); background: var(--accent-soft); padding: 14px 16px }
+.kpi.primary dt { color: var(--fg); font-weight: 500 }
+.kpi.primary dd { font-size: var(--step-4); line-height: 1.05; letter-spacing: -0.02em }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 14px; min-width: 0 }
+.panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap }
+.panel-head .meta { color: var(--muted); font-size: var(--step--1) }
+
+.presets { display: flex; flex-wrap: wrap; gap: 8px }
+.chipbtn {
+  font: 500 var(--step--1)/1 var(--font-body); color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 999px; padding: 9px 14px; min-height: 36px; cursor: pointer;
+}
+.chipbtn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg) }
+
+.fields { display: grid; gap: 16px }
+.field { display: grid; gap: 6px; min-width: 0 }
+.field .head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px }
+label { font-size: var(--step--1); font-weight: 500; min-width: 0 }
+.field .unit { font-size: var(--step--1); color: var(--muted); flex: none }
+.field .ctl { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: 12px; align-items: center }
+.field .ctl.solo { grid-template-columns: 6.5rem }
+.field .help { font-size: var(--step--1); color: var(--muted) }
+input[type="text"] {
+  font: 400 var(--step-0)/1.3 var(--font-data); font-variant-numeric: tabular-nums; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; min-height: 42px; width: 100%; min-width: 0; text-align: right;
+}
+input[type="range"] { display: block; width: 100%; min-width: 0; margin: 0; accent-color: var(--accent); height: 28px }
+input[aria-invalid="true"] { border-color: var(--danger) }
+.err { font-size: var(--step--1); color: var(--danger) }
+.err:empty { display: none }
+
+.formula { color: var(--muted); max-width: 65ch }
+.steps { list-style: none; margin: 0; padding: 0; display: grid }
+.steps > li { display: grid; gap: 4px; padding-block: 12px; border-top: 1px solid var(--line); min-width: 0 }
+.steps > li:first-child { border-top: 0; padding-top: 0 }
+.steps .name { font-weight: 600; font-size: var(--step--1) }
+.steps .expr { font: 400 var(--step--1)/1.5 var(--font-data); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; min-width: 0 }
+.steps .expr.sym { color: var(--muted) }
+.steps .res { color: var(--accent); font-weight: 500 }
+
+.foot { display: flex; flex-wrap: wrap; gap: 10px; align-items: center }
+.btn {
+  font: 500 var(--step-0)/1 var(--font-body); border-radius: 8px; padding: 11px 16px; min-height: 42px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer;
+}
+.btn.quiet { border-color: transparent; background: none; color: var(--muted); padding-inline: 8px }
+:is(button, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+textarea.copy-fallback {
+  width: 100%; min-height: 9rem; font: 400 var(--step--1)/1.45 var(--font-data); color: var(--fg);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+}
+@media (max-width: 420px) {
+  .kpis { gap: 8px }
+  .kpi { padding: 10px }
+  .kpi dd { font-size: var(--step-1) }
+  .kpi.primary dd { font-size: var(--step-3) }
+  .field .ctl { grid-template-columns: 5.5rem minmax(0, 1fr) }
+}
+@media (prefers-reduced-motion: no-preference) { .chipbtn, .seg button { transition: background-color 0.15s ease-out } }
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="top">
+    <div class="intro">
+      <h1 data-slot="title">Home Server Power Cost</h1>
+      <p class="lede" data-slot="intro">Pick the box closest to yours, then drag the sliders: idle draw dominates for anything that runs around the clock.</p>
+    </div>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+      <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+    </div>
+  </header>
+
+  <dl class="kpis" id="outputs" aria-live="polite"></dl>
+
+  <section class="panel" aria-labelledby="inputs-h">
+    <div class="panel-head"><h2 id="inputs-h">Inputs</h2><span class="meta">presets fill the hardware fields</span></div>
+    <div class="presets" id="presets" role="group" aria-label="Presets"></div>
+    <div class="fields" id="fields"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="calc-h">
+    <h2 id="calc-h">How it is worked out</h2>
+    <p class="formula" data-slot="formula">Energy per day is idle watts for the hours the server is idle plus load watts for the hours it is busy; divided by 1000 that is kWh, and kWh times your tariff is the cost.</p>
+    <ol class="steps" id="steps"></ol>
+    <div class="foot">
+      <button type="button" class="btn" id="copy">Copy as text</button>
+      <button type="button" class="btn quiet" id="reset">Reset</button>
+    </div>
+    <textarea class="copy-fallback" id="copy-fallback" readonly hidden aria-label="Inputs and results as text"></textarea>
+  </section>
+</main>
+
+<script>
+const DATA = {
+  inputs: [
+    { id: "idle", label: "Power at idle", unit: "W", value: 32, min: 1, max: 400, step: 1, help: "Read it from a plug-in meter with the disks spun up but nothing running." },
+    { id: "load", label: "Power under load", unit: "W", value: 65, min: 1, max: 600, step: 1 },
+    { id: "hours", label: "Hours at load per day", unit: "h", value: 4, min: 0, max: 24, step: 0.5, help: "Backups, transcoding, builds: the busy part of a typical day." },
+    { id: "price", label: "Electricity price", unit: "€/kWh", value: 0.3, min: 0.05, max: 1, step: 0.01 },
+    { id: "days", label: "Days per billing month", unit: "days", value: 30, min: 28, max: 31, step: 1 },
+    { id: "budget", label: "Monthly budget for the server", unit: "€", value: 10, min: 1, max: 100, step: 1 },
+  ],
+  // The first output is the primary one, shown first and larger. compute may use input ids,
+  // numbers, + - * / ( ) and min/max/round; nothing else is evaluated.
+  outputs: [
+    { id: "cost_month", label: "Cost per month", unit: "€", compute: "(idle * (24 - hours) + load * hours) * days / 1000 * price", digits: 2 },
+    { id: "kwh_month", label: "Energy per month", unit: "kWh", compute: "(idle * (24 - hours) + load * hours) * days / 1000", digits: 1 },
+    { id: "cost_year", label: "Cost per year", unit: "€", compute: "(idle * (24 - hours) + load * hours) * 365 / 1000 * price", digits: 0 },
+    { id: "share", label: "Share of budget", unit: "%", compute: "(idle * (24 - hours) + load * hours) * days / 1000 * price / budget * 100", digits: 0 },
+  ],
+  presets: [
+    { name: "4-bay NAS", values: { idle: 32, load: 65, hours: 4 } },
+    { name: "Mini PC", values: { idle: 8, load: 35, hours: 2 } },
+    { name: "Old desktop tower", values: { idle: 70, load: 180, hours: 6 } },
+  ],
+};
+
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+
+// Storage throws in the sandboxed preview; it is a convenience, so failure just means "not kept".
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* not kept */ } },
+};
+
+// ── theme: Auto sets nothing, so prefers-color-scheme decides ──
+function setTheme(mode) {
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode; else delete root.dataset.theme;
+  document.querySelectorAll("[data-theme-set]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === (mode || "auto"))));
+}
+document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => {
+  setTheme(b.dataset.themeSet);
+  store.set("theme", b.dataset.themeSet);
+}));
+setTheme(store.get("theme"));
+
+// ── safe evaluator: recursive descent over numbers, ids, + - * / ( ) and min/max/round; no eval ──
+const FNS = { min: Math.min, max: Math.max, round: (x, d = 0) => Math.round(x * 10 ** d) / 10 ** d };
+function tokenize(src) {
+  const out = [];
+  const re = /\s*(?:(\d+(?:\.\d+)?|\.\d+)|([A-Za-z_]\w*)|([-+*\/(),]))/y;
+  let m;
+  while (re.lastIndex < src.length) {
+    if (!/\S/.test(src.slice(re.lastIndex))) break;
+    if (!(m = re.exec(src))) throw new Error(`Unexpected character in "${src}"`);
+    out.push(m[1] ? { t: "num", v: Number(m[1]) } : m[2] ? { t: "id", v: m[2] } : { t: "op", v: m[3] });
+  }
+  return out;
+}
+function parse(src, ids) {
+  const toks = tokenize(src);
+  let i = 0;
+  const peek = () => toks[i];
+  const isOp = (v) => peek() && peek().t === "op" && peek().v === v;
+  const expect = (v) => { if (!isOp(v)) throw new Error(`Expected "${v}" in "${src}"`); i++; };
+  function expr() {
+    let n = term();
+    while (isOp("+") || isOp("-")) { const op = toks[i++].v; n = { op, a: n, b: term() }; }
+    return n;
+  }
+  function term() {
+    let n = unary();
+    while (isOp("*") || isOp("/")) { const op = toks[i++].v; n = { op, a: n, b: unary() }; }
+    return n;
+  }
+  function unary() {
+    if (isOp("-")) { i++; return { op: "neg", a: unary() }; }
+    return primary();
+  }
+  function primary() {
+    const tk = toks[i++];
+    if (!tk) throw new Error(`Unexpected end of "${src}"`);
+    if (tk.t === "num") return { num: tk.v };
+    if (tk.t === "op" && tk.v === "(") { const n = expr(); expect(")"); return n; }
+    if (tk.t === "id" && isOp("(")) {
+      if (!FNS[tk.v]) throw new Error(`Unknown function "${tk.v}"`);
+      i++;
+      const args = [expr()];
+      while (isOp(",")) { i++; args.push(expr()); }
+      expect(")");
+      return { fn: tk.v, args };
+    }
+    if (tk.t === "id") {
+      if (!ids.has(tk.v)) throw new Error(`Unknown input "${tk.v}"`);
+      return { id: tk.v };
+    }
+    throw new Error(`Unexpected "${tk.v}" in "${src}"`);
+  }
+  const ast = expr();
+  if (i < toks.length) throw new Error(`Unexpected "${toks[i].v}" in "${src}"`);
+  return { ast, toks };
+}
+function evaluate(n, vars) {
+  if ("num" in n) return n.num;
+  if ("id" in n) return vars[n.id];
+  if (n.fn) return FNS[n.fn](...n.args.map((a) => evaluate(a, vars)));
+  const a = evaluate(n.a, vars);
+  if (n.op === "neg") return -a;
+  const b = evaluate(n.b, vars);
+  return n.op === "+" ? a + b : n.op === "-" ? a - b : n.op === "*" ? a * b : a / b;
+}
+
+// Rebuild an expression for display, ids optionally replaced by their current values.
+const SYM = { "*": "×", "/": "÷", "-": "−", "+": "+" };
+function show(toks, vars) {
+  let s = "";
+  toks.forEach((tk, k) => {
+    const prev = toks[k - 1];
+    if (tk.t === "num") s += plain.format(tk.v);
+    else if (tk.t === "id") s += vars && !FNS[tk.v] ? plain.format(vars[tk.v]) : tk.v;
+    else if (tk.v === "(" || tk.v === ")") s += tk.v;
+    else if (tk.v === ",") s += ", ";
+    else if (tk.v === "-" && (!prev || (prev.t === "op" && prev.v !== ")"))) s += "−";
+    else s += ` ${SYM[tk.v]} `;
+  });
+  return s;
+}
+
+// ── formatting ──
+const fmtCache = {};
+function fmt(x, digits) {
+  const key = digits == null ? "auto" : digits;
+  fmtCache[key] = fmtCache[key] || new Intl.NumberFormat(undefined, digits == null
+    ? { maximumFractionDigits: 4 } : { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return fmtCache[key].format(x);
+}
+const plain = new Intl.NumberFormat(undefined, { maximumFractionDigits: 4, useGrouping: false });
+const withUnit = (v, unit) => unit ? `${v} ${unit}` : v;
+
+// ── build ──
+const inputIds = new Set(DATA.inputs.map((d) => d.id));
+const compiled = DATA.outputs.map((o) => {
+  const { ast, toks } = parse(o.compute, inputIds);
+  const deps = [...new Set(toks.filter((t) => t.t === "id" && inputIds.has(t.v)).map((t) => t.v))];
+  return { ...o, ast, toks, deps };
+});
+
+function el(tag, cls, content) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (content != null) n.textContent = content;
+  return n;
+}
+
+const ctl = {};
+$("fields").replaceChildren(...DATA.inputs.map((d) => {
+  const f = el("div", "field");
+  const head = el("div", "head");
+  const lab = el("label", null, d.label);
+  lab.htmlFor = `in-${d.id}`;
+  head.append(lab);
+  if (d.unit) head.append(el("span", "unit", d.unit));
+  const row = el("div", "ctl");
+  const num = el("input");
+  num.type = "text";
+  num.id = `in-${d.id}`;
+  num.inputMode = "decimal";
+  num.autocomplete = "off";
+  num.setAttribute("aria-describedby", `err-${d.id}`);
+  row.append(num);
+  let range = null;
+  if (d.min != null && d.max != null) {
+    range = el("input");
+    range.type = "range";
+    range.min = d.min;
+    range.max = d.max;
+    range.step = d.step || "any";
+    range.setAttribute("aria-label", `${d.label} slider`);
+    row.append(range);
+  } else row.classList.add("solo");
+  f.append(head, row);
+  if (d.help) f.append(el("span", "help", d.help));
+  const err = el("span", "err");
+  err.id = `err-${d.id}`;
+  err.setAttribute("aria-live", "polite");
+  f.append(err);
+  ctl[d.id] = { d, num, range, err };
+  num.addEventListener("input", () => { syncRange(d.id); recompute(); });
+  if (range) range.addEventListener("input", () => { num.value = range.value; recompute(); });
+  return f;
+}));
+
+$("presets").replaceChildren(...DATA.presets.map((p, i) => {
+  const b = el("button", "chipbtn", p.name);
+  b.type = "button";
+  b.dataset.preset = i;
+  b.setAttribute("aria-pressed", "false");
+  b.addEventListener("click", () => setValues(p.values));
+  return b;
+}));
+
+// ── read, validate, compute ──
+function read(id) {
+  const { d, num } = ctl[id];
+  const raw = num.value.trim().replace(/\s/g, "").replace(",", ".");
+  if (!raw) return { error: "Enter a number." };
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return { error: "Use digits only, like 12.5." };
+  if ((d.min != null && v < d.min) || (d.max != null && v > d.max)) {
+    return { error: `Use a value from ${fmt(d.min ?? -Infinity)} to ${fmt(d.max ?? Infinity)}.` };
+  }
+  return { value: v };
+}
+function syncRange(id) {
+  const { range } = ctl[id];
+  const r = read(id);
+  if (range && r.error == null) range.value = r.value;
+}
+function setValues(values) {
+  Object.entries(values).forEach(([id, v]) => {
+    if (!ctl[id]) return;
+    ctl[id].num.value = String(v);
+    syncRange(id);
+  });
+  recompute();
+}
+
+let current = [];
+function recompute() {
+  const vars = {};
+  const bad = new Set();
+  DATA.inputs.forEach((d) => {
+    const r = read(d.id);
+    const { num, err } = ctl[d.id];
+    err.textContent = r.error || "";
+    num.setAttribute("aria-invalid", r.error ? "true" : "false");
+    if (r.error) bad.add(d.id); else vars[d.id] = r.value;
+  });
+
+  current = compiled.map((o) => {
+    const missing = o.deps.filter((id) => bad.has(id));
+    const v = missing.length ? NaN : evaluate(o.ast, vars);
+    return { o, missing, v, text: Number.isFinite(v) ? fmt(v, o.digits ?? 2) : "—" };
+  });
+
+  $("outputs").replaceChildren(...current.map(({ o, text }, i) => {
+    const box = el("div", i === 0 ? "kpi primary" : "kpi");
+    box.append(el("dt", null, o.label));
+    const dd = el("dd", "num", text);
+    box.append(dd);
+    if (o.unit) box.append(el("span", "unit", o.unit));
+    return box;
+  }));
+
+  $("steps").replaceChildren(...current.map(({ o, missing, v, text }) => {
+    const li = el("li");
+    li.append(el("span", "name", `${o.label}${o.unit ? ` (${o.unit})` : ""}`));
+    li.append(el("span", "expr sym", `${o.id} = ${show(o.toks)}`));
+    if (missing.length) {
+      li.append(el("span", "expr", `needs a valid ${missing.map((id) => ctl[id].d.label.toLowerCase()).join(", ")}`));
+    } else {
+      const line = el("span", "expr", `= ${show(o.toks, vars)} = `);
+      line.append(el("span", "res", Number.isFinite(v) ? withUnit(text, o.unit) : "— (not a finite number)"));
+      li.append(line);
+    }
+    return li;
+  }));
+
+  document.querySelectorAll("[data-preset]").forEach((b) => {
+    const p = DATA.presets[Number(b.dataset.preset)];
+    b.setAttribute("aria-pressed", String(Object.entries(p.values).every(([id, x]) => vars[id] === x)));
+  });
+}
+
+$("reset").addEventListener("click", () => {
+  setValues(Object.fromEntries(DATA.inputs.map((d) => [d.id, d.value])));
+  $("copy-fallback").hidden = true;
+});
+
+// ── copy: clipboard inside the click handler, else show the text selected ──
+function asText() {
+  const ins = DATA.inputs.map((d) => `${d.label}\t${withUnit(ctl[d.id].num.value.trim() || "—", d.unit)}`);
+  const outs = current.map(({ o, text }) => `${o.label}\t${withUnit(text, text === "—" ? "" : o.unit)}`);
+  return [document.title, "", ...ins, "", ...outs].join("\n");
+}
+$("copy").addEventListener("click", (e) => {
+  const btn = e.currentTarget;
+  const value = asText();
+  const fallback = () => {
+    const ta = $("copy-fallback");
+    ta.value = value;
+    ta.hidden = false;
+    ta.focus();
+    ta.select();
+    btn.textContent = "Selected: copy it";
+  };
+  if (!navigator.clipboard) { fallback(); return; }
+  navigator.clipboard.writeText(value).then(() => {
+    btn.textContent = "Copied";
+    setTimeout(() => { btn.textContent = "Copy as text"; }, 2000);
+  }, fallback);
+});
+
+setValues(Object.fromEntries(DATA.inputs.map((d) => [d.id, d.value])));
+</script>
+</body>
+</html>
