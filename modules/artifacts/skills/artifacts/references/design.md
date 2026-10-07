@@ -29,7 +29,7 @@ body { background: var(--bg); color: var(--fg) }
 ```
 Every token gets its first definition on bare `:root`; the two dark blocks only redefine tokens, and their `color-scheme: dark` makes form controls and scrollbars follow. No color has its only definition inside a media or `[data-theme]` block, and no component rule uses a literal color that reads in one theme only. `body` keeps that explicit token background: the viewer paints its own ground behind the page, so a transparent body shows the host's theme instead. A dark-first design mirrors the whole shape, selectors included. A design that deliberately commits to a single look may drop the two dark blocks but still sets the background and every color explicitly, plus `color-scheme: dark` on `:root` if that look is dark (`check` warns, and only warns, about this).
 
-**Check before delivering**: run `artifactctl.py check <file>` beside this skill; fix every `FAIL` line and deliver. There is no rendered preview: the check is static, so give charts with real numbers one read of the drawn scale yourself.
+**Check before delivering**: run `artifactctl.py check <file>` beside this skill; fix every `FAIL` line and deliver. There is no rendered preview: the check is static, so give charts with real numbers one read of the drawn scale yourself. `artifactctl.py render` then renders the page headless at phone width and prints console errors, so a layout that collapses or a script that throws is seen once before delivery.
 
 Work the way the design lead at a small, versatile studio would: give each client a visual identity at the level of treatment the task calls for. Make deliberate choices about palette, typography, and layout that are specific to this subject, and avoid templated designs.
 

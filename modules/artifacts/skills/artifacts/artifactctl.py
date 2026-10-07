@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""artifactctl — the local artifacts helper: prepare | check | open.
+"""artifactctl — the local artifacts helper: prepare | check | render | open.
 
 Stdlib only. Exit codes: 0 ok, 1 check failures, 2 usage or missing file.
 """
@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 SIZE_CAP = 16 * 1024 * 1024
@@ -184,14 +185,97 @@ def _file_arg(arg: str | None) -> Path:
     return p
 
 
+CHROME_NAMES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome")
+DARWIN_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+_CONSOLE = re.compile(r':CONSOLE:[^\]]*\]\s*(.*)')
+_CONSOLE_MSG = re.compile(r'^"(.*)", source: ')
+
+
+def find_chrome(env, which, platform, exists=os.path.exists) -> str | None:
+    """ARTIFACTS_CHROME wins as-is (the caller reports a missing path); else first Chrome on PATH."""
+    if env.get("ARTIFACTS_CHROME"):
+        return env["ARTIFACTS_CHROME"]
+    for name in CHROME_NAMES:
+        found = which(name)
+        if found:
+            return found
+    if platform == "darwin" and exists(DARWIN_CHROME):
+        return DARWIN_CHROME
+    return None
+
+
+def parse_console(stderr: str) -> tuple[list[str], list[str]]:
+    """(fails, warns) from Chrome's --enable-logging=stderr console lines; uncaught exceptions fail."""
+    fails: list[str] = []
+    warns: list[str] = []
+    for line in stderr.splitlines():
+        m = _CONSOLE.search(line)
+        if not m:
+            continue
+        rest = m.group(1)
+        mm = _CONSOLE_MSG.match(rest)
+        msg = mm.group(1) if mm else rest
+        (fails if msg.startswith("Uncaught ") else warns).append(f"console: {msg}")
+    return fails, warns
+
+
+def render(path: Path, out: Path, width: int, height: int) -> int:
+    chrome = find_chrome(os.environ, shutil.which, sys.platform)
+    if chrome is None:
+        print("skipped: no Chrome found; install Chrome or set ARTIFACTS_CHROME")
+        return 0
+    if os.environ.get("ARTIFACTS_CHROME") and not os.path.exists(chrome):
+        print(f"render: ARTIFACTS_CHROME={chrome} does not exist")
+        return 2
+    tmpdir = tempfile.mkdtemp()
+    cmd = [chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
+           "--no-default-browser-check", f"--user-data-dir={tmpdir}", f"--window-size={width},{height}",
+           f"--screenshot={out}", "--enable-logging=stderr", "--v=0", "--virtual-time-budget=4000",
+           f"file://{path}"]
+    if os.geteuid() == 0:  # the sandbox refuses root, which is what containers run as
+        cmd.insert(1, "--no-sandbox")
+    out.unlink(missing_ok=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        print("render: chrome failed: timed out after 60s")
+        return 2
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    if not out.is_file():
+        lines = proc.stderr.strip().splitlines()
+        print(f"render: chrome failed: {lines[-1] if lines else f'exit {proc.returncode}'}")
+        return 2
+    fails, warns = parse_console(proc.stderr)
+    print(f"rendered {out}")
+    for w in warns:
+        print(f"WARN {w}")
+    for f in fails:
+        print(f"FAIL {f}")
+    print("fail" if fails else "ok")
+    return 1 if fails else 0
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) < 1 or argv[0] not in ("prepare", "check", "open"):
-        print("usage: artifactctl.py prepare [DIR] | check FILE | open FILE", file=sys.stderr)
+    if len(argv) < 1 or argv[0] not in ("prepare", "check", "render", "open"):
+        print("usage: artifactctl.py prepare [DIR] | check FILE | render FILE [--out PNG] [--width N] [--height N] | open FILE",
+              file=sys.stderr)
         return 2
     verb, rest = argv[0], argv[1:]
     if verb == "prepare":
         print(prepare(Path(rest[0]).expanduser() if rest else Path.cwd()))
         return 0
+    if verb == "render":
+        import argparse
+        ap = argparse.ArgumentParser(prog="artifactctl.py render")
+        ap.add_argument("file")
+        ap.add_argument("--out")
+        ap.add_argument("--width", type=int, default=390)
+        ap.add_argument("--height", type=int, default=844)
+        a = ap.parse_args(rest)
+        path = _file_arg(a.file)
+        out = Path(a.out).expanduser().resolve() if a.out else path.with_suffix(".png")
+        return render(path, out, a.width, a.height)
     path = _file_arg(rest[0] if rest else None)
     if verb == "open":
         open_file(path)

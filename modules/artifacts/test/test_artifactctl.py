@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -299,3 +300,79 @@ def test_check_allows_unquoted_allowlisted_script():
     fails, _ = artifactctl.check_html(
         GOOD_PAGE + "<script src=https://cdnjs.cloudflare.com/ajax/libs/x/1/x.js></script>", size=1024)
     assert fails == []
+
+
+# ── render ───────────────────────────────────────────────────────────────
+
+DARWIN_APP = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+
+def test_find_chrome_env_override_wins():
+    env = {"ARTIFACTS_CHROME": "/x/chrome"}
+    assert artifactctl.find_chrome(env, lambda n: "/usr/bin/" + n, "linux") == "/x/chrome"
+
+
+def test_find_chrome_path_order():
+    found = {"chromium": "/usr/bin/chromium", "chrome": "/usr/bin/chrome"}
+    assert artifactctl.find_chrome({}, found.get, "linux") == "/usr/bin/chromium"
+
+
+def test_find_chrome_darwin_app_path():
+    assert artifactctl.find_chrome({}, lambda n: None, "darwin", exists=lambda p: p == DARWIN_APP) == DARWIN_APP
+    assert artifactctl.find_chrome({}, lambda n: None, "linux", exists=lambda p: True) is None
+
+
+def test_find_chrome_none():
+    assert artifactctl.find_chrome({}, lambda n: None, "darwin", exists=lambda p: False) is None
+
+
+def test_parse_console_splits_fail_and_warn():
+    err = (
+        "noise line\n"
+        '[2846483:2846483:1007/135324.422582:INFO:CONSOLE:1] "boom-console", source: file:///tmp/x/throws.html (1)\n'
+        '[2846483:2846483:1007/135324.431099:INFO:CONSOLE:1] "Uncaught ReferenceError: nope is not defined", source: file:///tmp/x/throws.html (1)\n'
+    )
+    assert artifactctl.parse_console(err) == (
+        ["console: Uncaught ReferenceError: nope is not defined"], ["console: boom-console"])
+
+
+def test_parse_console_ignores_noise():
+    assert artifactctl.parse_console("DevTools listening\n[1:1:ERROR:gpu] nope\n") == ([], [])
+
+
+def test_render_without_chrome_is_skipped(run, good_page, monkeypatch):
+    monkeypatch.delenv("ARTIFACTS_CHROME", raising=False)
+    r = run("render", str(good_page), env={"PATH": ""})
+    assert r.returncode == 0 and r.stdout.startswith("skipped:"), r.stdout + r.stderr
+
+
+def test_render_missing_override_is_usage_error(run, good_page):
+    r = run("render", str(good_page), env={"PATH": "", "ARTIFACTS_CHROME": "/nonexistent/chrome"})
+    assert r.returncode == 2
+    assert "ARTIFACTS_CHROME=/nonexistent/chrome does not exist" in r.stdout + r.stderr
+
+
+needs_chrome = pytest.mark.skipif(artifactctl.find_chrome(os.environ, shutil.which, sys.platform) is None,
+                                  reason="no Chrome installed")
+
+
+@needs_chrome
+def test_render_good_page_writes_png(run, tmp_path):
+    p = tmp_path / "good.html"
+    p.write_text(GOOD_PAGE)
+    r = run("render", str(p), env=dict(os.environ))
+    assert r.returncode == 0, r.stdout + r.stderr
+    png = tmp_path / "good.png"
+    assert png.is_file() and png.stat().st_size > 0
+    lines = r.stdout.strip().splitlines()
+    assert lines[0] == f"rendered {png}" and lines[-1] == "ok"
+
+
+@needs_chrome
+def test_render_reports_uncaught_error(run, tmp_path):
+    p = tmp_path / "bad.html"
+    p.write_text(GOOD_PAGE.replace("</body>", "<script>nope()</script></body>"))
+    r = run("render", str(p), env=dict(os.environ))
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert any(l.startswith("FAIL console: Uncaught ReferenceError") for l in r.stdout.splitlines())
+    assert r.stdout.strip().splitlines()[-1] == "fail"
