@@ -80,10 +80,83 @@ def test_check_rejects_foreign_stylesheet_host():
     assert fails == ["host: stylesheet from https://cdnjs.cloudflare.com/ajax/libs/x/1/x.css is not fonts.googleapis.com"]
 
 
-def test_check_relative_and_inline_resources_pass():
-    page = GOOD_PAGE + '<script src="./x.js"></script><link rel="stylesheet" href="x.css">'
+def test_check_inline_script_and_style_pass():
+    page = GOOD_PAGE + "<script>var a = 1;</script><style>p { margin: 0 }</style>"
     fails, _ = artifactctl.check_html(page, size=1024)
     assert fails == []
+
+
+def _only(page, prefix):
+    fails, _ = artifactctl.check_html(page, size=1024)
+    assert len(fails) == 1 and fails[0].startswith(prefix), fails
+
+
+def _none(page):
+    fails, _ = artifactctl.check_html(page, size=1024)
+    assert fails == [], fails
+
+
+def test_good_page_has_no_failures():
+    _none(GOOD_PAGE)
+
+
+def test_check_fails_relative_script_src():
+    _only(GOOD_PAGE + '<script src="app.js"></script>', "local: script references a local file")
+
+
+def test_check_fails_relative_stylesheet_href():
+    _only(GOOD_PAGE + '<link rel="stylesheet" href="style.css">', "local: stylesheet references a local file")
+
+
+def test_check_fails_empty_script_src():
+    _only(GOOD_PAGE + '<script src=""></script>', "local: script references a local file")
+
+
+@pytest.mark.parametrize("body", [
+    'import {h} from "https://esm.sh/preact"',
+    "import {h} from 'https://esm.sh/preact'",
+    'import "https://esm.sh/preact"',
+    'const m = await import("https://esm.sh/preact")',
+    "const m = await import('https://esm.sh/preact')",
+])
+def test_check_fails_foreign_inline_module_import(body):
+    _only(GOOD_PAGE + f'<script type="module">{body}</script>', "host: import from https://esm.sh/preact")
+
+
+def test_check_allows_allowlisted_inline_module_import():
+    _none(GOOD_PAGE + '<script type="module">import "https://cdn.jsdelivr.net/npm/preact@10/dist/preact.module.js"</script>')
+
+
+@pytest.mark.parametrize("body", ['import {h} from "./x.js"', 'import "preact"', 'import("./x.js")'])
+def test_check_fails_local_inline_module_import(body):
+    _only(GOOD_PAGE + f'<script type="module">{body}</script>', "local: import references a local file")
+
+
+def test_check_fails_foreign_css_import():
+    _only(GOOD_PAGE + '<style>@import url("https://cdnjs.cloudflare.com/x.css")</style>',
+          "host: @import from https://cdnjs.cloudflare.com/x.css is not fonts.googleapis.com")
+
+
+@pytest.mark.parametrize("rule", [
+    '@import "https://fonts.googleapis.com/css2?family=Inter";',
+    "@import url(https://fonts.googleapis.com/css2?family=Inter);",
+])
+def test_check_allows_google_fonts_css_import(rule):
+    _none(GOOD_PAGE + f"<style>{rule}</style>")
+
+
+def test_check_fails_local_css_import():
+    _only(GOOD_PAGE + '<style>@import "theme.css"</style>', "local: @import references a local file")
+
+
+def test_check_modulepreload_host_is_checked():
+    _only(GOOD_PAGE + '<link rel="modulepreload" href="https://esm.sh/x">', "host: modulepreload from https://esm.sh/x")
+    _none(GOOD_PAGE + '<link rel="modulepreload" href="https://unpkg.com/x/y.js">')
+    _only(GOOD_PAGE + '<link rel="modulepreload" href="x.js">', "local: modulepreload references a local file")
+
+
+def test_check_rejects_jsdelivr_npm_path_traversal():
+    _only(GOOD_PAGE + '<script src="https://cdn.jsdelivr.net/npm/../gh/u/r/x.js"></script>', "host: script from ")
 
 
 def test_check_is_case_and_whitespace_tolerant():
@@ -222,11 +295,7 @@ def test_check_closes_allowlist_bypass_forms(tag, kind):
     assert len(fails) == 1 and fails[0].startswith(f"host: {kind} from "), fails
 
 
-@pytest.mark.parametrize("tag", [
-    '<script src=https://cdnjs.cloudflare.com/ajax/libs/x/1/x.js></script>',
-    '<script src="lib/x.js"></script>',
-    '<script src="./x.js"></script>',
-])
-def test_check_allows_unquoted_allowlisted_and_relative_scripts(tag):
-    fails, _ = artifactctl.check_html(GOOD_PAGE + tag, size=1024)
+def test_check_allows_unquoted_allowlisted_script():
+    fails, _ = artifactctl.check_html(
+        GOOD_PAGE + "<script src=https://cdnjs.cloudflare.com/ajax/libs/x/1/x.js></script>", size=1024)
     assert fails == []
