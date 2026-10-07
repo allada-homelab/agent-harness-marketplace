@@ -199,3 +199,27 @@ def test_open_launches_opener_when_display(run, good_page, tmp_path):
 def test_open_missing_file(run, tmp_path):
     r = run("open", str(tmp_path / "x.html"))
     assert r.returncode == 2
+
+
+# ── allowlist bypass forms ───────────────────────────────────────────────
+
+@pytest.mark.parametrize("tag, kind", [
+    ('<script src=https://esm.sh/x.js></script>', "script"),
+    ("<script src='https://esm.sh/x.js'></script>", "script"),
+    ('<script src="data:text/javascript,alert(1)"></script>', "script"),
+    ('<script src="https:\\\\evil.example/x.js"></script>', "script"),
+    ('<link rel=stylesheet href=https://evil.example/x.css>', "stylesheet"),
+])
+def test_check_closes_allowlist_bypass_forms(tag, kind):
+    fails, _ = artifactctl.check_html(GOOD_PAGE + tag, size=1024)
+    assert len(fails) == 1 and fails[0].startswith(f"host: {kind} from "), fails
+
+
+@pytest.mark.parametrize("tag", [
+    '<script src=https://cdnjs.cloudflare.com/ajax/libs/x/1/x.js></script>',
+    '<script src="lib/x.js"></script>',
+    '<script src="./x.js"></script>',
+])
+def test_check_allows_unquoted_allowlisted_and_relative_scripts(tag):
+    fails, _ = artifactctl.check_html(GOOD_PAGE + tag, size=1024)
+    assert fails == []

@@ -22,15 +22,24 @@ _TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 _VIEWPORT = re.compile(r"<meta\s[^>]*name\s*=\s*[\"']viewport[\"']", re.I)
 _ROOT = re.compile(r":root\s*\{")
 _DARK = re.compile(r"prefers-color-scheme\s*:\s*dark|\[data-theme\s*=\s*[\"']dark[\"']\]", re.I)
-_SCRIPT_SRC = re.compile(r"<script\s[^>]*?\bsrc\s*=\s*[\"']([^\"']+)[\"']", re.I)
+_VAL = r"(?:\"([^\"]*)\"|'([^']*)'|([^\s\"'>]+))"  # double-quoted, single-quoted or bare attribute value
+_SCRIPT_SRC = re.compile(r"<script\s[^>]*?\bsrc\s*=\s*" + _VAL, re.I)
 _LINK = re.compile(r"<link\s[^>]*>", re.I)
-_ATTR = re.compile(r"\b(rel|href)\s*=\s*[\"']([^\"']*)[\"']", re.I)
+_ATTR = re.compile(r"\b(rel|href)\s*=\s*" + _VAL, re.I)
+_SCHEME = re.compile(r"^[a-z][\w+.-]*:", re.I)
 _URL = re.compile(r"^(?:https?:)?//([^/]+)(/.*)?$", re.I)
 
 
 def _host(url: str) -> tuple[str, str] | None:
-    m = _URL.match(url.strip())
-    return (m.group(1).lower(), m.group(2) or "/") if m else None
+    """(host, path) for an external URL; None only for a scheme-less, backslash-free (relative) value.
+    Any other scheme (data:, javascript:, https:\\\\x) yields an empty host, which no allowlist matches."""
+    url = url.strip()
+    m = _URL.match(url)
+    if m:
+        return m.group(1).lower(), m.group(2) or "/"
+    if _SCHEME.match(url) or "\\" in url:
+        return "", url
+    return None
 
 
 def check_html(text: str, size: int) -> tuple[list[str], list[str]]:
@@ -56,7 +65,8 @@ def check_html(text: str, size: int) -> tuple[list[str], list[str]]:
         if needle in text:
             fails.append(f"forbidden: {needle!r} is hosted-only; see references/runtime-seam.md")
             break
-    for src in _SCRIPT_SRC.findall(text):
+    for groups in _SCRIPT_SRC.findall(text):
+        src = "".join(groups)
         h = _host(src)
         if h is None:
             continue  # relative or inline: ships with the page
@@ -65,7 +75,7 @@ def check_html(text: str, size: int) -> tuple[list[str], list[str]]:
         if not ok:
             fails.append(f"host: script from {src} is not on the CDN allowlist")
     for tag in _LINK.findall(text):
-        attrs = {k.lower(): v for k, v in _ATTR.findall(tag)}
+        attrs = {k.lower(): "".join(v) for k, *v in _ATTR.findall(tag)}
         if "stylesheet" not in attrs.get("rel", "").lower().split():
             continue
         h = _host(attrs.get("href", ""))
