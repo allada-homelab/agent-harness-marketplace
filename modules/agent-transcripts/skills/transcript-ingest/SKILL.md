@@ -43,6 +43,9 @@ skills.
   size or mtime changed, or its recorded parser version is older than the current one.
 - `sessions` — `harness`, `native_id`, the owning file, `cwd`, `project_key`, `kind`
   (`main` or `subagent`), `parent_native_id`, `started_at`, `ended_at`, `model`, `title`.
+  A Claude file anywhere under a session's `subagents/` directory is a `subagent` whose
+  `parent_native_id` is that session — direct subagents and Workflow agents
+  (`subagents/workflows/<run>/agent-<id>.jsonl`) alike.
 - `messages` — per session: `ord`, `native_id`, `parent_native_id`, `on_main_path`, `role`
   (`user`, `assistant`, `tool_result`, `system`), `ts`, `text`, `model`, `stop_reason`,
   token counts, the original record as `raw`, and `injected`. The token counts are
@@ -50,6 +53,10 @@ skills.
   harness reported them: every harness reports `input_tokens` **exclusive** of the prompt
   cache, so the prompt a turn actually processed is `input_tokens + cache_read_tokens +
   cache_write_tokens` (`NULL` cache columns mean the harness did not report them).
+  Claude Code writes one row per content block of an API response, each repeating the
+  response's usage, so ingest stores that usage once — each field's maximum across the
+  response's rows, on its last row — and leaves the other rows' counts `NULL`. A `sum()`
+  over `messages` therefore counts each API call once.
   `injected` is `1` for a message
   that is standing-instruction boilerplate — a `system` message, or any non-`tool_result`
   message whose normalized text appears in several distinct sessions (a standing instruction
