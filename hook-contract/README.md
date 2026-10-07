@@ -57,7 +57,9 @@ Common stdin fields: `session_id`, `cwd`, `hook_event_name`. Per event:
 | `PostToolUse` | `tool_name`, `tool_input`, `tool_response` | `hookSpecificOutput.additionalContext` |
 | `Stop` | `stop_hook_active` | top-level `{"decision": "block", "reason": "…"}` |
 
-`tool_input` is the Claude shape: `Bash → {command}`, `Read → {file_path}`,
+`tool_input` is the Claude shape: `Bash → {command, run_in_background?}`
+(the flag is present only when the call set it; pi's bash has no background
+mode, so it never sends it), `Read → {file_path}`,
 `Write → {file_path, content}`, `Edit → {file_path, old_string, new_string}`,
 `Grep → {pattern, path}`, `Glob → {pattern, path}`. When the native edit call
 carries several edits (pi's `edits[]`), `Edit` additionally carries

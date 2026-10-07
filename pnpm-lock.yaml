@@ -24,6 +24,8 @@ importers:
 
   modules/dual-agent-pr-review: {}
 
+  modules/edit-lint: {}
+
   modules/feature-dev: {}
 
   modules/okf-wiki: {}
@@ -31,6 +33,8 @@ importers:
   modules/plan-for-dummies: {}
 
   modules/pr-flow: {}
+
+  modules/sleep-guard: {}
 
 packages:
 

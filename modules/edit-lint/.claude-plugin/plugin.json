@@ -1,0 +1,10 @@
+{
+  "name": "edit-lint",
+  "version": "0.1.0",
+  "description": "After every edit, run the linter that fits the file (shellcheck, actionlint, kubeconform, ansible-lint, node --check, tsc) and feed its findings back to the agent.",
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
+  "license": "MIT"
+}

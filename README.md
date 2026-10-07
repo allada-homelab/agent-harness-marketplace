@@ -41,6 +41,12 @@ Modules that also ship `agents/` or `hooks/`:
 - **feature-dev** — guided seven-phase feature development; a harness-neutral
   port of Anthropic's plugin whose agents dispatch on all three harnesses.
 - **pr-flow** — branch + worktree, PR, watch CI until green, merge only when told.
+- **edit-lint** — hooks only: after each edit, run the linter that fits the file
+  (shellcheck, actionlint, kubeconform, ansible-lint, `node --check`, `tsc`) and
+  feed its findings back.
+- **sleep-guard** — hooks only: block a foreground `sleep` of 5s or more and point
+  at a condition wait or a background job (pi and dsh; Claude Code does this
+  natively).
 
 The harness-side foundation that content modules need to run on a given
 harness (the dsh skills bridge, the pi and dsh hook runners, and pi's `/name`

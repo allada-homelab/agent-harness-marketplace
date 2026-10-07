@@ -1,0 +1,10 @@
+{
+  "name": "sleep-guard",
+  "version": "0.1.0",
+  "description": "Block a Bash call that opens with a foreground sleep of 5s or more and point the agent at a condition wait or a background job instead.",
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
+  "license": "MIT"
+}

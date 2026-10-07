@@ -84,8 +84,10 @@ for mod in sorted(p for p in pathlib.Path("modules").iterdir() if p.is_dir()):
     # dsh installs a package without a dsh.bundle key as a plain dependency and
     # ignores its patch, so the key and the patch file must come together.
     has_patch, has_key = (mod / "cordis.patch.yml").exists(), pkg.get("dsh", {}).get("bundle", {}).get("patch") == "./cordis.patch.yml"
-    if has_patch != has_key or (((mod / "skills").is_dir() or "dsh" in pkg) and not has_patch):
-        print(f"  FAIL {mod}: cordis.patch.yml and package.json dsh.bundle.patch must both be present (skills or dsh code ⇒ needed)"); bad += 1
+    # dsh's hook runner discovers hooks/hooks.json only in profile bundles, so a hooks module needs the key too.
+    needs = (mod / "skills").is_dir() or (mod / "hooks" / "hooks.json").exists() or "dsh" in pkg
+    if has_patch != has_key or (needs and not has_patch):
+        print(f"  FAIL {mod}: cordis.patch.yml and package.json dsh.bundle.patch must both be present (skills, hooks or dsh code ⇒ needed)"); bad += 1
 for name in entries.keys() - seen:
     print(f"  FAIL marketplace entry {name!r} has no module directory"); bad += 1
 print(f"  ok ({len(entries)} Claude plugins)" if not bad else f"  {bad} problem(s)")
