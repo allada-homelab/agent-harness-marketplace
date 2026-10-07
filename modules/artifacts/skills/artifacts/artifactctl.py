@@ -233,7 +233,37 @@ def exclude_path(directory: Path) -> Path | None:
     return p if p.is_absolute() else (directory / p).resolve()
 
 
-def prepare(directory: Path) -> Path:
+def project_name(directory: Path) -> str:
+    """The main checkout's basename when `directory` is in a git repo (every worktree of a repo
+    shares one folder), else the directory's own basename."""
+    try:
+        common = subprocess.run(["git", "-C", str(directory), "rev-parse", "--git-common-dir"],
+                                check=True, text=True, capture_output=True).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return directory.resolve().name
+    c = Path(common)
+    c = c if c.is_absolute() else (directory / c)
+    return c.resolve().parent.name
+
+
+def artifacts_root(env: dict) -> Path:
+    """$AGENT_ARTIFACTS_DIR, else <cache dir>/agent-artifacts — beside the agent-transcripts cache."""
+    if env.get("AGENT_ARTIFACTS_DIR"):
+        return Path(env["AGENT_ARTIFACTS_DIR"]).expanduser().resolve()
+    cache = env.get("XDG_CACHE_HOME")
+    base = Path(cache).expanduser() if cache else Path.home() / ".cache"
+    return (base / "agent-artifacts").resolve()
+
+
+def prepare(directory: Path, env: dict | None = None) -> Path:
+    """Default: one folder per project under the artifacts cache, outside every repo."""
+    out = artifacts_root(os.environ if env is None else env) / project_name(directory)
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def prepare_here(directory: Path) -> Path:
+    """`prepare --here`: `.artifacts/` under `directory`, git-excluded."""
     out = (directory / ".artifacts").resolve()
     out.mkdir(parents=True, exist_ok=True)
     exclude = exclude_path(directory)
@@ -395,12 +425,15 @@ def render(path: Path, out: Path, width: int, height: int, sandbox: bool = False
 
 def main(argv: list[str]) -> int:
     if len(argv) < 1 or argv[0] not in ("prepare", "check", "render", "open"):
-        print("usage: artifactctl.py prepare [DIR] | check FILE | render FILE [--out PNG] [--width N] [--height N] [--sandbox] | open FILE",
+        print("usage: artifactctl.py prepare [DIR] [--here] | check FILE | render FILE [--out PNG] [--width N] [--height N] [--sandbox] | open FILE",
               file=sys.stderr)
         return 2
     verb, rest = argv[0], argv[1:]
     if verb == "prepare":
-        print(prepare(Path(rest[0]).expanduser() if rest else Path.cwd()))
+        here = "--here" in rest
+        rest = [r for r in rest if r != "--here"]
+        directory = Path(rest[0]).expanduser() if rest else Path.cwd()
+        print(prepare_here(directory) if here else prepare(directory))
         return 0
     if verb == "render":
         import argparse

@@ -27,8 +27,11 @@ acceptable. A single fact, a short list or an answer the user will act on at onc
    browser storage — shared state, a file download, a model call — read
    `./references/runtime-seam.md` and design for its absence.
 2. **Prepare the output dir.** `python3 <skill dir>/artifactctl.py prepare` prints the
-   directory (`.artifacts/` under the working directory, git-excluded). The file is
-   `<slug-of-title>.html` inside it; a revision overwrites the same file.
+   directory: one folder per project under `$AGENT_ARTIFACTS_DIR`, else `agent-artifacts`
+   in the user cache dir (beside the agent-transcripts cache), never inside a repo.
+   `prepare --here` instead uses `.artifacts/` under the working directory, git-excluded, when
+   the user wants the page next to the code. The file is `<slug-of-title>.html` inside it; a
+   revision overwrites the same file.
 3. **Write the page.** Start from the closest template: read `./templates/README.md`, copy
    that file to the output dir as `<slug>.html`, replace its slots and its `DATA`, and keep its
    token block and interaction code — they already satisfy the contract. Only when no template
