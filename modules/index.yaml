@@ -105,6 +105,32 @@ modules:
     summary: Sweep the agent-transcripts sqlite index for sessions worth a closer look and record flagged
       tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized
       results or sessions in the findings store beside it.
+- name: artifacts
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  - pi
+  - dsh
+  description: 'Local HTML artifacts for pi and dsh: Claude''s artifact design, dataviz and diagramming
+    craft plus a stdlib check-and-deliver helper; one self-contained file, no hosting.'
+  skills:
+  - name: artifacts
+    path: modules/artifacts/skills/artifacts/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - artifacts
+    - dataviz
+    - design
+    command: false
+    summary: Build a local HTML artifact — a page, dashboard, report, chart, diagram or small interactive
+      tool — as one self-contained file the user opens locally; design, dataviz and diagramming guidance
+      plus a check-and-deliver flow.
 - name: best-practices
   version: 0.4.4
   kinds:

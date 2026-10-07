@@ -90,6 +90,13 @@
       "category": "development",
       "version": "0.1.0",
       "source": "./modules/sleep-guard"
+    },
+    {
+      "name": "artifacts",
+      "description": "Local HTML artifacts for pi and dsh: Claude's artifact design, dataviz and diagramming craft plus a stdlib check-and-deliver helper; one self-contained file, no hosting.",
+      "category": "development",
+      "version": "0.1.0",
+      "source": "./modules/artifacts"
     }
   ]
 }

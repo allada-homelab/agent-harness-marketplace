@@ -1,0 +1,10 @@
+{
+  "name": "@allada-homelab/artifacts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local HTML artifacts for pi and dsh: Claude's artifact design, dataviz and diagramming craft plus a stdlib check-and-deliver helper; one self-contained file, no hosting.",
+  "license": "MIT",
+  "pi": { "skills": ["skills/*"] },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}
