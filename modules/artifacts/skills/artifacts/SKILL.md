@@ -28,7 +28,8 @@ acceptable. A single fact, a short list or an answer the user will act on at onc
    `./references/runtime-seam.md` and design for its absence.
 2. **Prepare the output dir.** `python3 <skill dir>/artifactctl.py prepare` prints the
    directory: one folder per project under `$AGENT_ARTIFACTS_DIR`, else `artifacts/` in the
-   dsh home (`$DSH_HOME`, default `~/.dsh`), named like dsh names that project's `sessions/`
+   dsh home (`$DSH_HOME`, default `.dsh` under the user's home directory), named like dsh names
+   that project's `sessions/`
    folder, never inside a repo.
    `prepare --here` instead uses `.artifacts/` under the working directory, git-excluded, when
    the user wants the page next to the code. The file is `<slug-of-title>.html` inside it; a

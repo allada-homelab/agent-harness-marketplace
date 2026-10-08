@@ -215,7 +215,7 @@ def repo(tmp_path):
 
 def dsh_key(path: Path) -> str:
     """The dsh session directory name for a plain POSIX path, spelled out independently of the
-    code under test: `/home/d/GitRepos` → `--home-d-GitRepos--`."""
+    code under test: `/srv/d/GitRepos` → `--srv-d-GitRepos--`."""
     return "--" + str(path.resolve()).strip("/").replace("/", "-") + "--"
 
 
@@ -258,8 +258,8 @@ def test_prepare_outside_git_keys_the_dir_itself(run, tmp_path):
 
 
 @pytest.mark.parametrize("path, key", [
-    ("/home/d/GitRepos", "--home-d-GitRepos--"),
-    ("/home/d/GitRepos/", "--home-d-GitRepos---"),           # dsh keeps a trailing separator's dash
+    ("/srv/d/GitRepos", "--srv-d-GitRepos--"),
+    ("/srv/d/GitRepos/", "--srv-d-GitRepos---"),           # dsh keeps a trailing separator's dash
     ("//srv//x", "--srv-x--"),                               # a separator run collapses to one dash
     ("C:\\Users\\d", "--C-Users-d--"),                       # drive and backslash separators too
     ("/x y/caf\u00e9~", "--x~0020y-caf~00E9~007E--"),         # unsafe code units escape like dsh ids
