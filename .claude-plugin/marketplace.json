@@ -15,6 +15,13 @@
       "source": "./modules/plan-for-dummies"
     },
     {
+      "name": "ste-writing",
+      "description": "Write prose in a controlled style modeled on ASD-STE100 (Simplified Technical English) at about 80% strictness, only when the user asks for it.",
+      "category": "development",
+      "version": "0.1.0",
+      "source": "./modules/ste-writing"
+    },
+    {
       "name": "dual-agent-pr-review",
       "description": "Review a GitHub PR with Claude Code and Codex in parallel, then reconcile their findings into one consensus set.",
       "category": "development",

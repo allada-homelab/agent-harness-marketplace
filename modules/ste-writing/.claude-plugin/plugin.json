@@ -1,0 +1,10 @@
+{
+  "name": "ste-writing",
+  "version": "0.1.0",
+  "description": "Write prose in a controlled style modeled on ASD-STE100 (Simplified Technical English) at about 80% strictness, only when the user asks for it.",
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
+  "license": "MIT"
+}
