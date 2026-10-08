@@ -6,6 +6,7 @@ tags: [testing, pytest, check-sh, modules]
 generated: {by: okf-wiki/haiku, at: 2026-10-07T17:04:39Z}
 verified:
   - {by: okf-wiki/haiku, at: 2026-10-07T17:04:39Z, commit: b4b436d878a1}
+  - {by: okf-wiki/sonnet, at: 2026-10-08T17:17:08Z, commit: d81a0ab6df3d}
 sources:
   - {resource: bin/check.sh, id: s1}
   - {resource: modules/artifacts/test/test_artifactctl.py, id: s2}
