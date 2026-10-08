@@ -213,34 +213,65 @@ def repo(tmp_path):
     return root
 
 
-def test_prepare_defaults_to_cache_per_project(run, repo, tmp_path):
-    cache = tmp_path / "cache"
-    r = run("prepare", cwd=repo, env={"XDG_CACHE_HOME": str(cache), "PATH": os.environ["PATH"]})
+def dsh_key(path: Path) -> str:
+    """The dsh session directory name for a plain POSIX path, spelled out independently of the
+    code under test: `/home/d/GitRepos` → `--home-d-GitRepos--`."""
+    return "--" + str(path.resolve()).strip("/").replace("/", "-") + "--"
+
+
+def test_prepare_defaults_to_dsh_home_keyed_like_sessions(run, repo, tmp_path):
+    home = tmp_path / "dsh"
+    r = run("prepare", cwd=repo, env={"DSH_HOME": str(home), "PATH": os.environ["PATH"]})
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == str(cache / "agent-artifacts" / "repo")
-    assert (cache / "agent-artifacts" / "repo").is_dir()
+    assert r.stdout.strip() == str(home / "artifacts" / dsh_key(repo))
+    assert (home / "artifacts" / dsh_key(repo)).is_dir()
+    assert not (home / "sessions").exists()  # a sibling of sessions/, never inside it
     assert not (repo / ".artifacts").exists()
     assert git("status", "--porcelain", cwd=repo) == ""
+
+
+def test_prepare_blank_dsh_home_falls_back_to_home_dot_dsh(run, repo, tmp_path):
+    r = run("prepare", cwd=repo, env={"DSH_HOME": "  ", "HOME": str(tmp_path), "PATH": os.environ["PATH"]})
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == str(tmp_path / ".dsh" / "artifacts" / dsh_key(repo))
 
 
 def test_prepare_env_root_wins_and_worktree_shares_project(run, repo, tmp_path):
     wt = tmp_path / "wt"
     git("worktree", "add", "-q", "-b", "feat", str(wt), cwd=repo)
     root = tmp_path / "elsewhere"
-    env = {"AGENT_ARTIFACTS_DIR": str(root), "XDG_CACHE_HOME": str(tmp_path / "unused"),
+    env = {"AGENT_ARTIFACTS_DIR": str(root), "DSH_HOME": str(tmp_path / "unused"),
            "PATH": os.environ["PATH"]}
     r = run("prepare", cwd=wt, env=env)
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == str(root / "repo")  # the main checkout's name, not "wt"
-    assert run("prepare", cwd=repo, env=env).stdout.strip() == str(root / "repo")
+    assert r.stdout.strip() == str(root / dsh_key(repo))  # the main checkout's key, not wt's
+    assert run("prepare", cwd=repo, env=env).stdout.strip() == str(root / dsh_key(repo))
+    assert not (tmp_path / "unused").exists()
 
 
-def test_prepare_outside_git_uses_dir_name(run, tmp_path):
+def test_prepare_outside_git_keys_the_dir_itself(run, tmp_path):
     proj = tmp_path / "notes"
     proj.mkdir()
-    r = run("prepare", cwd=proj, env={"XDG_CACHE_HOME": str(tmp_path / "c"), "PATH": os.environ["PATH"]})
+    r = run("prepare", cwd=proj, env={"DSH_HOME": str(tmp_path / "c"), "PATH": os.environ["PATH"]})
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == str(tmp_path / "c" / "agent-artifacts" / "notes")
+    assert r.stdout.strip() == str(tmp_path / "c" / "artifacts" / dsh_key(proj))
+
+
+@pytest.mark.parametrize("path, key", [
+    ("/home/d/GitRepos", "--home-d-GitRepos--"),
+    ("/home/d/GitRepos/", "--home-d-GitRepos---"),           # dsh keeps a trailing separator's dash
+    ("//srv//x", "--srv-x--"),                               # a separator run collapses to one dash
+    ("C:\\Users\\d", "--C-Users-d--"),                       # drive and backslash separators too
+    ("/x y/caf\u00e9~", "--x~0020y-caf~00E9~007E--"),         # unsafe code units escape like dsh ids
+    ("/", "--root--"),
+    ("/" + "a" * 300, "--" + "a" * 251 + "--"),              # bounded for filesystem name limits
+])
+def test_project_key_matches_dsh(path, key):
+    assert artifactctl.project_key(path) == key
+
+
+def test_project_key_empty_is_root():
+    assert artifactctl.project_key("") == "--root--"
 
 
 def test_prepare_here_creates_dir_and_excludes_it(run, repo):

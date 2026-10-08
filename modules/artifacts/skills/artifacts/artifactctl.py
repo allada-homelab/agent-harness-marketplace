@@ -233,31 +233,59 @@ def exclude_path(directory: Path) -> Path | None:
     return p if p.is_absolute() else (directory / p).resolve()
 
 
-def project_name(directory: Path) -> str:
-    """The main checkout's basename when `directory` is in a git repo (every worktree of a repo
-    shares one folder), else the directory's own basename."""
+def project_path(directory: Path) -> Path:
+    """The main checkout when `directory` is in a git repo (every worktree of a repo shares one
+    folder), else `directory` itself; resolved."""
     try:
         common = subprocess.run(["git", "-C", str(directory), "rev-parse", "--git-common-dir"],
                                 check=True, text=True, capture_output=True).stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return directory.resolve().name
+        return directory.resolve()
     c = Path(common)
     c = c if c.is_absolute() else (directory / c)
-    return c.resolve().parent.name
+    return c.resolve().parent
+
+
+def project_key(path: Path | str) -> str:
+    """dsh's project directory name for `path` — a port of `projectKey` in
+    @deepseek-ai/dsh-session-persistence-jsonl, so artifacts and sessions share one key per
+    project: a run of `/`, `\\` or `:` becomes one `-`, any other character outside
+    [A-Za-z0-9._-] becomes `~XXXX`, leading `-` are dropped, and the result is wrapped in `--`."""
+    out: list[str] = []
+    in_separator = False
+    for ch in str(path):
+        if ch in "/\\:":
+            if not in_separator:
+                out.append("-")
+            in_separator = True
+        elif ch != "~" and ch.isascii() and (ch.isalnum() or ch in "._-"):
+            out.append(ch)
+            in_separator = False
+        else:
+            out.append(f"~{ord(ch):04X}")
+            in_separator = False
+    readable = "".join(out).lstrip("-") or "root"
+    return f"--{readable[:251]}--"
+
+
+def dsh_home(env: dict) -> Path:
+    """$DSH_HOME, else ~/.dsh — dsh-home-paths' resolveDshHome; a blank value counts as unset."""
+    configured = (env.get("DSH_HOME") or "").strip()
+    return Path(configured).expanduser() if configured else Path.home() / ".dsh"
 
 
 def artifacts_root(env: dict) -> Path:
-    """$AGENT_ARTIFACTS_DIR, else <cache dir>/agent-artifacts — beside the agent-transcripts cache."""
+    """$AGENT_ARTIFACTS_DIR, else <dsh home>/artifacts — a sibling of dsh's sessions/ tree.
+    Not inside sessions/<key>/: dsh treats every entry of a project directory as a session."""
     if env.get("AGENT_ARTIFACTS_DIR"):
         return Path(env["AGENT_ARTIFACTS_DIR"]).expanduser().resolve()
-    cache = env.get("XDG_CACHE_HOME")
-    base = Path(cache).expanduser() if cache else Path.home() / ".cache"
-    return (base / "agent-artifacts").resolve()
+    return (dsh_home(env) / "artifacts").resolve()
 
 
 def prepare(directory: Path, env: dict | None = None) -> Path:
-    """Default: one folder per project under the artifacts cache, outside every repo."""
-    out = artifacts_root(os.environ if env is None else env) / project_name(directory)
+    """Default: one folder per project under the artifacts root, keyed like dsh keys sessions
+    (`~/.dsh/sessions/<key>/` ↔ `~/.dsh/artifacts/<key>/`), outside every repo."""
+    out = artifacts_root(os.environ if env is None else env) / project_key(project_path(directory))
     out.mkdir(parents=True, exist_ok=True)
     return out
 
