@@ -375,6 +375,39 @@ _Use when editing repository hygiene and CI config — .pre-commit-config.yaml h
 | [`REPO-009`](skills/repo-best-practices/references/github-actions.md#repo-009) | Statically audit workflows with zizmor (injection, over-broad permissions, persisted credentials, unpinned actions). |
 | [`REPO-010`](skills/repo-best-practices/references/github-actions.md#repo-010) | Start workflows from `permissions: {}` and grant each job only the `GITHUB_TOKEN` scopes it needs. |
 
+## skills-best-practices
+
+_Use when writing, reviewing, or restructuring an Agent Skill — a SKILL.md file, its name and description frontmatter, its reference files, or the scripts it bundles — or when a skill fails to trigger, triggers on the wrong prompts, loads too much context, or needs evaluations. Covers the SKILL- rule family (discovery, structure, content, workflows, scripts, evaluation), drawn from Anthropic's skill-authoring best-practices guide. The rule format of this library itself lives in meta-best-practices._
+
+| ID | Summary |
+|---|---|
+| [`SKILL-001`](skills/skills-best-practices/references/discovery.md#skill-001) | `name`: at most 64 characters, lowercase letters, digits and hyphens only, no XML tags, no reserved words (`anthropic`, `claude`). |
+| [`SKILL-002`](skills/skills-best-practices/references/discovery.md#skill-002) | Name skills in one consistent pattern (gerund form preferred); never vague (`helper`, `utils`) or generic (`data`, `files`). |
+| [`SKILL-003`](skills/skills-best-practices/references/discovery.md#skill-003) | `description` states what the skill does *and* when to use it, with the concrete terms a matching prompt contains; non-empty, at most 1,024 characters, no XML tags. |
+| [`SKILL-004`](skills/skills-best-practices/references/discovery.md#skill-004) | Write the `description` in the third person; never "I can…" or "You can…". |
+| [`SKILL-005`](skills/skills-best-practices/references/structure.md#skill-005) | Add only context the model does not already have; every paragraph must justify its token cost. |
+| [`SKILL-006`](skills/skills-best-practices/references/structure.md#skill-006) | Keep the `SKILL.md` body under 500 lines; move detail into reference files that `SKILL.md` names and loads on demand. |
+| [`SKILL-007`](skills/skills-best-practices/references/structure.md#skill-007) | Link every reference file directly from `SKILL.md`; never chain references more than one level deep. |
+| [`SKILL-008`](skills/skills-best-practices/references/structure.md#skill-008) | Open any reference file longer than 100 lines with a table of contents. |
+| [`SKILL-009`](skills/skills-best-practices/references/structure.md#skill-009) | Name bundled files for their content, organize them by domain, and write paths with forward slashes. |
+| [`SKILL-010`](skills/skills-best-practices/references/content.md#skill-010) | Match the degree of freedom to the task's fragility: prose for judgment calls, exact commands for fragile sequences. |
+| [`SKILL-011`](skills/skills-best-practices/references/content.md#skill-011) | Give one default approach with an escape hatch, not a menu of equivalent options. |
+| [`SKILL-012`](skills/skills-best-practices/references/content.md#skill-012) | No time-conditional instructions; put deprecated methods in a collapsed "old patterns" section. |
+| [`SKILL-013`](skills/skills-best-practices/references/content.md#skill-013) | Pick one term per concept and use it everywhere in the skill. |
+| [`SKILL-014`](skills/skills-best-practices/references/content.md#skill-014) | Give an output template, and state how strictly it must be followed. |
+| [`SKILL-015`](skills/skills-best-practices/references/content.md#skill-015) | Show concrete input/output examples when output style matters; never abstract ones. |
+| [`SKILL-016`](skills/skills-best-practices/references/workflows.md#skill-016) | Break a complex task into numbered steps with a copyable progress checklist, and make each decision point an explicit branch. |
+| [`SKILL-017`](skills/skills-best-practices/references/workflows.md#skill-017) | Build a feedback loop into quality-critical work: validate, fix, re-validate, and proceed only on a pass. |
+| [`SKILL-018`](skills/skills-best-practices/references/workflows.md#skill-018) | For batch, destructive or high-stakes operations, have the model write a plan file and validate it before executing (plan-validate-execute). |
+| [`SKILL-019`](skills/skills-best-practices/references/scripts.md#skill-019) | Scripts handle their expected error conditions with specific, actionable messages instead of punting a raw traceback to the model. |
+| [`SKILL-020`](skills/skills-best-practices/references/scripts.md#skill-020) | No unexplained constants in scripts; justify every timeout, retry count and threshold in a comment. |
+| [`SKILL-021`](skills/skills-best-practices/references/scripts.md#skill-021) | Ship a utility script for any deterministic operation, and say whether the model should run it or read it. |
+| [`SKILL-022`](skills/skills-best-practices/references/scripts.md#skill-022) | List every package a skill needs and how to install it; never assume it is present. |
+| [`SKILL-023`](skills/skills-best-practices/references/scripts.md#skill-023) | Refer to MCP tools by their fully qualified, server-prefixed name. |
+| [`SKILL-024`](skills/skills-best-practices/references/evaluation.md#skill-024) | Build at least three evaluations from observed failures, and measure a no-skill baseline, before writing extensive content. |
+| [`SKILL-025`](skills/skills-best-practices/references/evaluation.md#skill-025) | Test the skill with every model tier that will run it. |
+| [`SKILL-026`](skills/skills-best-practices/references/evaluation.md#skill-026) | Iterate by watching a fresh agent use the skill on real tasks: what triggers, what it reads, what it misses, what it ignores. |
+
 ## uv-best-practices
 
 _Use when working with uv (Astral's Python package and project manager) — `uv sync` / `add` / `lock` / `run` / `tool` / `build` / `publish` / `audit` / `export`, `uvx`, a `uv.lock` or `pylock.toml` file, or a `pyproject.toml` with `[tool.uv]` or `[dependency-groups]`. Covers project shape, lockfile hygiene, workspaces, dependency groups, private registries, Python version pinning, CI, publishing, vulnerability scanning, and migration from pip / poetry / PDM / Hatch. Covers the UVP- rule family. For container-side uv patterns (Dockerfile builds) use containers-best-practices instead._

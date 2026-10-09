@@ -18,6 +18,7 @@ command: `/best-practices:containers-audit` on Claude Code,
 | [`repo-best-practices`](skills/repo-best-practices/) | Repository hygiene — pre-commit, Dependabot, secret scanning, task-runner/CI parity, CODEOWNERS, GitHub Actions hardening (`REPO-`) |
 | [`go-best-practices`](skills/go-best-practices/) | Go — layout, errors, concurrency, `net/http`, security, modules, quality, testing (`GO-`) |
 | [`grpc-best-practices`](skills/grpc-best-practices/) | gRPC — proto design, error model, deadlines, streaming, interceptors, security, tooling, performance (`GRPC-`) |
+| [`skills-best-practices`](skills/skills-best-practices/) | Agent Skills authoring — name and description, progressive disclosure, content, workflows, bundled scripts, evaluation; from Anthropic's skill-authoring best-practices guide (`SKILL-`) |
 | [`meta-best-practices`](skills/meta-best-practices/) | Format spec for the library — rule IDs, severity, entry structure, authoring tools |
 | [`containers-audit`](skills/containers-audit/) | Interactive scan of Dockerfile / compose / devcontainer files against the containers rules, with per-finding approval of every fix |
 
@@ -64,7 +65,7 @@ portable skill contract on top and does not run it.
 
 Rule prefixes in use: `DOCKER`, `DEVC`, `COMPOSE`, `BUILDX`, `SEC`, `UV`
 (containers), `UVP` (uv), `PY` (python), `FAPI` (fastapi), `GO` (go), `GRPC`
-(grpc). `FE` is reserved for a future `frontend-best-practices`.
+(grpc), `SKILL` (skills). `FE` is reserved for a future `frontend-best-practices`.
 
 ## Provenance
 

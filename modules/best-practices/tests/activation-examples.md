@@ -162,6 +162,24 @@ Should NOT activate:
 - REST/HTTP API questions with no gRPC involvement (→ python-best-practices / go-best-practices / fastapi-best-practices by language).
 - "Dockerfile for a gRPC service" (→ containers-best-practices).
 
+## skills-best-practices
+
+Should activate:
+
+- "Review this SKILL.md"
+- "Write a description for my skill so it triggers on PDF questions"
+- "My skill never triggers — what's wrong with it?"
+- "This SKILL.md is 900 lines, how should I split it?"
+- "How should I structure the reference files in my skill?"
+- "How do I test whether my skill actually helps?"
+- "What's SKILL-007?" (rule-ID match)
+
+Should NOT activate:
+
+- "Add a rule to go-best-practices" / "what's the rule format here?" (→ meta-best-practices).
+- "Write a Python script" with no skill involved (→ python-best-practices).
+- "What skills do I have installed?" (a harness question, not authoring).
+
 ---
 
 When adding a new skill, append a section here with the same shape
