@@ -347,9 +347,26 @@ cmd_run() {
   unfilled=$(grep -oh '{{[A-Z_]*}}' "$dir/claude.prompt.md" "$dir/codex.prompt.md" 2>/dev/null | sort -u | tr '\n' ' ' || true)
   [[ -z "${unfilled// /}" ]] || die "unfilled placeholders in $dir prompts: $unfilled"
 
+  # Both reviewers read untrusted PR content (diff, description, comments) from a
+  # worktree whose .claude/ and .codex/ the PR author controls, so each runs on an
+  # allow-list with no network, no inherited user config, and no MCP or skills.
   local codex_bin; codex_bin=$(resolve_codex)
-  local codex_iso=(--sandbox read-only --add-dir "$RUN_DIR")
+  # --ignore-user-config drops user MCP servers and project trust entries (so the
+  # PR's own .codex/ layers stay untrusted); --ignore-rules drops execpolicy rules
+  # that could run commands outside the sandbox; apps traffic bypasses the sandbox.
+  local codex_iso=(--sandbox read-only --add-dir "$RUN_DIR"
+    --ignore-user-config --ignore-rules
+    -c approval_policy='"never"' -c features.apps=false
+    -c web_search='"disabled"' -c shell_environment_policy.inherit='"core"')
   [[ "$(probe_codex_sandbox)" == "landlock" ]] && codex_iso+=(--enable use_legacy_landlock)
+  # --setting-sources "" keeps the PR's .claude/settings.json and the user's allow
+  # rules out; --tools removes Skill/WebFetch/Agent outright; dontAsk denies any
+  # Bash outside the read-only built-ins and this allow-list (curl, gh, rm…).
+  local claude_iso=(--permission-mode dontAsk --setting-sources "" --strict-mcp-config
+    --tools "Read,Grep,Glob,Bash"
+    --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git show:*),Bash(git log:*),Bash(git blame:*)"
+    --settings '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
+    --add-dir "$RUN_DIR")
   rm -f "$dir"/*.status
 
   (
@@ -357,9 +374,7 @@ cmd_run() {
     run_with_timeout "$AGENT_TIMEOUT" claude -p "$(cat "$dir/claude.prompt.md")" \
       --model "$CLAUDE_MODEL" --effort "$CLAUDE_EFFORT" \
       --output-format json --json-schema "$(cat "$schema_file")" \
-      --permission-mode bypassPermissions \
-      --disallowed-tools "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git push:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh pr merge:*),Bash(gh pr close:*)" \
-      --add-dir "$RUN_DIR" \
+      "${claude_iso[@]}" \
       </dev/null >"$dir/claude.raw.json" 2>"$dir/claude.log"
     echo $? > "$dir/claude.exit"
   ) &
