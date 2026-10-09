@@ -351,7 +351,7 @@ modules:
     summary: Simplify recently changed code for clarity, consistency and maintainability without changing
       what it does.
 - name: dual-agent-pr-review
-  version: 0.1.5
+  version: 0.1.6
   kinds:
   - skills
   - dsh-plugin
