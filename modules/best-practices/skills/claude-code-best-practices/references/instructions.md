@@ -1,0 +1,252 @@
+# CC instruction rules
+
+Detailed entries for `CC-001..CC-010` — checks that apply to every
+instruction file: CLAUDE.md, rules, skills, agents, output styles and
+system prompts. Each follows the four-part
+**What / Why / How / When NOT to apply** shape.
+
+## Contents
+
+- CC-001 — Every line earns its place
+- CC-002 — Non-obvious constraints say why
+- CC-003 — Say what to do, not only what to avoid
+- CC-004 — Emphasis is rare
+- CC-005 — Specific enough to test
+- CC-006 — One term per concept
+- CC-007 — No time-sensitive statements
+- CC-008 — Concrete examples in `<example>` tags
+- CC-009 — Files that load together don't contradict
+- CC-010 — No secrets in instruction files
+
+---
+
+## CC-001 — Every line earns its place
+
+**What.** For each line, ask whether removing it would make Claude make a
+mistake. Cut lines that state what Claude can infer by reading the code,
+standard language conventions, or self-evident advice ("write clean
+code", "follow best practices").
+
+**Why.** Instruction files share the context window with the task, and
+the always-loaded ones are paid for on every turn. Filler also dilutes the
+lines that matter: when a file is long, Claude is more likely to miss the
+one non-obvious rule in it.
+
+**How.**
+
+```markdown
+Bad:  Write clean, well-tested code and follow Python conventions.
+Good: Run a single test with `uv run pytest tests/x.py::test_y -q`;
+      the full suite needs the docker compose stack up.
+```
+
+**When NOT to apply.** A line that looks obvious but exists because Claude
+got it wrong before stays — note the failure it prevents (CC-002).
+
+---
+
+## CC-002 — Non-obvious constraints say why
+
+**What.** Any constraint whose reason isn't obvious states the reason in
+the same line.
+
+**Why.** Claude generalizes from a stated reason to cases the rule didn't
+name. "Never use ellipses because a text-to-speech engine reads this"
+also stops "…" and other unpronounceable marks; a bare "NEVER use
+ellipses" stops only the literal case, and gets argued away when it seems
+to conflict with something else.
+
+**How.**
+
+```markdown
+Migrations are append-only — deployed databases have already run the
+old ones, so editing one forks production from every fresh checkout.
+```
+
+**When NOT to apply.** Self-explanatory constraints ("use the project's
+formatter") need no reason.
+
+---
+
+## CC-003 — Say what to do, not only what to avoid
+
+**What.** Pair every prohibition with the expected behavior, especially
+for output format.
+
+**Why.** "Don't use markdown" leaves the model to guess what to produce
+instead, and the guesses vary between runs. "Write flowing prose
+paragraphs" names the target directly.
+
+**How.**
+
+```markdown
+Bad:  Do not use bullet points.
+Good: Answer in two or three short prose paragraphs.
+```
+
+**When NOT to apply.** A hard prohibition with no alternative (a
+forbidden command) is enforced by a hook or permission rule, not prose
+(CC-013).
+
+---
+
+## CC-004 — Emphasis is rare
+
+**What.** Use `IMPORTANT`, `MUST` or capitals on at most one or two lines
+per file. Write ordinary directives as "Use X when …", not "CRITICAL: You
+MUST use X".
+
+**Why.** When many lines are emphasized, none stands out. Anthropic's
+prompting guide notes that models from Opus 4.5 on are more responsive to
+the system prompt, so aggressive wording written to overcome older
+models' undertriggering now causes overtriggering: the tool or behavior
+gets applied where it doesn't belong. "If in doubt, use [tool]" has the
+same effect.
+
+**How.**
+
+```markdown
+Bad:  CRITICAL: You MUST ALWAYS use the search tool!!!
+Good: Use the search tool when the answer depends on code you haven't opened.
+```
+
+**When NOT to apply.** The one or two rules whose violation is
+catastrophic may keep their emphasis — and should also be backed by a
+hook (CC-013).
+
+---
+
+## CC-005 — Specific enough to test
+
+**What.** Name the exact command, file, path, threshold or tool, so a
+reader can check whether the instruction was followed.
+
+**Why.** "Keep functions small" or "test your changes" can't be checked
+and gets interpreted differently on every run. "Run `make check`; it must
+exit 0" can.
+
+**How.**
+
+```markdown
+Bad:  Make sure the tests pass.
+Good: Before committing, run `pnpm test --filter api`; it must exit 0.
+```
+
+**When NOT to apply.** Judgment calls (code review taste, naming) can stay
+heuristic — see CC-040.
+
+---
+
+## CC-006 — One term per concept
+
+**What.** Use one word for each concept throughout a file and across the
+files that load with it.
+
+**Why.** Mixing "endpoint", "route" and "URL" for the same thing makes
+Claude wonder whether they differ, and an instruction written with one
+synonym may not be connected to a rule written with another.
+
+**How.**
+
+```text
+Good: endpoint … endpoint … endpoint
+Bad:  endpoint … route … URL … path
+```
+
+**When NOT to apply.** When the codebase or domain has a fixed term, use
+that term.
+
+---
+
+## CC-007 — No time-sensitive statements
+
+**What.** No instruction branches on a date ("before August 2025, use
+…") unless it sits in an explicit legacy or "old patterns" section.
+
+**Why.** Instruction files outlive the moment they were written, and the
+model cannot reliably relate today's date to the cutoff. A date condition
+turns wrong silently when the date passes.
+
+**How.**
+
+```markdown
+## Current method
+Use the v2 endpoint.
+
+## Old patterns
+<details><summary>v1 endpoint (deprecated 2025-08)</summary>…</details>
+```
+
+**When NOT to apply.** A dated record of when something changed is fine;
+an instruction that branches on the date is not.
+
+---
+
+## CC-008 — Concrete examples in `<example>` tags
+
+**What.** When output format matters, give three to five diverse,
+concrete examples, each wrapped in `<example>` tags.
+
+**Why.** Examples convey format and level of detail more reliably than a
+description. A single example gets copied too literally; several diverse
+ones show what varies and what doesn't. The tags keep examples from being
+read as instructions.
+
+**How.**
+
+```markdown
+<example>
+Input: Fixed dates displaying wrong in reports
+Output: fix(reports): correct timezone conversion in date formatting
+</example>
+<example>
+Input: Added JWT login
+Output: feat(auth): add JWT-based login
+</example>
+```
+
+**When NOT to apply.** Free-form output with no required shape needs no
+examples.
+
+---
+
+## CC-009 — Files that load together don't contradict
+
+**What.** Check that instructions loaded in the same session — CLAUDE.md
+at every level, rules, output style, invoked skills — don't conflict.
+
+**Why.** CLAUDE.md files at different levels are additive, and Claude
+resolves a conflict between them by judgment, so behavior becomes
+unpredictable: it follows one file in one session and the other in the
+next.
+
+**How.**
+
+```text
+~/.claude/CLAUDE.md:   "Always squash commits."
+./CLAUDE.md:           "Keep one commit per logical change."
+→ decide which wins and delete or scope the other.
+```
+
+**When NOT to apply.** A deliberate override (a project rule that
+narrows a user default) is fine when the narrower file says it overrides.
+
+---
+
+## CC-010 — No secrets in instruction files
+
+**What.** No secret, credential, token or connection string appears in
+any instruction file. Reference an environment variable or secret store
+by name instead.
+
+**Why.** Instruction files are committed, shared, synced and loaded into
+model context and transcripts. A secret in one has leaked to everywhere
+those go.
+
+**How.**
+
+```markdown
+The API token is in the `ACME_API_TOKEN` environment variable.
+```
+
+**When NOT to apply.** Never.

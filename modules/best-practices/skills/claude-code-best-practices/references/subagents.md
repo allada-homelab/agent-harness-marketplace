@@ -1,0 +1,148 @@
+# CC subagent rules
+
+Detailed entries for `CC-051..CC-057` — subagent definitions in
+`.claude/agents/*.md` (and plugin `agents/`). Each follows the four-part
+**What / Why / How / When NOT to apply** shape.
+
+## Contents
+
+- CC-051 — Description says when to delegate
+- CC-052 — Minimum tools
+- CC-053 — Self-contained body
+- CC-054 — Body specifies the return format
+- CC-055 — Delegate for isolation or parallelism, not history
+- CC-056 — Review subagents report correctness gaps, not style
+- CC-057 — Preload only skills the subagent uses
+
+---
+
+## CC-051 — Description says when to delegate
+
+**What.** A subagent file has `name` and `description` frontmatter
+(optionally `tools`, `model`, `skills` and more), and the description
+says when to delegate to it.
+
+**Why.** The description is what the parent matches a task against;
+"Helpful reviewer" never gets chosen, "Use after editing auth code to
+check for session-handling bugs" does.
+
+**How.**
+
+```yaml
+---
+name: migration-reviewer
+description: Use after a database migration is written, to check it for locking and rollback risk.
+tools: Read, Grep, Glob
+---
+```
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-052 — Minimum tools
+
+**What.** `tools` lists the minimum the subagent needs; reviewers and
+researchers get read-only tools.
+
+**Why.** A reviewer with `Edit` can "fix" what it was asked to report,
+and every extra tool is one more way a prompt-injected input can act.
+
+**How.** `tools: Read, Grep, Glob` for a reviewer.
+
+**When NOT to apply.** Implementer subagents need write tools — but still
+only the ones they use.
+
+---
+
+## CC-053 — Self-contained body
+
+**What.** The body (which becomes the subagent's system prompt,
+replacing Claude Code's) contains everything the subagent needs beyond
+what the parent passes it.
+
+**Why.** A subagent sees only its own prompt, its preloaded skills, what
+the parent passes, and CLAUDE.md — except the built-in Explore and Plan
+agents and agents that set `omitClaudeMd: true`, which don't load it. It
+does not see the conversation, so a body that assumes it ("as discussed")
+fails.
+
+**How.** State the goal, inputs, constraints and done-criteria in the
+body; have the parent pass file paths explicitly.
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-054 — Body specifies the return format
+
+**What.** The body says what to return, for example a concise summary
+with `file:line` references.
+
+**Why.** Only the subagent's final message returns to the parent; an
+unspecified format comes back as a narrative the parent must re-parse, or
+as a file dump that floods the context the subagent was meant to protect.
+
+**How.**
+
+```markdown
+Return at most 10 findings, each as `file:line — problem — fix`. No preamble.
+```
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-055 — Delegate for isolation or parallelism, not history
+
+**What.** Use subagents to keep a noisy side task out of the main context
+or to run independent work in parallel. Don't use one for a task that
+needs the conversation's history; fork the conversation instead.
+
+**Why.** A subagent starts without the conversation, so a
+history-dependent task either fails or needs the history re-explained in
+the prompt. Some models over-delegate: Anthropic's guidance tells
+prompts for Opus 4.6 and Opus 5 to damp subagent spawning for work that
+can be done in a handful of tool calls.
+
+**How.**
+
+```markdown
+Do not delegate work you can finish in a handful of tool calls yourself.
+```
+
+**When NOT to apply.** Models that under-delegate (Opus 4.8 spawns fewer
+subagents by default) don't need the damping line.
+
+---
+
+## CC-056 — Review subagents report correctness gaps, not style
+
+**What.** A review subagent is told to report only correctness bugs or
+requirement gaps, not style.
+
+**Why.** A reviewer asked to find problems always finds some; without
+this scope the real defects are buried under preferences, and the parent
+spends turns on changes that don't matter.
+
+**How.**
+
+```markdown
+Report only bugs and unmet requirements, each with a concrete failure. Skip style.
+```
+
+**When NOT to apply.** A dedicated style reviewer, by design.
+
+---
+
+## CC-057 — Preload only skills the subagent uses
+
+**What.** List in `skills:` only skills the subagent will actually use.
+
+**Why.** `skills:` injects each listed skill's full content into the
+subagent at startup — not just the description — so every unused one
+costs its whole length.
+
+**How.** `skills: [reviewing-migrations]`, not every skill in the repo.
+
+**When NOT to apply.** Never.
