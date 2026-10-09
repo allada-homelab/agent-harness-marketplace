@@ -18,7 +18,7 @@ command: `/best-practices:containers-audit` on Claude Code,
 | [`repo-best-practices`](skills/repo-best-practices/) | Repository hygiene — pre-commit, Dependabot, secret scanning, task-runner/CI parity, CODEOWNERS, GitHub Actions hardening (`REPO-`) |
 | [`go-best-practices`](skills/go-best-practices/) | Go — layout, errors, concurrency, `net/http`, security, modules, quality, testing (`GO-`) |
 | [`grpc-best-practices`](skills/grpc-best-practices/) | gRPC — proto design, error model, deadlines, streaming, interceptors, security, tooling, performance (`GRPC-`) |
-| [`skills-best-practices`](skills/skills-best-practices/) | Agent Skills authoring — name and description, progressive disclosure, content, workflows, bundled scripts, evaluation; from Anthropic's skill-authoring best-practices guide (`SKILL-`) |
+| [`claude-code-best-practices`](skills/claude-code-best-practices/) | Claude Code configuration — CLAUDE.md, rules, skills, subagents, hooks and permissions, output styles, plugins, MCP — and API prompts for current Claude models, plus a review procedure (`CC-`, `PROMPT-`) |
 | [`meta-best-practices`](skills/meta-best-practices/) | Format spec for the library — rule IDs, severity, entry structure, authoring tools |
 | [`containers-audit`](skills/containers-audit/) | Interactive scan of Dockerfile / compose / devcontainer files against the containers rules, with per-finding approval of every fix |
 
@@ -65,7 +65,8 @@ portable skill contract on top and does not run it.
 
 Rule prefixes in use: `DOCKER`, `DEVC`, `COMPOSE`, `BUILDX`, `SEC`, `UV`
 (containers), `UVP` (uv), `PY` (python), `FAPI` (fastapi), `GO` (go), `GRPC`
-(grpc), `SKILL` (skills). `FE` is reserved for a future `frontend-best-practices`.
+(grpc), `CC` and `PROMPT` (claude-code). `SKILL` is retired (published
+only in best-practices 0.5.0); do not reuse its numbers. `FE` is reserved for a future `frontend-best-practices`.
 
 ## Provenance
 
@@ -101,3 +102,15 @@ portable and publishable:
 The rule content, rule IDs and numbering, the four-part entry structure,
 the severity scale and mapping table, the audit's steps and approval
 discipline, and the authoring tools are unchanged.
+
+`claude-code-best-practices` (added in 0.6.0, replacing the 0.5.0
+`skills-best-practices`) was converted from a `reviewing-agent-config`
+skill and its best-practices reference, built from Anthropic's Claude Code
+docs (best practices, features overview, skills, plugins), the Agent
+Skills authoring guide, the Claude prompting guides, and the Claude blog.
+Every factual claim was re-checked against those docs on 2026-10-09.
+Where the reference generalized model-specific advice, the rule now names
+the model (PROMPT-007, PROMPT-008, CC-055). Its review procedure became
+`references/review.md`. Its companion `updating-agent-practices`
+self-refresh skill is not carried, because this library changes through
+reviewed, versioned rule edits.

@@ -162,23 +162,24 @@ Should NOT activate:
 - REST/HTTP API questions with no gRPC involvement (→ python-best-practices / go-best-practices / fastapi-best-practices by language).
 - "Dockerfile for a gRPC service" (→ containers-best-practices).
 
-## skills-best-practices
+## claude-code-best-practices
 
 Should activate:
 
-- "Review this SKILL.md"
-- "Write a description for my skill so it triggers on PDF questions"
+- "Review my CLAUDE.md" / "audit my Claude Code setup"
 - "My skill never triggers — what's wrong with it?"
-- "This SKILL.md is 900 lines, how should I split it?"
-- "How should I structure the reference files in my skill?"
-- "How do I test whether my skill actually helps?"
-- "What's SKILL-007?" (rule-ID match)
+- "Should this be a hook or a CLAUDE.md line?"
+- "Is this subagent definition any good?"
+- "Write a PreToolUse hook that blocks pushes to main"
+- "Check my plugin.json and marketplace.json"
+- "Review this system prompt for Opus 5.5"
+- "What's CC-034?" / "What's PROMPT-004?" (rule-ID match)
 
 Should NOT activate:
 
 - "Add a rule to go-best-practices" / "what's the rule format here?" (→ meta-best-practices).
-- "Write a Python script" with no skill involved (→ python-best-practices).
-- "What skills do I have installed?" (a harness question, not authoring).
+- "Call the Claude API from Python" with no prompt or config to review (→ the API reference, not a best-practices review).
+- "Write a GitHub Actions workflow" (→ repo-best-practices).
 
 ---
 

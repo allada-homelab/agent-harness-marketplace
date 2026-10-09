@@ -132,7 +132,7 @@ modules:
       tool — as one self-contained file the user opens locally; design, dataviz and diagramming guidance
       plus a check-and-deliver flow.
 - name: best-practices
-  version: 0.5.0
+  version: 0.6.0
   kinds:
   - skills
   - dsh-plugin
@@ -141,9 +141,21 @@ modules:
   - pi
   - dsh
   description: Library of domain best-practices skills with stable, citable rule IDs (containers, uv,
-    Python, FastAPI, databases, repo hygiene, Go, gRPC, Agent Skills authoring) plus the containers-audit
-    interactive scan-and-fix workflow and the authoring tools for adding rules.
+    Python, FastAPI, databases, repo hygiene, Go, gRPC, Claude Code configuration and prompts) plus the
+    containers-audit interactive scan-and-fix workflow and the authoring tools for adding rules.
   skills:
+  - name: claude-code-best-practices
+    path: modules/best-practices/skills/claude-code-best-practices/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags: []
+    command: false
+    summary: Use when writing, reviewing, or auditing Claude Code configuration or Claude prompts — CLAUDE.md
+      and CLAUDE.local.md, .claude/rules, SKILL.md skills and commands, subagents in .claude/agents, hooks
+      and permissions in settings.json, output styles, plugin.json and marketplace.json, .mcp.json, or
+      system prompts sent to the Claude API.
   - name: containers-audit
     path: modules/best-practices/skills/containers-audit/SKILL.md
     harness:
@@ -255,17 +267,6 @@ modules:
     summary: Use when editing repository hygiene and CI config — .pre-commit-config.yaml hooks, .github/dependabot.yml,
       GitHub Actions workflows (.github/workflows/*.yml, permissions, zizmor audits), CODEOWNERS, justfile
       task-runner recipes that CI calls, or secret scanning (gitleaks).
-  - name: skills-best-practices
-    path: modules/best-practices/skills/skills-best-practices/SKILL.md
-    harness:
-    - claude
-    - dsh
-    - pi
-    tags: []
-    command: false
-    summary: Use when writing, reviewing, or restructuring an Agent Skill — a SKILL.md file, its name
-      and description frontmatter, its reference files, or the scripts it bundles — or when a skill fails
-      to trigger, triggers on the wrong prompts, loads too much context, or needs evaluations.
   - name: uv-best-practices
     path: modules/best-practices/skills/uv-best-practices/SKILL.md
     harness:

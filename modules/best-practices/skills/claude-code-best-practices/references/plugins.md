@@ -1,0 +1,152 @@
+# CC plugin rules
+
+Detailed entries for `CC-068..CC-075` — plugins and marketplaces. Each
+follows the four-part **What / Why / How / When NOT to apply** shape.
+
+## Contents
+
+- CC-068 — Manifest in `.claude-plugin/`, components at the root
+- CC-069 — Make a plugin only to share
+- CC-070 — Every enabled plugin costs context
+- CC-071 — Plugin paths use `${CLAUDE_PLUGIN_ROOT}`; state uses `${CLAUDE_PLUGIN_DATA}`
+- CC-072 — Plugin skill names are namespaced
+- CC-073 — Validate and evaluate in CI
+- CC-074 — A plugin runs as the user
+- CC-075 — Marketplaces version their releases
+
+---
+
+## CC-068 — Manifest in `.claude-plugin/`, components at the root
+
+**What.** The optional manifest is `.claude-plugin/plugin.json` (`name`
+is its only required key; `version` and `description` are optional).
+Component folders — `skills/`, `agents/`, `hooks/hooks.json`, `.mcp.json`
+— sit at the plugin root, not inside `.claude-plugin/`.
+
+**Why.** Components placed inside `.claude-plugin/` aren't discovered;
+the plugin installs and does nothing.
+
+**How.**
+
+```text
+my-plugin/
+  .claude-plugin/plugin.json
+  skills/<name>/SKILL.md
+  agents/<name>.md
+  hooks/hooks.json
+```
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-069 — Make a plugin only to share
+
+**What.** Package as a plugin only to share a setup across repositories
+or people.
+
+**Why.** Standalone skills, agents, hooks and MCP servers work without a
+plugin; wrapping them adds a manifest, install step and namespacing for
+no gain.
+
+**How.** Keep a one-repo setup in `.claude/`; extract a plugin when a
+second repo needs it.
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-070 — Every enabled plugin costs context
+
+**What.** Keep the number of enabled plugins small and their descriptions
+tight; side-effecting skills set `disable-model-invocation: true`.
+
+**Why.** The name and description of every model-invocable skill, agent
+and command from every enabled plugin load on every turn.
+
+**How.** Disable plugins you don't use this week; check per-skill cost
+with `/skill-doctor`.
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-071 — Plugin paths use `${CLAUDE_PLUGIN_ROOT}`; state uses `${CLAUDE_PLUGIN_DATA}`
+
+**What.** Paths in a plugin's hooks and MCP config use
+`${CLAUDE_PLUGIN_ROOT}`. State that must survive plugin updates goes in
+`${CLAUDE_PLUGIN_DATA}`.
+
+**Why.** The plugin's install location isn't fixed and changes on
+update; a relative or hardcoded path breaks. Data written inside the
+plugin root is lost on update. (`${CLAUDE_PLUGIN_DATA}` itself is deleted
+when the plugin is uninstalled from its last location, unless
+`--keep-data` is passed.)
+
+**How.**
+
+```json
+{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/format.sh" }
+```
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-072 — Plugin skill names are namespaced
+
+**What.** Plugin skills are namespaced as `/plugin:skill`; the
+frontmatter `name` sets only the last segment.
+
+**Why.** Documentation and other skills that refer to `/skill` alone can
+collide with another command of the same name; the namespaced form is
+unambiguous.
+
+**How.** Refer to `/my-plugin:deploying` in docs and cross-references.
+
+**When NOT to apply.** The bare `/skill` works when nothing else uses the
+name, so interactive use can stay short.
+
+---
+
+## CC-073 — Validate and evaluate in CI
+
+**What.** `claude plugin validate` passes, and `claude plugin eval` runs
+with its no-plugin baseline and gates CI on a threshold.
+
+**Why.** Validation catches manifests and frontmatter that don't parse;
+the baseline comparison shows whether the plugin improves results at
+all.
+
+**How.** Add both commands to the plugin repository's CI job.
+
+**When NOT to apply.** Never for a published plugin.
+
+---
+
+## CC-074 — A plugin runs as the user
+
+**What.** Keep hooks minimal, make no unnecessary network calls, and
+commit no secrets.
+
+**Why.** A plugin's hooks and servers run with the user's permissions on
+their machine; every user who enables it inherits whatever they do.
+
+**How.** Review a plugin's `hooks/hooks.json` and `.mcp.json` before
+enabling it, as you would a dependency's install script.
+
+**When NOT to apply.** Never.
+
+---
+
+## CC-075 — Marketplaces version their releases
+
+**What.** A marketplace has `.claude-plugin/marketplace.json` and
+publishes versioned releases.
+
+**Why.** Without versions, users can't pin a known-good state or tell
+whether an update changed anything.
+
+**How.** Bump each plugin's `version` on every change and tag releases.
+
+**When NOT to apply.** Never.

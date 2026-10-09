@@ -1,0 +1,404 @@
+# PROMPT rules
+
+Detailed entries for `PROMPT-001..PROMPT-020` — system prompts and
+messages sent to current Claude models through the API (Fable 5.1,
+Mythos 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5, and the earlier current
+models). Several rules are model-specific; each says which models. Check
+the model's own prompting page before applying one. Each follows the
+four-part **What / Why / How / When NOT to apply** shape.
+
+## Contents
+
+General
+- PROMPT-001 — Pass the colleague test
+- PROMPT-002 — Structure with XML tags; documents first, query last
+- PROMPT-003 — No prefilled final assistant turn
+
+Thinking and effort
+- PROMPT-004 — Adaptive thinking and `effort`, not `budget_tokens`
+- PROMPT-005 — Opus 5.5: start at `medium` effort, leave `max_tokens` headroom
+- PROMPT-006 — Don't ask for reasoning in the response
+- PROMPT-007 — Remove legacy steering, per model
+- PROMPT-008 — Tune verbosity and progress updates per model
+- PROMPT-009 — Change effort per message, not top-level
+
+Conversation history
+- PROMPT-010 — Keep history append-only
+- PROMPT-011 — Mark pasted content
+
+Agentic coding
+- PROMPT-012 — Say whether to act or advise
+- PROMPT-013 — Confirm before destructive or visible actions
+- PROMPT-014 — Keep scope minimal
+- PROMPT-015 — Solve generally, not for the test
+- PROMPT-016 — Investigate before answering
+- PROMPT-017 — Clean up temporary files
+- PROMPT-018 — Keep long-horizon state in files and git
+
+Unattended loops
+- PROMPT-019 — A text-only `end_turn` is not completion
+- PROMPT-020 — Parallel tool calls; never guess parameters
+
+---
+
+## PROMPT-001 — Pass the colleague test
+
+**What.** A colleague with no context could follow the prompt: it states
+the task, the audience, the constraints and what done looks like.
+
+**Why.** The model has only what's in the prompt; context that lives in
+the author's head produces generic output.
+
+**How.** Hand the prompt to someone outside the project; every question
+they ask is a missing line.
+
+**When NOT to apply.** Never.
+
+---
+
+## PROMPT-002 — Structure with XML tags; documents first, query last
+
+**What.** Separate instructions, context, examples and inputs with XML
+tags. Put long documents at the top of the prompt and the query at the
+end.
+
+**Why.** Tags keep the model from confusing an input document's text with
+instructions. Anthropic's guidance is that queries placed after long
+documents get better responses than queries placed before them.
+
+**How.**
+
+```xml
+<documents><document index="1">…</document></documents>
+<instructions>Summarize the risks in the contract above.</instructions>
+```
+
+**When NOT to apply.** Short prompts with a single input need no tags.
+
+---
+
+## PROMPT-003 — No prefilled final assistant turn
+
+**What.** Don't end the messages with a partial assistant turn to steer
+the response.
+
+**Why.** Starting with the Claude 4.6 models, a prefilled last assistant
+turn returns a 400 error. (Assistant messages earlier in the conversation
+are unaffected.)
+
+**How.** Ask for the format in instructions, or use structured outputs.
+
+**When NOT to apply.** Models before 4.6 still accept prefill.
+
+---
+
+## PROMPT-004 — Adaptive thinking and `effort`, not `budget_tokens`
+
+**What.** Use adaptive thinking and control depth with `effort`.
+
+**Why.** On Claude 4.7 and later, setting `budget_tokens` returns a 400
+error. (On Opus 4.6 and Sonnet 4.6 it is deprecated but still works.)
+
+**How.** Remove `thinking.budget_tokens`; set `effort` instead.
+
+**When NOT to apply.** Older models that predate adaptive thinking.
+
+---
+
+## PROMPT-005 — Opus 5.5: start at `medium` effort, leave `max_tokens` headroom
+
+**What.** On Opus 5.5, thinking is always on and `thinking: disabled` is
+rejected; the default effort is `medium`. Start there, reserve `xhigh`
+and `max` for work where a quality gain has been measured, and leave
+headroom in `max_tokens` for thinking.
+
+**Why.** Higher effort costs tokens and latency on every request; without
+a measured gain it's pure cost. Thinking counts against `max_tokens`, so
+a tight limit truncates the answer.
+
+**How.** Anthropic reports that 128,000 `max_tokens` has worked well for
+long agentic turns; its migration guide suggests starting at 64,000 for
+`xhigh`/`max`.
+
+**When NOT to apply.** Other models have different defaults (Opus 5
+defaults to `high`); check the model's page.
+
+---
+
+## PROMPT-006 — Don't ask for reasoning in the response
+
+**What.** Don't instruct the model to reproduce its reasoning in the
+response. Read summarized thinking blocks instead.
+
+**Why.** On current models, prompts that push the model to write out its
+reasoning may be declined with the `reasoning_extraction` refusal
+category.
+
+**How.** Remove "show your reasoning step by step in the answer"; request
+thinking with `display: "summarized"` and read it from the thinking
+blocks. A short explanation of the answer is still fine.
+
+**When NOT to apply.** Never.
+
+---
+
+## PROMPT-007 — Remove legacy steering, per model
+
+**What.** Remove prompt lines written to push older models harder, where
+the target model's guidance says so:
+
+- "If in doubt, use [tool]" and other aggressive tool prompting —
+  current models (from Opus 4.5 on) over-trigger on it.
+- Explicit verification instructions — on **Opus 5 only**, which verifies
+  well unprompted and over-verifies when told to.
+- "Think carefully before answering" in chat system prompts — consider
+  removing for **Opus 5.5**, where effort is the control.
+
+**Why.** Each of these compensated for a weakness the newer model doesn't
+have, and now pushes it too far: extra tool calls, extra verification
+passes, slower replies.
+
+**How.** Search the prompt for the phrases above and test removal with
+your evals.
+
+**When NOT to apply.** On other models, keep self-check instructions —
+Anthropic's guide says they catch errors reliably, especially for code
+and math.
+
+---
+
+## PROMPT-008 — Tune verbosity and progress updates per model
+
+**What.** Prompt Opus 5 explicitly for conciseness; ask Fable 5.1 for
+user-facing progress updates.
+
+**Why.** Opus 5's default responses run longer; Fable 5.1 writes fewer
+progress updates than Fable 5 by default. (Opus 5.5 writes progress
+updates on its own.)
+
+**How.**
+
+```text
+Keep responses brief: lead with the answer, at most a short paragraph of support.
+```
+
+**When NOT to apply.** Models whose defaults already match what you want.
+
+---
+
+## PROMPT-009 — Change effort per message, not top-level
+
+**What.** To vary effort within a conversation, use per-message effort
+rather than changing the top-level `effort` between requests.
+
+**Why.** Changing top-level effort invalidates the prompt cache, so every
+change re-pays the whole prefix.
+
+**How.** Keep top-level `effort` fixed and set effort on the individual
+message that needs more or less.
+
+**When NOT to apply.** Single-request calls.
+
+---
+
+## PROMPT-010 — Keep history append-only
+
+**What.** Don't edit earlier turns, `system` or `tools` between requests;
+append a mid-conversation system message instead.
+
+**Why.** On Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5, editing the
+prefix invalidates earlier thinking blocks (enforced by default for
+accounts created on or after 2026-08-31, opt-in for older ones); on every
+model it invalidates the cache.
+
+**How.** To change instructions mid-conversation, append a system
+message rather than rewriting `system`.
+
+**When NOT to apply.** Never as a default; the docs recommend
+append-only for all models.
+
+---
+
+## PROMPT-011 — Mark pasted content
+
+**What.** Wrap text a user pasted from elsewhere in
+`<pasted_content id="...">` tags with a matching closing tag and a short
+random ID generated by the application, each tag on its own line, and
+explain the tags in the system prompt.
+
+**Why.** Pasted text can contain instructions the user didn't write; the
+tags let the model treat it as data. Anthropic presents this as one
+guardrail — tags can be imitated, so it isn't the only one — and notes it
+can make the model slightly more cautious.
+
+**How.**
+
+```text
+<pasted_content id="k3f9q2">
+…pasted text…
+</pasted_content id="k3f9q2">
+```
+
+**When NOT to apply.** Applications where users never paste external
+content.
+
+---
+
+## PROMPT-012 — Say whether to act or advise
+
+**What.** Make the request's mode explicit: "change this function", not
+"can you suggest changes".
+
+**Why.** Current models follow instructions precisely; "suggest" gets
+suggestions when you wanted edits, and vice versa.
+
+**How.** In a system prompt, say which is the default: "Make the changes
+directly unless the user asks for suggestions."
+
+**When NOT to apply.** Never.
+
+---
+
+## PROMPT-013 — Confirm before destructive or visible actions
+
+**What.** Require confirmation before actions that are destructive, hard
+to reverse, or visible to others, and forbid shortcuts such as
+`--no-verify`.
+
+**Why.** An autonomous agent will take the shortest path to "done";
+without the rule, that includes force-pushing, deleting, or bypassing
+hooks.
+
+**How.**
+
+```text
+Before deleting files, force-pushing, or posting anything externally, ask first. Never bypass hooks with --no-verify.
+```
+
+**When NOT to apply.** Sandboxed environments where every action is
+disposable.
+
+---
+
+## PROMPT-014 — Keep scope minimal
+
+**What.** Forbid unrequested features, refactors, abstractions,
+docstrings, and defensive code for cases that can't happen; validate only
+at system boundaries.
+
+**Why.** Capable models overreach: a one-line fix arrives with a
+refactor that has to be reviewed and may break something.
+
+**How.**
+
+```text
+Make only the changes requested. Don't refactor, add features, or add error handling for impossible cases.
+```
+
+**When NOT to apply.** Open-ended "improve this module" tasks.
+
+---
+
+## PROMPT-015 — Solve generally, not for the test
+
+**What.** Ask for a general solution, forbid hard-coding to tests, and
+ask the model to report a bad test rather than work around it.
+
+**Why.** An agent optimizing for green tests can special-case the test
+inputs; the suite passes and the code is wrong.
+
+**How.**
+
+```text
+Implement a general solution. Never hard-code values for tests. If a test looks wrong, say so instead of working around it.
+```
+
+**When NOT to apply.** Never.
+
+---
+
+## PROMPT-016 — Investigate before answering
+
+**What.** Tell the model never to speculate about code it hasn't opened.
+
+**Why.** Without it the model answers from priors and confidently
+describes code that doesn't exist.
+
+**How.**
+
+```text
+Open and read the relevant files before answering questions about the code.
+```
+
+**When NOT to apply.** Questions that don't depend on the codebase.
+
+---
+
+## PROMPT-017 — Clean up temporary files
+
+**What.** Tell the model to remove temporary files it created by the end
+of the task.
+
+**Why.** Agents create scratch scripts and test files to iterate; left
+behind, they end up committed.
+
+**How.**
+
+```text
+If you create temporary files or scripts, delete them before finishing.
+```
+
+**When NOT to apply.** Never.
+
+---
+
+## PROMPT-018 — Keep long-horizon state in files and git
+
+**What.** For work spanning context windows, keep state in files
+(`tests.json`, `progress.txt`) and in git.
+
+**Why.** A fresh context window can rediscover state from files and
+commits; state held only in the conversation is lost at the boundary.
+
+**How.** Ask the model to update `progress.txt` and commit at each
+milestone.
+
+**When NOT to apply.** Tasks that fit in one context window.
+
+---
+
+## PROMPT-019 — A text-only `end_turn` is not completion
+
+**What.** In an unattended loop, track open items in a checklist; when
+the model ends its turn with text only and items remain, send a nudge
+listing them. Cap automatic continuations at two or three.
+
+**Why.** A text-only `end_turn` is a report, not proof the work is done;
+treating it as completion ships unfinished work, and nudging without a
+cap can loop forever.
+
+**How.** Compare the checklist after each turn; continue at most three
+times, then stop and report what's open.
+
+**When NOT to apply.** Interactive sessions where a human reviews each
+turn.
+
+---
+
+## PROMPT-020 — Parallel tool calls; never guess parameters
+
+**What.** Encourage parallel tool calls for independent operations, and
+tell the model never to guess or use placeholders for missing
+parameters.
+
+**Why.** Sequential independent calls waste wall-clock time; a guessed
+parameter produces a confident wrong action.
+
+**How.**
+
+```text
+Make independent tool calls in parallel. If a required parameter is unknown, ask or look it up; never guess.
+```
+
+**When NOT to apply.** Calls that depend on each other's results run in
+sequence.

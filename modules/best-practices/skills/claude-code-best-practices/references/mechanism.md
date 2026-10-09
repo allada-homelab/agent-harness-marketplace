@@ -1,0 +1,188 @@
+# CC mechanism rules
+
+Detailed entries for `CC-011..CC-018` — choosing where an instruction
+lives. Each follows the four-part
+**What / Why / How / When NOT to apply** shape.
+
+## Contents
+
+- CC-011 — Choose the mechanism by when it loads
+- CC-012 — "Every time X, do Y" is a hook
+- CC-013 — "Never do X" is a hook, deny rule or managed setting
+- CC-014 — Procedures longer than ~10 lines are skills
+- CC-015 — Scoped guidance goes in a scoped file
+- CC-016 — Personal preferences stay out of committed files
+- CC-017 — Reference material stays out of CLAUDE.md
+- CC-018 — Repeated format instructions are an output style
+
+---
+
+## CC-011 — Choose the mechanism by when it loads
+
+**What.** Put each instruction in the mechanism whose loading matches
+how often it is needed:
+
+| Need | Mechanism | Loads |
+|---|---|---|
+| Facts and conventions every session needs | Project-root CLAUDE.md or an unscoped rule | Every session; re-injected after compaction |
+| Guidance for some directories or file types | `.claude/rules/` with `paths:`, or a subdirectory CLAUDE.md | When matching files are touched; summarized away at compaction until touched again |
+| Procedures, runbooks, reference docs | Skill | Description every session; body when invoked |
+| A side task that would flood the context | Subagent | Isolated context; only the final message returns |
+| Must happen every time, or must never happen | Hook or permission rule (managed settings org-wide) | Outside the context |
+| Role, tone or format for the whole session | Output style or `--append-system-prompt` | System prompt |
+| The same setup in another repo, or shared | Plugin | Wherever enabled |
+
+**Why.** The wrong mechanism costs either context (always-loaded content
+needed once a month) or reliability (a must-happen step left to the
+model's discretion). CC-012..CC-018 are the common misplacements.
+
+**How.** Read the table top to bottom and take the first row that fits.
+
+**When NOT to apply.** Never as a principle; when two rows fit, prefer
+the one that loads less often.
+
+---
+
+## CC-012 — "Every time X, do Y" is a hook
+
+**What.** An instruction of the form "after every edit, run the
+formatter" is a hook (`PostToolUse` for this one), not prose.
+
+**Why.** Claude choosing to run a formatter is not the same as the
+formatter running. Prose is followed most of the time; a hook runs every
+time, including in long sessions where the instruction has drifted out of
+attention.
+
+**How.**
+
+```json
+{ "hooks": { "PostToolUse": [ { "matcher": "Edit|Write",
+    "hooks": [ { "type": "command",
+      "command": "jq -r '.tool_input.file_path' | xargs -I{} npx prettier --write -- {}" } ] } ] } }
+```
+
+The hook reads the edited path from its JSON input on stdin (see CC-061).
+
+**When NOT to apply.** "Every time" steps that need judgment (summarize
+what changed) stay prose, or use a `prompt`/`agent` hook.
+
+---
+
+## CC-013 — "Never do X" is a hook, deny rule or managed setting
+
+**What.** A prohibition that must hold — never push to main, never read
+`.env` — is enforced by a `PreToolUse` hook, a permission deny rule, or
+managed settings, not only by a sentence.
+
+**Why.** Prompted rules can fail in long sessions, in ambiguous
+situations, and under prompt injection. A prose-only guardrail is a
+guardrail that can be skipped.
+
+**How.**
+
+```json
+{ "permissions": { "deny": [ "Read(./.env)", "Bash(git push origin main*)" ] } }
+```
+
+**When NOT to apply.** Soft preferences ("avoid adding dependencies")
+can stay prose; this is for rules whose violation is unacceptable.
+
+---
+
+## CC-014 — Procedures longer than ~10 lines are skills
+
+**What.** A step-by-step procedure longer than about ten lines moves out
+of CLAUDE.md into a skill.
+
+**Why.** CLAUDE.md loads every session; a release runbook used once a
+week costs its full length on every turn of every other session. As a
+skill, only its description loads until it's needed.
+
+**How.**
+
+```markdown
+# CLAUDE.md
+Releases: use the `releasing` skill.
+```
+
+**When NOT to apply.** A short procedure every session needs (how to run
+one test) stays in CLAUDE.md.
+
+---
+
+## CC-015 — Scoped guidance goes in a scoped file
+
+**What.** Guidance that applies to one directory or file type goes in a
+path-scoped rule (`paths:`) or a subdirectory CLAUDE.md, not in the root
+CLAUDE.md or an unscoped rule.
+
+**Why.** Root-level and unscoped instructions load in every session,
+including those that never touch the files they're about.
+
+**How.**
+
+```markdown
+---
+paths: ["db/migrations/**"]
+---
+Migrations are append-only; add a new file instead of editing one.
+```
+
+**When NOT to apply.** Guidance that applies to most of the repo stays
+at the root.
+
+---
+
+## CC-016 — Personal preferences stay out of committed files
+
+**What.** Preferences of one developer (tone, editor habits, personal
+shortcuts) go in the user-level CLAUDE.md or `CLAUDE.local.md`, not in a
+committed project file.
+
+**Why.** A committed file applies to everyone on the project; one
+person's preference becomes everyone's instruction, and can conflict with
+theirs (CC-009).
+
+**How.** Move "I prefer terse answers" from `./CLAUDE.md` to the
+user-level CLAUDE.md.
+
+**When NOT to apply.** Team-agreed conventions belong in the committed
+file even if one person proposed them.
+
+---
+
+## CC-017 — Reference material stays out of CLAUDE.md
+
+**What.** API documentation, schemas and other long reference material
+move to a skill's supporting file, or CLAUDE.md links to them.
+
+**Why.** Reference material is needed occasionally but, in CLAUDE.md, is
+paid for always — and it crowds out the instructions Claude needs every
+turn.
+
+**How.**
+
+```markdown
+# CLAUDE.md
+Billing API reference: see the `billing-api` skill.
+```
+
+**When NOT to apply.** A few lines of reference every task needs (the
+main service's port) can stay.
+
+---
+
+## CC-018 — Repeated format instructions are an output style
+
+**What.** "Be shorter" or "use this format" instructions repeated across
+files or turns become an output style.
+
+**Why.** An output style sets response format at the system-prompt level
+for the whole session; the same instruction scattered through CLAUDE.md
+and skills competes with everything else and is followed inconsistently.
+
+**How.** Create an output style with the format rules, and delete the
+scattered copies.
+
+**When NOT to apply.** A format rule specific to one task belongs in that
+task's skill.
