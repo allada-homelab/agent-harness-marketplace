@@ -15,6 +15,7 @@ okf_version: "0.2"
 * [pr-flow watch crashes when its worktree is removed mid-poll](./pr-flow-watch-dies-if-worktree-removed.md) - pr-flow watch runs git and gh with the PR worktree as cwd; removing that worktree while a watch polls kills it with a traceback, which a piped exit code hides.
 * [pr-flow watch false-green on delayed CI](./pr-flow-watch-false-green-on-delayed-ci.md) - pr-flow watch can report false green when GitHub delays CI startup; zero runs means 'not started yet', not 'no CI applies' — confirm with gh run list
 * [skill-creator trigger harness is unreliable for measuring descriptions](./skill-creator-trigger-harness-unreliable.md) - skill-creator's run_eval.py pollutes ~/.claude/commands and under-detects triggering (0-33% vs 12/12 independently), so run it from a scratch dir and measure with claude -p stream-json.
+* [Untrusted worktree agent CLIs need more than a permission mode](./untrusted-worktree-agent-cli-isolation.md) - A permission mode alone does not isolate an agent CLI run on untrusted PR content; claude -p and codex exec each need extra isolation flags.
 
 # Runbook
 
