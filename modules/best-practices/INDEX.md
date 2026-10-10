@@ -278,7 +278,7 @@ _Use when working with SQLite or PostgreSQL (Postgres) from Python — sqlite3 c
 
 ## fastapi-best-practices
 
-_Use when working with FastAPI apps — building or reviewing APIRouter route modules, Pydantic v2 request/response models, Depends() dependencies, lifespan startup/shutdown, OAuth2/JWT or bearer-token auth, pydantic-settings secrets, async SQLAlchemy sessions, TestClient/httpx tests, uvicorn deployment, or observability (OpenTelemetry tracing/metrics, OTLP export, X-Request-ID request id and log correlation, /healthz and /readyz probes, pure ASGI middleware). Covers the FAPI- rule family (structure, models/validation, settings, dependencies, path operations, errors, security, async DB, testing, deployment), OBS- (observability) and API- (bearer-token comparison, secret-file precedence). FastAPI-specific only; general Python rules live in python-best-practices._
+_Use when working with FastAPI apps — APIRouter routes, Pydantic v2 models, Depends() dependencies, lifespan, OAuth2/JWT or bearer-token auth, pydantic-settings, async SQLAlchemy, TestClient/httpx tests, uvicorn deployment, or OpenTelemetry, request-id logging and health probes. Covers the FAPI-, OBS- and API- rule families. General Python rules live in python-best-practices._
 
 | ID | Summary |
 |---|---|
@@ -330,7 +330,7 @@ _Use when working with FastAPI apps — building or reviewing APIRouter route mo
 
 ## go-best-practices
 
-_Use when working with Go code — .go files and go.mod/go.sum, go build / go test / go test -race / go vet / gofmt / staticcheck / golangci-lint / govulncheck, module and package layout, error handling (errors.Is / %w), the context package, goroutines and channels, errgroup, stdlib net/http servers and clients, graceful shutdown on SIGINT/SIGTERM, parameterized SQL, or Go security (html/template, crypto/rand). Covers the GO- rule family (layout, errors, concurrency, HTTP, security, modules, quality, testing). Language-level Go only — container packaging lives in containers-best-practices, gRPC service rules in grpc-best-practices._
+_Use when working with Go code — .go files, go.mod, go test / vet / staticcheck / golangci-lint / govulncheck, package layout, errors.Is and %w, context, goroutines, channels and errgroup, net/http servers and clients, graceful shutdown, parameterized SQL, or Go security. Covers the GO- rule family. Container packaging lives in containers-best-practices, gRPC rules in grpc-best-practices._
 
 | ID | Summary |
 |---|---|
@@ -357,7 +357,7 @@ _Use when working with Go code — .go files and go.mod/go.sum, go build / go te
 
 ## grpc-best-practices
 
-_Use when working with gRPC — .proto files and proto3 schema design, enum zero values and _UNSPECIFIED sentinels, well-known types (google.protobuf.Timestamp / Duration / FieldMask), List pagination (page_size / page_token / next_page_token), buf or protoc generation, grpc-go / grpclib / grpcio servers and clients, google.rpc status codes and rich errors, deadlines and cancellation propagation, streaming RPCs (server/client/bidi), interceptors (auth, logging, panic recovery, protovalidate), TLS / mTLS transport credentials and the insecure-credentials footgun, server reflection + grpcurl/grpcui, health checking, message-size limits and connection reuse. Covers the GRPC- rule family (proto design, error model, deadlines, streaming, interceptors, security, tooling, performance). Protocol-level rules apply to any language; code examples are grpc-go. For the language underneath, see go-best-practices._
+_Use when working with gRPC — .proto files and proto3 schema design, buf or protoc generation, grpc-go / grpcio / grpclib servers and clients, google.rpc status codes and rich errors, deadlines, streaming RPCs, interceptors, TLS / mTLS credentials, server reflection and grpcurl, health checking or message-size limits. Covers the GRPC- rule family; protocol rules apply to any language and examples are grpc-go. For the Go language itself, see go-best-practices._
 
 | ID | Summary |
 |---|---|
@@ -483,7 +483,7 @@ _Use when editing repository hygiene and CI config — .pre-commit-config.yaml h
 
 ## uv-best-practices
 
-_Use when working with uv (Astral's Python package and project manager) — `uv sync` / `add` / `lock` / `run` / `tool` / `build` / `publish` / `audit` / `export`, `uvx`, a `uv.lock` or `pylock.toml` file, or a `pyproject.toml` with `[tool.uv]` or `[dependency-groups]`. Covers project shape, lockfile hygiene, workspaces, dependency groups, private registries, Python version pinning, CI, publishing, vulnerability scanning, and migration from pip / poetry / PDM / Hatch. Covers the UVP- rule family. For container-side uv patterns (Dockerfile builds) use containers-best-practices instead._
+_Use when working with uv, Astral's Python package and project manager — `uv sync` / `add` / `lock` / `run` / `tool` / `build` / `publish`, `uvx`, a `uv.lock`, or a `pyproject.toml` with `[tool.uv]` or `[dependency-groups]`, including workspaces, private registries, CI, publishing and migrating from pip, poetry, PDM or Hatch. Covers the UVP- rule family. For uv inside a Dockerfile, use containers-best-practices._
 
 | ID | Summary |
 |---|---|

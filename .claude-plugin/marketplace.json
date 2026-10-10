@@ -32,14 +32,14 @@
       "name": "agent-transcripts",
       "description": "Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a derived sqlite database.",
       "category": "development",
-      "version": "0.8.4",
+      "version": "0.8.5",
       "source": "./modules/agent-transcripts"
     },
     {
       "name": "pr-flow",
       "description": "Work off main on every harness: branch + worktree, PR, watch CI until green, merge only when told, tear down after merge.",
       "category": "development",
-      "version": "0.2.11",
+      "version": "0.2.12",
       "source": "./modules/pr-flow"
     },
     {
@@ -53,14 +53,14 @@
       "name": "feature-dev",
       "description": "Guided seven-phase feature development: explore the codebase with parallel specialist agents, ask clarifying questions, compare architectures, implement, then review. A harness-neutral port of Anthropic's feature-dev plugin whose agents dispatch on Claude Code, pi and dsh.",
       "category": "development",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "source": "./modules/feature-dev"
     },
     {
       "name": "code-review",
       "description": "Automated pull-request review on every harness: a size gate sends a small or generated-only change to one combined reviewer, everything else to a five-lens fan-out plus batch scoring; anything under 80 is dropped, one comment posted with gh.",
       "category": "development",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "source": "./modules/code-review"
     },
     {
@@ -74,14 +74,14 @@
       "name": "best-practices",
       "description": "Library of domain best-practices skills with stable, citable rule IDs (containers, uv, Python, FastAPI, databases, repo hygiene, Go, gRPC, Claude Code configuration and prompts) plus the containers-audit interactive scan-and-fix workflow and the authoring tools for adding rules.",
       "category": "development",
-      "version": "0.6.1",
+      "version": "0.6.2",
       "source": "./modules/best-practices"
     },
     {
       "name": "okf-wiki",
       "description": "A per-repo, self-healing agent wiki in Open Knowledge Format: a session-start digest, background capture and re-verification on cheap models, and a reflect loop that measures whether it helps.",
       "category": "development",
-      "version": "0.1.9",
+      "version": "0.1.10",
       "source": "./modules/okf-wiki"
     },
     {

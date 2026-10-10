@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Review a GitHub pull request and post one comment with only the high-confidence issues. A small or docs/generated-only change (under 50 changed lines, or every changed path documentation or generated) gets one combined reviewer covering all five lenses with inline scoring; any other change gets five parallel lens reviewers plus one batch scorer that rates every candidate 0-100 and drops anything under 80 from the comment. A second eligibility check runs before the comment is posted. Use when asked to code-review, review or audit a pull request, or when a pull request needs a review comment; not for reviewing an uncommitted local diff. Needs the gh CLI.
+description: Review a GitHub pull request with parallel reviewers and a confidence scorer, and post one comment holding only the high-confidence issues. Use when asked to code-review, review or audit a pull request, or when a pull request needs a review comment; not for reviewing an uncommitted local diff. Needs the gh CLI.
 user-invocable: true
 argument-hint: "[pr-number-or-url]"
 tags: [review, github]

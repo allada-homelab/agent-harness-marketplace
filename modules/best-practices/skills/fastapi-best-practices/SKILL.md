@@ -1,6 +1,6 @@
 ---
 name: fastapi-best-practices
-description: Use when working with FastAPI apps — building or reviewing APIRouter route modules, Pydantic v2 request/response models, Depends() dependencies, lifespan startup/shutdown, OAuth2/JWT or bearer-token auth, pydantic-settings secrets, async SQLAlchemy sessions, TestClient/httpx tests, uvicorn deployment, or observability (OpenTelemetry tracing/metrics, OTLP export, X-Request-ID request id and log correlation, /healthz and /readyz probes, pure ASGI middleware). Covers the FAPI- rule family (structure, models/validation, settings, dependencies, path operations, errors, security, async DB, testing, deployment), OBS- (observability) and API- (bearer-token comparison, secret-file precedence). FastAPI-specific only; general Python rules live in python-best-practices.
+description: Use when working with FastAPI apps — APIRouter routes, Pydantic v2 models, Depends() dependencies, lifespan, OAuth2/JWT or bearer-token auth, pydantic-settings, async SQLAlchemy, TestClient/httpx tests, uvicorn deployment, or OpenTelemetry, request-id logging and health probes. Covers the FAPI-, OBS- and API- rule families. General Python rules live in python-best-practices.
 ---
 
 # FastAPI best practices

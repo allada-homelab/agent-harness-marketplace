@@ -1,7 +1,7 @@
 ---
 name: auditor
 description: Judges one transcript excerpt for the okf-wiki reflect loop — did the agent consult the wiki, did it help, did the agent rediscover something the wiki already said, was a concept wrong, was a capture missed — and returns a short structured verdict. Read-only.
-tools: Read, Bash, Grep, Glob
+tools: Read, Grep, Glob
 model: sonnet
 ---
 
