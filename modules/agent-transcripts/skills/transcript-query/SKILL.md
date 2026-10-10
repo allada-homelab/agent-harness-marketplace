@@ -1,6 +1,6 @@
 ---
 name: transcript-query
-description: Query the agent-transcripts sqlite index to measure tool use, sessions, projects and activity across Claude Code, pi and dsh without loading transcript prose into context. Use when the user wants to "analyze transcripts", "query transcripts", "how often did I use X", "find sessions where …", or any question answered from chat history. Aggregates first, bounded excerpts only where judgment is required.
+description: Query the agent-transcripts sqlite index to measure tool use, sessions, projects and activity across Claude Code, pi and dsh without loading transcript prose into context. Use when the user wants to "query transcripts", "how often did I use X", "find sessions where …", or any question answered from chat history. Aggregates first, bounded excerpts only where judgment is required.
 tags: [observability]
 ---
 

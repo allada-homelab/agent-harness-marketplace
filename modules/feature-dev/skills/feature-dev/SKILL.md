@@ -22,7 +22,7 @@ You are helping a developer implement a new feature. Follow a systematic approac
 
 ## Dispatching the specialist agents
 
-This module ships three agents: `feature-dev:code-explorer`, `feature-dev:code-architect` and `feature-dev:code-reviewer`. Each runs in its own isolated context with read-only tools and returns a written brief. Launch them with the harness's delegation tool and give every one a complete, self-contained prompt, because a child sees none of this conversation:
+This module ships three agents: `feature-dev:code-explorer`, `feature-dev:code-architect` and `feature-dev:code-reviewer`. Each runs in its own isolated context, never modifies files, and returns a written brief. Launch them with the harness's delegation tool and give every one a complete, self-contained prompt, because a child sees none of this conversation:
 
 - **Claude Code**: the Agent tool with `subagent_type` set to the agent's name above.
 - **pi and dsh**: the `delegate_agent` tool with `agent_type` set to the agent's name above. On pi the tool is inactive until this skill is invoked; if it is missing, run `/agents` once.
@@ -118,7 +118,7 @@ If the user says "whatever you think is best", provide your recommendation and g
 **Goal**: Ensure code is simple, DRY, elegant, easy to read, and functionally correct
 
 **Actions**:
-1. Launch 3 `feature-dev:code-reviewer` agents in parallel with different focuses: simplicity/DRY/elegance, bugs/functional correctness, project conventions/abstractions
+1. Launch 3 `feature-dev:code-reviewer` agents in parallel with different focuses: simplicity/DRY/elegance, bugs/functional correctness, project conventions/abstractions. Give each the same scope: the base to diff against (the merge base with the default branch, or the pull request's base), every file created, modified or deleted in Phase 5, and a one-paragraph summary of the feature and the chosen architecture. Each reviewer reviews the whole change set and reads the unchanged code around it.
 2. Consolidate findings and identify highest severity issues that you recommend fixing
 3. **Present findings to user and ask what they want to do** (fix now, fix later, or proceed as-is)
 4. Address issues based on user decision

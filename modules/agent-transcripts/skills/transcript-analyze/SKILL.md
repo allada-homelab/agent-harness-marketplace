@@ -1,6 +1,6 @@
 ---
 name: transcript-analyze
-description: Read one agent session end to end, with tool results hidden until asked for, and record a whole-session analysis of its goal, turning points, what went well and badly, why, and what to change. Use to analyze or deep-review how a session went as a whole.
+description: Read one agent session transcript end to end, with tool results hidden until asked for, and record a whole-session analysis of its goal, turning points, what went well and badly, why, and what to change. Use when the user asks to "analyze a transcript" or to analyze, deep-review or post-mortem one specific Claude Code, pi or dsh session end to end.
 tags: [observability]
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: transcript-review
-description: Read one flagged agent session at a time and record what a deterministic sweep cannot see — a repeated failing approach, tool misuse, a user correction, a claim made without evidence — as validated findings in the shared findings database. Use after the transcript-sweep skill, when the user asks to "review", "judge" or "grade" flagged sessions, or asks why their agent sessions go wrong on claude, pi or dsh. A script does every mechanical part — it queues candidate sessions, prints one capped, boilerplate-stripped view, and refuses any verdict whose quote is not actually in that session — so a small local model can run this.
+description: Read one flagged agent session at a time and record what a deterministic sweep cannot see — a repeated failing approach, tool misuse, a user correction, a claim made without evidence — as validated findings in the shared findings database. Use after the transcript-sweep skill, or when the user asks to "review", "judge" or "grade" flagged claude, pi or dsh sessions. A script does every mechanical part — it queues candidate sessions, prints one capped, boilerplate-stripped view, and refuses any verdict whose quote is not actually in that session — so a small local model can run this.
 tags: [observability]
 ---
 
