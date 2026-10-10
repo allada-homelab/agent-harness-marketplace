@@ -6,6 +6,7 @@ tags: [testing, chrome]
 generated: {by: okf-wiki/haiku, at: 2026-10-07T18:59:50Z}
 verified:
   - {by: okf-wiki/haiku, at: 2026-10-07T18:59:50Z, commit: a29cb7b9182b}
+  - {by: okf-wiki/haiku, at: 2026-10-10T03:34:46Z, commit: 41c5f19df087}
 sources:
   - {id: s1, resource: modules/artifacts/skills/artifacts/artifactctl.py, note: "render(): sandbox command-line branch and deferred-error live tests in test_artifactctl.py"}
 ---

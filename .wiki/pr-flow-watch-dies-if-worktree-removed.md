@@ -6,6 +6,7 @@ tags: [pr-flow, watch, worktree, exit-code]
 generated: {by: okf-wiki/opus, at: 2026-09-26T14:22:38Z}
 verified:
   - {by: okf-wiki/opus, at: 2026-09-26T14:22:38Z, commit: 6ac844bcd7e8}
+  - {by: okf-wiki/haiku, at: 2026-10-10T03:34:47Z, commit: 41c5f19df087}
 sources:
   - {id: s1, resource: modules/pr-flow/skills/pr-flow/pr-flow.py, title: sh() passes cwd to subprocess.run; cmd_watch catches only Fail and TimeoutExpired}
   - {id: s2, resource: "session report 2026-09-16, BetterPostgresCheckpointer #135 during the python-template v0.25.0 rollout", title: watch died silently after a manual worktree remove}
