@@ -1,6 +1,6 @@
 ---
 name: meta-best-practices
-description: Use when adding, editing, or reviewing rules in the best-practices library — covers the rule-ID format (PREFIX-NNN), severity scale, four-part What/Why/How/When-NOT-to-apply reference structure, SKILL.md shape, third-person description-field rules, and how to use tools/new-skill.sh + tools/new-rule.sh + tools/lint.sh + tools/render-index.sh. Activate on phrases like "best practices format", "add a rule", "rule format", "severity scale", "new domain skill", or when generating content for any *-best-practices skill.
+description: Use when adding, editing, or reviewing rules in the best-practices library — covers the rule-ID format (PREFIX-NNN), severity scale, four-part What/Why/How/When-NOT-to-apply reference structure, SKILL.md shape, third-person description-field rules, and the authoring scripts. Activate on phrases like "best practices format", "add a rule", "rule format", "severity scale", "new domain skill", or when generating content for any *-best-practices skill.
 ---
 
 # Library format spec

@@ -385,7 +385,7 @@ _Use when working with gRPC — .proto files and proto3 schema design, buf or pr
 
 ## meta-best-practices
 
-_Use when adding, editing, or reviewing rules in the best-practices library — covers the rule-ID format (PREFIX-NNN), severity scale, four-part What/Why/How/When-NOT-to-apply reference structure, SKILL.md shape, third-person description-field rules, and how to use tools/new-skill.sh + tools/new-rule.sh + tools/lint.sh + tools/render-index.sh. Activate on phrases like "best practices format", "add a rule", "rule format", "severity scale", "new domain skill", or when generating content for any *-best-practices skill._
+_Use when adding, editing, or reviewing rules in the best-practices library — covers the rule-ID format (PREFIX-NNN), severity scale, four-part What/Why/How/When-NOT-to-apply reference structure, SKILL.md shape, third-person description-field rules, and the authoring scripts. Activate on phrases like "best practices format", "add a rule", "rule format", "severity scale", "new domain skill", or when generating content for any *-best-practices skill._
 
 _(no rules listed in SKILL.md rule index yet)_
 
