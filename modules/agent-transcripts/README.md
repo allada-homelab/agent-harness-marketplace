@@ -33,9 +33,9 @@ signature — so those scripts can filter it out.
 `transcript-sweep` is the deterministic first pass between indexing and analysis: one
 ordered scan of the index flags tool errors, error streaks, retries of a failed call,
 duplicate calls, shell one-liners a dedicated tool covers, and oversized results or
-sessions, then writes one JSONL record per session per flag kind. Only the script reads
-transcripts — the model reads a counts summary and reports where the JSONL landed — so a
-small local model can run it. Judging the flags is a later skill's job.
+sessions, then records the flags in `findings.db` (and JSONL only with `--out`). Only the
+script reads transcripts — the model reads a counts summary and reports where it landed — so
+a small local model can run it. Judging the flags is `transcript-review`'s job.
 
 ## The review
 

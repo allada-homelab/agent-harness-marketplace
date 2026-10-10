@@ -195,7 +195,9 @@ TSV. `--min` sets the smallest cluster to report; `--json` emits the groups as d
 When fanning out excerpt readers, have each return JSON matching `./verdict.schema.json`
 — `{session_id, verdict, severity, summary, evidence}` (validated, aggregatable) instead of
 prose that has to be re-parsed. On Claude Code, pass the schema as the `schema` of a workflow
-`agent()` call; on other harnesses, validate each child's reply against it.
+`agent()` call; on other harnesses, validate each child's reply against it. To cluster JSON
+verdicts, convert them to the TSV form first:
+`jq -r '"\(.session_id)\t\(.summary)"' verdicts.jsonl | uv run --script ./cluster.py --min 2`.
 
 ## Reading one message
 

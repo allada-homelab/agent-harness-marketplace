@@ -8,7 +8,7 @@ tags: [observability]
 
 The first pass over the index the `transcript-ingest` skill builds. A script scans every
 tool call and writes one row per session per flag kind into `findings.db`, the store beside
-the index; a later analysis skill reads that store. Your job here is three steps: run the
+the index; the transcript-review skill reads that store next. Your job here is three steps: run the
 script, read its summary, report it.
 
 ## Run it
@@ -77,7 +77,7 @@ stop.
   the index holds the user's entire chat history. The script already caps every quoted
   snippet at 200 characters.
 - **Do not judge the flags here.** A flag is a candidate, not a verdict; interpreting them is
-  a separate analysis skill's job.
+  the transcript-review skill's job.
 - **Read-only on the index.** The sweep opens `transcripts.db` read-only; it writes only the
   findings store and, when asked, the JSONL.
 - **The findings stay on device.** Like the index, they are derived from private transcripts
