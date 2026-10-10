@@ -1,6 +1,6 @@
 ---
 name: code-simplifier
-description: Simplify recently changed code for clarity, consistency and maintainability without changing what it does. Dispatches the code-simplifier agent over the uncommitted changes by default, or over the files, diff or branch given as arguments; it edits in place, follows the project's CLAUDE.md / AGENTS.md conventions, and reports what changed. Use when asked to simplify, clean up, refine or tidy code; not for finding bugs or reviewing a pull request.
+description: Simplify recently changed code for clarity, consistency and maintainability without changing what it does. Dispatches the code-simplifier agent over the uncommitted changes by default, or over the files, diff or branch given as arguments; it edits in place, follows the project's CLAUDE.md / AGENTS.md conventions, and reports what changed. Use when asked to simplify, clean up, refine or tidy code; not for reviewing local changes or a pull request, or for finding bugs.
 user-invocable: true
 argument-hint: "[files, a diff ref, or a scope description]"
 tags: [refactor, quality]
