@@ -234,14 +234,12 @@ following the structure above.
 Always run:
 
 ```bash
-tools/render-index.sh   # regenerate INDEX.md
+tools/render-index.sh   # regenerate INDEX.md and reference-file Contents
 tools/lint.sh           # verify before committing
 ```
 
-Then check `git diff --stat INDEX.md`. `render-index.sh` uses GNU
-`realpath --relative-to`; on macOS's BSD `realpath` it aborts partway
-and leaves `INDEX.md` truncated, so a large deletion count means the
-render failed.
+`render-index.sh` also rewrites the generated **Contents** list at the
+top of every reference file over 100 lines; never edit it by hand.
 
 ## Cross-skill references
 

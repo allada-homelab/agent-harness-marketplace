@@ -223,7 +223,7 @@ for skill_dir in "${skills[@]}"; do
         resolved="${fdir}/${path}"
       fi
       if [[ ! -e "$resolved" ]]; then
-        err "${skill_name}: dead link in $(realpath --relative-to="$PLUGIN_ROOT" "$f"): ${link}"
+        err "${skill_name}: dead link in ${f#"$PLUGIN_ROOT"/}: ${link}"
       fi
     done <<< "$links"
   done
