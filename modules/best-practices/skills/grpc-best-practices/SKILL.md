@@ -1,6 +1,6 @@
 ---
 name: grpc-best-practices
-description: Use when working with gRPC — .proto files and proto3 schema design, enum zero values and _UNSPECIFIED sentinels, well-known types (google.protobuf.Timestamp / Duration / FieldMask), List pagination (page_size / page_token / next_page_token), buf or protoc generation, grpc-go / grpclib / grpcio servers and clients, google.rpc status codes and rich errors, deadlines and cancellation propagation, streaming RPCs (server/client/bidi), interceptors (auth, logging, panic recovery, protovalidate), TLS / mTLS transport credentials and the insecure-credentials footgun, server reflection + grpcurl/grpcui, health checking, message-size limits and connection reuse. Covers the GRPC- rule family (proto design, error model, deadlines, streaming, interceptors, security, tooling, performance). Protocol-level rules apply to any language; code examples are grpc-go. For the language underneath, see go-best-practices.
+description: Use when working with gRPC — .proto files and proto3 schema design, buf or protoc generation, grpc-go / grpcio / grpclib servers and clients, google.rpc status codes and rich errors, deadlines, streaming RPCs, interceptors, TLS / mTLS credentials, server reflection and grpcurl, health checking or message-size limits. Covers the GRPC- rule family; protocol rules apply to any language and examples are grpc-go. For the Go language itself, see go-best-practices.
 ---
 
 # gRPC best practices

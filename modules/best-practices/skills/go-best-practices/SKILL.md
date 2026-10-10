@@ -1,6 +1,6 @@
 ---
 name: go-best-practices
-description: Use when working with Go code — .go files and go.mod/go.sum, go build / go test / go test -race / go vet / gofmt / staticcheck / golangci-lint / govulncheck, module and package layout, error handling (errors.Is / %w), the context package, goroutines and channels, errgroup, stdlib net/http servers and clients, graceful shutdown on SIGINT/SIGTERM, parameterized SQL, or Go security (html/template, crypto/rand). Covers the GO- rule family (layout, errors, concurrency, HTTP, security, modules, quality, testing). Language-level Go only — container packaging lives in containers-best-practices, gRPC service rules in grpc-best-practices.
+description: Use when working with Go code — .go files, go.mod, go test / vet / staticcheck / golangci-lint / govulncheck, package layout, errors.Is and %w, context, goroutines, channels and errgroup, net/http servers and clients, graceful shutdown, parameterized SQL, or Go security. Covers the GO- rule family. Container packaging lives in containers-best-practices, gRPC rules in grpc-best-practices.
 ---
 
 # Go best practices
