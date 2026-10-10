@@ -1,6 +1,7 @@
 ---
 name: databases-best-practices
 description: Use when working with SQLite or PostgreSQL (Postgres) from Python — sqlite3 connections, PRAGMA settings (journal_mode WAL, synchronous, foreign_keys, busy_timeout, optimize, user_version), SQLite schema and migrations, Postgres via psycopg and a SQLAlchemy pool, Alembic migrations, pg_advisory_xact_lock advisory locks, and SELECT FOR UPDATE row locking. Covers the SQLITE- and PG- rule families. Async SQLAlchemy session wiring in FastAPI lives in fastapi-best-practices.
+user-invocable: false
 ---
 
 # Databases best practices

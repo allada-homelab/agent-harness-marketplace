@@ -22,7 +22,7 @@ acceptable. A single fact, a short list or an answer the user will act on at onc
 
 1. **Read first.** `./references/design.md` — its *Local page contract* is binding; the
    fundamentals and process below it are the craft. For a chart, graph, KPI row or dashboard
-   also read `./references/dataviz/README.md`. Start from these validated five-slot categorical palettes, and run `./references/dataviz/scripts/validate_palette.py` (run it, don't read it) whenever you change or extend them: light on a near-white surface `#0072B2,#009E73,#D55E00,#B2548F,#C77F00`; dark on a near-black surface `#357FB5,#009E73,#D55E00,#A64E97,#C77F00`.
+   also read `./references/dataviz/README.md`. Start from these validated five-slot categorical palettes, and run `./references/dataviz/scripts/validate_palette.py` (run it, don't read it) whenever you change or extend them: light on a near-white surface `#0072B2,#009E73,#D55E00,#B2548F,#C77F00`; dark on a near-black surface `#357FB5,#009E73,#D55E00,#A64E97,#C77F00`. Every template uses these; they supersede the example slots in `references/dataviz/references/palette.md`.
    For a diagram read `./references/diagramming.md`. For anything beyond one viewer's own
    browser storage — shared state, a file download, a model call — read
    `./references/runtime-seam.md` and design for its absence.

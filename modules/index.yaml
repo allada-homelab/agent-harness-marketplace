@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: agent-transcripts
-  version: 0.8.5
+  version: 0.8.6
   kinds:
   - skills
   - dsh-plugin
@@ -107,7 +107,7 @@ modules:
       tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized
       results or sessions in the findings store beside it.
 - name: artifacts
-  version: 0.1.6
+  version: 0.1.7
   kinds:
   - skills
   - dsh-plugin
@@ -133,7 +133,7 @@ modules:
       tool — as one self-contained file the user opens locally; design, dataviz and diagramming guidance
       plus a check-and-deliver flow.
 - name: best-practices
-  version: 0.6.2
+  version: 0.6.3
   kinds:
   - skills
   - dsh-plugin
@@ -236,8 +236,7 @@ modules:
     command: false
     summary: Use when adding, editing, or reviewing rules in the best-practices library — covers the rule-ID
       format (PREFIX-NNN), severity scale, four-part What/Why/How/When-NOT-to-apply reference structure,
-      SKILL.md shape, third-person description-field rules, and how to use tools/new-skill.sh + tools/new-rule.sh
-      + tools/lint.sh + tools/render-index.sh.
+      SKILL.md shape, third-person description-field rules, and the authoring scripts.
   - name: python-best-practices
     path: modules/best-practices/skills/python-best-practices/SKILL.md
     harness:
@@ -298,7 +297,7 @@ modules:
     command: true
     summary: Drive a browser from any harness.
 - name: code-review
-  version: 0.2.1
+  version: 0.2.2
   kinds:
   - skills
   - dsh-plugin
@@ -323,7 +322,7 @@ modules:
     summary: Review a GitHub pull request with parallel reviewers and a confidence scorer, and post one
       comment holding only the high-confidence issues.
 - name: code-simplifier
-  version: 0.1.1
+  version: 0.1.2
   kinds:
   - skills
   - dsh-plugin
@@ -347,7 +346,7 @@ modules:
     summary: Simplify recently changed code for clarity, consistency and maintainability without changing
       what it does.
 - name: dual-agent-pr-review
-  version: 0.1.7
+  version: 0.1.8
   kinds:
   - skills
   - dsh-plugin
@@ -376,7 +375,7 @@ modules:
     ansible-lint, node --check, tsc) and feed its findings back to the agent.
   skills: []
 - name: feature-dev
-  version: 0.1.4
+  version: 0.1.5
   kinds:
   - skills
   - dsh-plugin
@@ -398,7 +397,7 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: okf-wiki
-  version: 0.1.10
+  version: 0.1.11
   kinds:
   - skills
   - dsh-plugin
@@ -534,7 +533,7 @@ modules:
     at a condition wait or a background job instead.
   skills: []
 - name: ste-writing
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin

@@ -1,6 +1,7 @@
 ---
 name: wiki
 description: The contract for this repo's agent wiki at .wiki/ (Open Knowledge Format v0.2) — what belongs in it, the six concept types and their templates, the frontmatter and Verify-anchor rules, the okf.py script that does every deterministic step, and the receipt lines. Read it before writing, moving or judging any .wiki/ file; the capture, recall, ingest, tend and reflect skills build on it.
+user-invocable: false
 ---
 
 # okf-wiki: the contract

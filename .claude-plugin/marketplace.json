@@ -18,21 +18,21 @@
       "name": "ste-writing",
       "description": "Write prose in a controlled style modeled on ASD-STE100 (Simplified Technical English) at about 80% strictness, only when the user asks for it.",
       "category": "development",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "source": "./modules/ste-writing"
     },
     {
       "name": "dual-agent-pr-review",
       "description": "Review a GitHub PR with Claude Code and Codex in parallel, then reconcile their findings into one consensus set.",
       "category": "development",
-      "version": "0.1.7",
+      "version": "0.1.8",
       "source": "./modules/dual-agent-pr-review"
     },
     {
       "name": "agent-transcripts",
       "description": "Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a derived sqlite database.",
       "category": "development",
-      "version": "0.8.5",
+      "version": "0.8.6",
       "source": "./modules/agent-transcripts"
     },
     {
@@ -53,35 +53,35 @@
       "name": "feature-dev",
       "description": "Guided seven-phase feature development: explore the codebase with parallel specialist agents, ask clarifying questions, compare architectures, implement, then review. A harness-neutral port of Anthropic's feature-dev plugin whose agents dispatch on Claude Code, pi and dsh.",
       "category": "development",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "source": "./modules/feature-dev"
     },
     {
       "name": "code-review",
       "description": "Automated pull-request review on every harness: a size gate sends a small or generated-only change to one combined reviewer, everything else to a five-lens fan-out plus batch scoring; anything under 80 is dropped, one comment posted with gh.",
       "category": "development",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "source": "./modules/code-review"
     },
     {
       "name": "code-simplifier",
       "description": "Simplify recently changed code for clarity, consistency and maintainability without changing what it does, following the project's own guideline files.",
       "category": "development",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "source": "./modules/code-simplifier"
     },
     {
       "name": "best-practices",
       "description": "Library of domain best-practices skills with stable, citable rule IDs (containers, uv, Python, FastAPI, databases, repo hygiene, Go, gRPC, Claude Code configuration and prompts) plus the containers-audit interactive scan-and-fix workflow and the authoring tools for adding rules.",
       "category": "development",
-      "version": "0.6.2",
+      "version": "0.6.3",
       "source": "./modules/best-practices"
     },
     {
       "name": "okf-wiki",
       "description": "A per-repo, self-healing agent wiki in Open Knowledge Format: a session-start digest, background capture and re-verification on cheap models, and a reflect loop that measures whether it helps.",
       "category": "development",
-      "version": "0.1.10",
+      "version": "0.1.11",
       "source": "./modules/okf-wiki"
     },
     {
@@ -102,7 +102,7 @@
       "name": "artifacts",
       "description": "Local HTML artifacts for pi and dsh: Claude's artifact design, dataviz and diagramming craft plus a stdlib check-and-deliver helper; one self-contained file, no hosting.",
       "category": "development",
-      "version": "0.1.6",
+      "version": "0.1.7",
       "source": "./modules/artifacts"
     }
   ]

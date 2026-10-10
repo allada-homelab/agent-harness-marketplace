@@ -1,6 +1,7 @@
 ---
 name: meta-best-practices
-description: Use when adding, editing, or reviewing rules in the best-practices library — covers the rule-ID format (PREFIX-NNN), severity scale, four-part What/Why/How/When-NOT-to-apply reference structure, SKILL.md shape, third-person description-field rules, and how to use tools/new-skill.sh + tools/new-rule.sh + tools/lint.sh + tools/render-index.sh. Activate on phrases like "best practices format", "add a rule", "rule format", "severity scale", "new domain skill", or when generating content for any *-best-practices skill.
+description: Use when adding, editing, or reviewing rules in the best-practices library — covers the rule-ID format (PREFIX-NNN), severity scale, four-part What/Why/How/When-NOT-to-apply reference structure, SKILL.md shape, third-person description-field rules, and the authoring scripts. Activate on phrases like "best practices format", "add a rule", "rule format", "severity scale", "new domain skill", or when generating content for any *-best-practices skill.
+user-invocable: false
 ---
 
 # Library format spec
@@ -234,14 +235,12 @@ following the structure above.
 Always run:
 
 ```bash
-tools/render-index.sh   # regenerate INDEX.md
+tools/render-index.sh   # regenerate INDEX.md and reference-file Contents
 tools/lint.sh           # verify before committing
 ```
 
-Then check `git diff --stat INDEX.md`. `render-index.sh` uses GNU
-`realpath --relative-to`; on macOS's BSD `realpath` it aborts partway
-and leaves `INDEX.md` truncated, so a large deletion count means the
-render failed.
+`render-index.sh` also rewrites the generated **Contents** list at the
+top of every reference file over 100 lines; never edit it by hand.
 
 ## Cross-skill references
 

@@ -1,6 +1,7 @@
 ---
 name: grpc-best-practices
 description: Use when working with gRPC — .proto files and proto3 schema design, buf or protoc generation, grpc-go / grpcio / grpclib servers and clients, google.rpc status codes and rich errors, deadlines, streaming RPCs, interceptors, TLS / mTLS credentials, server reflection and grpcurl, health checking or message-size limits. Covers the GRPC- rule family; protocol rules apply to any language and examples are grpc-go. For the Go language itself, see go-best-practices.
+user-invocable: false
 ---
 
 # gRPC best practices

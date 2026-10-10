@@ -24,7 +24,8 @@ Report `ELIGIBLE` or `SKIP: <reason>`. Skip when the pull request is:
 ## Duty: size
 
 Report the change's size and shape so the skill can pick a review tier. Read
-`gh pr diff --stat` (or the equivalent local diff for the target). Return
+`gh pr view <pr> --json additions,deletions,changedFiles,files` (or
+`git diff --numstat` against the base for a local target). Return
 exactly:
 
 ```
@@ -33,7 +34,7 @@ LINES: <n>
 GENERATED_ONLY: yes|no
 ```
 
-`LINES` is added-plus-removed from the diff stat. `GENERATED_ONLY` is `yes`
+`LINES` is additions plus deletions. `GENERATED_ONLY` is `yes`
 only when **every** changed path is documentation (`*.md`, `docs/**`,
 `CHANGELOG*`) or generated: a common lockfile (`package-lock.json`,
 `pnpm-lock.yaml`, `yarn.lock`, `Cargo.lock`, `go.sum`, `poetry.lock`,

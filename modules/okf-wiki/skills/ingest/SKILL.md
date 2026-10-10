@@ -8,7 +8,7 @@ argument-hint: "[--fanout N] [--max N] [--since <date>] [<existing bundle dir to
 # ingest
 
 Arguments, if any: $ARGUMENTS (on some harnesses they arrive as text after this skill
-instead). Read `../wiki/SKILL.md` first. Let `<okf>` be the absolute path of `../wiki/okf.py`.
+instead). Read `../wiki/SKILL.md` and `../capture/SKILL.md` first. Let `<okf>` be the absolute path of `../wiki/okf.py`.
 
 ## 1. Migrate existing bundles first
 

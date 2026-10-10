@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "code-simplifier",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Simplify recently changed code for clarity, consistency and maintainability without changing what it does, following the project's own guideline files.",
   "author": {
     "name": "David Allada",

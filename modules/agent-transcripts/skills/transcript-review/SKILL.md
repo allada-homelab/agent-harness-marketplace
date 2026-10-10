@@ -110,7 +110,7 @@ claim needs and found none. An elided message is not missing evidence, and a rep
 explains why something is still red or left over is not an unverified claim. Say in the
 `note` which of (a) or (b) applied and, for (b), the pattern you searched.
 
-Write the whole thing to a file, all 13 categories, in this shape:
+Compose the whole verdict, all 13 categories, in this shape:
 
 ```json
 {"findings": [

@@ -4,6 +4,8 @@ Ten starting pages and a component sheet. Each already satisfies the *Local page
 `../references/design.md` and the sandbox the dsh preview runs pages in, so you only change
 content, not structure. When no page fits whole, lift blocks from `components.html`.
 
+**Contents:** How to use one · Rules every template follows · tool.html · dashboard.html · report.html · compare.html · diagram.html · components.html · checklist.html · timeline.html · catalog.html · slides.html · calculator.html
+
 ## How to use one
 
 Pick the closest template below, copy it to the output dir from `artifactctl.py prepare` as

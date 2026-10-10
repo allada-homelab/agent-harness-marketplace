@@ -1,6 +1,7 @@
 ---
 name: uv-best-practices
 description: Use when working with uv, Astral's Python package and project manager — `uv sync` / `add` / `lock` / `run` / `tool` / `build` / `publish`, `uvx`, a `uv.lock`, or a `pyproject.toml` with `[tool.uv]` or `[dependency-groups]`, including workspaces, private registries, CI, publishing and migrating from pip, poetry, PDM or Hatch. Covers the UVP- rule family. For uv inside a Dockerfile, use containers-best-practices.
+user-invocable: false
 ---
 
 # uv best practices
