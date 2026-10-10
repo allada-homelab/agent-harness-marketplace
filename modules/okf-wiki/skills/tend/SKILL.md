@@ -23,7 +23,7 @@ instead). Read-only until the user agrees to a fix. Let `<okf>` be the absolute 
 5. Report in this order, one line each, grouped under headings: ERRORs (must fix), STALE,
    UNVERIFIED and UNANCHORED, duplicates, orphans, tags, then a count of WARNs.
 6. Offer, as one question: heal every STALE and UNVERIFIED concept (scribes in re-verify
-   mode, at most `python3 <okf> fanout` in flight), merge the duplicates, apply the tag map,
+   mode, briefed and committed as `../capture/SKILL.md` §2–5 say, `root:` line included; at most `python3 <okf> fanout` in flight), merge the duplicates, apply the tag map,
    fix the errors. Do only what the user accepts, and print a receipt per concept. Apply the
    tag map yourself, one `python3 <okf> retag` per line, and commit it on its own: `fresh`
    reads a commit that touches a concept as that concept being rewritten alongside its code,
