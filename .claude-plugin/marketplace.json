@@ -25,7 +25,7 @@
       "name": "dual-agent-pr-review",
       "description": "Review a GitHub PR with Claude Code and Codex in parallel, then reconcile their findings into one consensus set.",
       "category": "development",
-      "version": "0.1.6",
+      "version": "0.1.7",
       "source": "./modules/dual-agent-pr-review"
     },
     {

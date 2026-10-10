@@ -16,8 +16,8 @@ are confident nonsense, and the reconciliation rounds are how you tell which.
 
 - **You are the judge, not a third reviewer.** You orchestrate, pair, and verify.
   Do not add your own findings to the pool — that corrupts the comparison.
-- **You are also one of the debaters' harness.** Do not favor the Claude
-  reviewer. When the two disagree, open the code and decide from the code.
+- **You run on the same harness and model family as the Claude reviewer.** Do not
+  favor it. When the two disagree, open the code and decide from the code.
 - **No finding reaches the user unverified.** Before presenting, open the cited
   file:line for every surviving finding yourself. A reviewer's CONFIRM is a
   hypothesis, not proof.
@@ -234,7 +234,7 @@ stay under `~/.claude/dual-review/runs/` for audit.
   size — at `low` a reviewer will skim a few thousand lines and conclude nothing.
   Confirm it did enough reads before believing the verdict.
 - **Both agents converge on being wrong.** Agreement is evidence, not proof —
-  shared training priors produce shared blind spots. Step 6's independent read is
+  shared training priors produce shared blind spots. Step 7's independent read is
   not optional just because both sides agreed.
 - **Huge diffs.** Past a few thousand changed lines both reviewers degrade to
   skimming. Scope the run to the subsystem that matters and say you did.
