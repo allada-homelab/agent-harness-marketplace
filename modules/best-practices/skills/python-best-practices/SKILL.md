@@ -160,7 +160,7 @@ rules live alongside packaging because that's where the CI pipeline owns
 them).
 
 - **PY-077** — Audit dependencies for known CVEs in CI with `pip-audit` (PyPA, OSV-backed) or `uv audit`. Don't gate releases on it silently — fail the build.
-- **PY-090** — Pin dependency hashes (`uv lock`, or `--generate-hashes` for pip) and verify them with `--frozen` / `--require-hashes` in CI to blunt substitution attacks.
+- **PY-090** — Pin dependency hashes (`uv lock`, or `--generate-hashes` for pip) and verify them with `uv sync --locked` / `--require-hashes` in CI to blunt substitution attacks.
 
 ## Rules — Profiling & performance
 

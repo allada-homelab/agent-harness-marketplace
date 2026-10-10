@@ -50,12 +50,10 @@ Topic names are lowercased prefixes (`dockerfile.md` for `DOCKER-*`,
 Format: **`<PREFIX>-<NNN>`** where prefix is 2–7 uppercase letters and
 NNN is zero-padded to at least 3 digits.
 
-| Skill | Prefixes in use |
-|---|---|
-| `containers-best-practices` | `DOCKER`, `DEVC`, `COMPOSE`, `BUILDX`, `SEC`, `UV` |
-| `uv-best-practices` | `UVP` |
-| `python-best-practices` | `PY` |
-| `frontend-best-practices` | `FE` |
+The prefixes in use are the ones in the generated `INDEX.md` at the
+module root; check it before picking a new one, since a hand-kept list
+here drifts. The module README records retired prefixes (`SKILL`), which
+are never reused either.
 
 Rules:
 
@@ -175,8 +173,10 @@ current context to decide whether to activate the skill. Bad
 description = skill never fires; broad description = fires on
 unrelated prompts.
 
-1. **Third person, imperative.** "Use when …" / "Activate on …" —
-   never "I" or "you" or "This skill".
+1. **Lead with "Use when …".** The library's descriptions open with a
+   "Use when …" trigger clause. Never write "I", "you" or "This skill".
+   This satisfies the third-person rule in `claude-code-best-practices`
+   (CC-032), because it addresses the harness rather than the user.
 2. **Lead with concrete triggers.** File types, tool names, command
    names — things that literally appear in prompts or files in
    context.
@@ -237,6 +237,11 @@ Always run:
 tools/render-index.sh   # regenerate INDEX.md
 tools/lint.sh           # verify before committing
 ```
+
+Then check `git diff --stat INDEX.md`. `render-index.sh` uses GNU
+`realpath --relative-to`; on macOS's BSD `realpath` it aborts partway
+and leaves `INDEX.md` truncated, so a large deletion count means the
+render failed.
 
 ## Cross-skill references
 

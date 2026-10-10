@@ -1101,7 +1101,7 @@ audit:
   steps:
     - uses: actions/checkout@<sha>
     - uses: astral-sh/setup-uv@<sha>
-    - run: uv sync --frozen
+    - run: uv sync --locked
     - run: uv run pip-audit --strict
 ```
 
@@ -1166,7 +1166,7 @@ jobs:
       - uses: actions/checkout@<sha>
       - uses: astral-sh/setup-uv@<sha>
       - name: Sync deps (locked)
-        run: uv sync --frozen
+        run: uv sync --locked
       - name: Audit
         run: |
           uv run pip-audit --strict \
@@ -1303,8 +1303,10 @@ build chain. `uv_build` is pure-Python only.
 
 **What.** Pin cryptographic hashes for your dependencies — `uv lock`
 records them automatically; pip needs `--generate-hashes` — and verify
-them at install time (`uv sync --frozen`, or pip `--require-hashes`) in
-CI and production builds.
+them at install time (`uv sync --locked`, or pip `--require-hashes`) in
+CI and production builds. Use `--locked`, not `--frozen`: `--frozen`
+skips the up-to-date check, so dependency changes not yet locked are
+silently left out (see UVP-032).
 
 **Why.** PyPI supply-chain attacks (typosquatting, dependency confusion,
 compromised maintainer accounts) have risen. Hash verification ensures
@@ -1318,13 +1320,13 @@ versions.
 
 ```bash
 # uv: the lockfile carries hashes; verify on install
-uv sync --frozen                 # CI / production
+uv sync --locked                 # CI / production; fails if uv.lock is stale
 
 # pip alternative
 pip install --require-hashes -r requirements.txt   # generated with --generate-hashes
 ```
 
-Commit the lockfile; use the frozen/require-hashes form in CI, not just
+Commit the lockfile; use the `--locked`/require-hashes form in CI, not just
 locally.
 
 **When NOT to apply.** Throwaway scripts and local experiments don't need

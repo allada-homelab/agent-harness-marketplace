@@ -386,7 +386,10 @@ directory. `${CLAUDE_SKILL_DIR}` resolves to the skill's own directory
 Run `python ${CLAUDE_SKILL_DIR}/scripts/validate.py fields.json` (needs `pip install pypdf`).
 ```
 
-**When NOT to apply.** Skills with no scripts.
+**When NOT to apply.** Skills with no scripts. A skill that must also
+load on a harness without Claude Code's `${CLAUDE_*}` variables uses
+skill-relative paths (`./scripts/x.py`) instead; every other part of this
+rule still applies.
 
 ---
 

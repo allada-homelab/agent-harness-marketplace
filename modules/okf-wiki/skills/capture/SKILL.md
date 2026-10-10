@@ -68,7 +68,8 @@ validate <id>` must pass first. Once every receipt is in, commit `.wiki/` in `<r
 commit that carries the change that taught it or on this branch right after, so the knowledge
 ships in the same PR. A capture with no work branch to ride on (the work already merged)
 goes up as its own PR; when the user's instructions standing-approve wiki-only PRs, finish it
-with `pr-flow watch --merge-if-only .wiki/` instead of waiting for a per-PR yes — and stage the
+with `pr-flow watch --merge-if-only .wiki/` (on pi and dsh, where `pr-flow` is not on
+`PATH`, run the pr-flow skill's `pr-flow.py` with `python3`) instead of waiting for a per-PR yes — and stage the
 `.wiki/index.md` that `validate` regenerates, or the index drifts from the concept.
 Never `rm` or otherwise delete a concept file in a shared checkout (the
 main checkout while you work in a worktree): another session's scribe may be writing it. To

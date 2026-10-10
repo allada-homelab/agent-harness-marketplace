@@ -62,11 +62,12 @@ Every categorical color - current or proposed - must pass all six.
 ## Run the checks - never eyeball them
 
 ```
-node scripts/validate_palette.js \
+python3 references/dataviz/scripts/validate_palette.py \
   "#2a78d6,#eb6834,#1baf7a,#eda100,#e87ba4,#008300,#4a3aa7,#e34948" --mode light
 ```
 
-(`scripts/` is relative to this skill's base directory, shown at the top of the prompt.)
+(The path is relative to the artifacts skill directory. `validate_palette.js`
+beside the Python script runs the same checks under `node`.)
 
 (or load it as `<script type="module">` in the chart's own page - it reads
 `data-palette` off `<body>` and logs a `console.table` report)

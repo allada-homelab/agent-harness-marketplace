@@ -26,8 +26,9 @@ Color comes LAST. Most bad charts pick colors first.
    (magnitude), diverging (polarity), or status (state) - each has one rule.
    Assign categorical hues in fixed order, never cycled. -> `references/color-formula.md`
 3. **VALIDATE the palette - run the script, don't reason about Delta E.**
-   `node scripts/validate_palette.js "<hex,hex,...>" --mode light` (relative to
-   this skill's base directory - or load it as `<script type="module">` in the
+   `python3 references/dataviz/scripts/validate_palette.py "<hex,hex,...>" --mode light`
+   (relative to the artifacts skill directory; the stdlib Python script needs no
+   install, and `validate_palette.js` beside it is the same check for `node` - or load it as `<script type="module">` in the
    chart's own page, where it reads
    `data-palette` off `<body>` and logs a `console.table` report). It returns
    pass/fail on the lightness band, chroma floor, adjacent-pair CVD separation,

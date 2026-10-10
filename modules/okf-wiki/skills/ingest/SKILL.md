@@ -50,7 +50,7 @@ yourself, and drop anything weak; fewer strong concepts beat many thin ones. Kee
 `--max N` (default 15), strongest first: a flood of thin concepts pushes the session digest
 into titles-only mode. Show the user the list (type, id, one-line claim) and land it on a
 yes, dropping any they strike. Hand the survivors to scribes exactly as the capture skill does (one concept per scribe, at most the
-fan-out width in flight), adding the `root:` line to each explorer brief, and follow its
+fan-out width in flight), adding the `root:` line to each scribe brief, and follow its
 stall rule and its commit rules: commit in `<root>` only after every receipt, and never
 create stubs yourself or delete a concept file in a shared checkout. Finish with one summary
 receipt, `wiki: +<n> concepts (ingest)`, followed by the per-concept receipt lines.
