@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: agent-transcripts
-  version: 0.8.3
+  version: 0.8.4
   kinds:
   - skills
   - dsh-plugin
@@ -107,7 +107,7 @@ modules:
       tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized
       results or sessions in the findings store beside it.
 - name: artifacts
-  version: 0.1.5
+  version: 0.1.6
   kinds:
   - skills
   - dsh-plugin
@@ -133,7 +133,7 @@ modules:
       tool — as one self-contained file the user opens locally; design, dataviz and diagramming guidance
       plus a check-and-deliver flow.
 - name: best-practices
-  version: 0.6.0
+  version: 0.6.1
   kinds:
   - skills
   - dsh-plugin
@@ -280,7 +280,7 @@ modules:
       / `lock` / `run` / `tool` / `build` / `publish` / `audit` / `export`, `uvx`, a `uv.lock` or `pylock.toml`
       file, or a `pyproject.toml` with `[tool.uv]` or `[dependency-groups]`.
 - name: browser
-  version: 0.1.2
+  version: 0.1.3
   kinds:
   - skills
   - dsh-plugin
@@ -352,7 +352,7 @@ modules:
     summary: Simplify recently changed code for clarity, consistency and maintainability without changing
       what it does.
 - name: dual-agent-pr-review
-  version: 0.1.6
+  version: 0.1.7
   kinds:
   - skills
   - dsh-plugin
@@ -403,7 +403,7 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: okf-wiki
-  version: 0.1.8
+  version: 0.1.9
   kinds:
   - skills
   - dsh-plugin

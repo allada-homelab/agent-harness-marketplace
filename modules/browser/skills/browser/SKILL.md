@@ -23,12 +23,6 @@ The tool is `browserctl` — on a fleet host it is on
 `agent-browser`; never call `agent-browser` directly, because only `browserctl`
 pins the profile, the browser binary and the tab binding — except `attach`, where
 the browser is externally owned and must NOT be repointed.
-(`personal`, `work`, `scratch`) — log in once, reuse forever. A **mode** is how
-the browser runs: `auto` (headless, default) or `hybrid` (a visible window the
-operator can act in). The tool is `browserctl` — on a fleet host it is on
-`PATH`; otherwise run `./browserctl.mjs` beside this file with `node`. It wraps
-`agent-browser`; never call `agent-browser` directly, because only `browserctl`
-pins the profile, the browser binary and the tab binding.
 
 ## Procedure
 

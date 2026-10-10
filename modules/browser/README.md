@@ -6,10 +6,6 @@ maps an *identity* (a named, persistent browser profile) and a *launch option*
 which drives a browser the user opened) onto an `agent-browser` invocation, so
 the agent never composes agent-browser flags itself and never touches your
 everyday browser profile.
-maps an *identity* (a named, persistent browser profile) and a *mode* (`auto`
-headless, `hybrid` headed) onto an `agent-browser` invocation, so the agent
-never composes agent-browser flags itself and never touches your everyday
-browser profile.
 
 Requires `agent-browser` on PATH and a Chrome for Testing binary (see
 `browserctl doctor`). On a fleet host both are provisioned by the dotfiles
