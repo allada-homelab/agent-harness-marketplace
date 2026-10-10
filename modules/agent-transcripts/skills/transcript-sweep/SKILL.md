@@ -1,6 +1,6 @@
 ---
 name: transcript-sweep
-description: Sweep the agent-transcripts sqlite index for sessions worth a closer look and record flagged tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized results or sessions in the findings store beside it. Use when the user wants to "sweep transcripts", "find problem sessions", "where did tools fail", or a first pass before analyzing agent behavior. Deterministic — a script does the counting, and the model only reports the summary and where it landed.
+description: Sweep the agent-transcripts sqlite index for sessions worth a closer look and record flagged tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized results or sessions in the findings store beside it. Use when the user wants to "sweep transcripts", "find problem sessions", "where did tools fail", or a first pass before analyzing agent behavior.
 tags: [observability]
 ---
 
