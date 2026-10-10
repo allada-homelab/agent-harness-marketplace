@@ -18,7 +18,7 @@
       "name": "ste-writing",
       "description": "Write prose in a controlled style modeled on ASD-STE100 (Simplified Technical English) at about 80% strictness, only when the user asks for it.",
       "category": "development",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "source": "./modules/ste-writing"
     },
     {
