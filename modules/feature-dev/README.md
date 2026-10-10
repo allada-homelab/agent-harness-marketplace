@@ -9,7 +9,7 @@ agents do the isolated work.
 |---|---|---|
 | `feature-dev:code-explorer` | Trace an existing feature or area comprehensively; return key files | read-only: Glob, Grep, LS, Read (+ web on Claude) / `find grep ls read` / `glob grep read` |
 | `feature-dev:code-architect` | Design an implementation blueprint with a stated focus | same |
-| `feature-dev:code-reviewer` | Review for bugs, simplicity or conventions with confidence filtering | same |
+| `feature-dev:code-reviewer` | Review for bugs, simplicity or conventions with confidence filtering | same, plus Bash for read-only `git` |
 
 ## Install
 
@@ -26,12 +26,12 @@ agents do the isolated work.
 
 ## How the agents cross harnesses
 
-`agents/*.md` are Claude Code subagent files, unmodified from upstream. Claude
+`agents/*.md` are Claude Code subagent files, ported from upstream (see Provenance). Claude
 reads them natively. pi and dsh read the same files through a generic bridge
 held to [`agent-contract/`](../../agent-contract/README.md): the body becomes
 the child's system prompt, `tools` translates to native tool names (unknown
-Claude tools are dropped), `model: sonnet` resolves through the harness's
-alias map or inherits the parent's model. Children are foreground-only on pi
+Claude tools are dropped), and with no `model:` key each agent inherits the
+parent's model. Children are foreground-only on pi
 and dsh in this version.
 
 ## Provenance
