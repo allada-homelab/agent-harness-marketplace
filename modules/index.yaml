@@ -397,7 +397,7 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: okf-wiki
-  version: 0.1.11
+  version: 0.1.12
   kinds:
   - skills
   - dsh-plugin

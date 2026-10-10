@@ -125,11 +125,12 @@ After any wiki change, print exactly one line per concept so the user can see an
 
 ## Dispatching the okf-wiki agents
 
-The agents are `okf-wiki:scribe`, `okf-wiki:reader`, `okf-wiki:explorer` and
-`okf-wiki:auditor`. On Claude Code use the Agent tool with that `subagent_type`, in the
-background for the scribe. On pi and dsh use `delegate_agent` with that `agent_type`; on dsh
-also pass `run_in_background: true` for the scribe. Every brief must include the absolute
-path of `okf.py`. If no agent tool exists, follow the agent's steps yourself.
+The agents are `okf-wiki:scribe`, `okf-wiki:reader`, `okf-wiki:explorer`,
+`okf-wiki:auditor` and `okf-wiki:lander`. On Claude Code use the Agent tool with that
+`subagent_type`, in the background for the scribe and the lander. On pi and dsh use
+`delegate_agent` with that `agent_type`; on dsh also pass `run_in_background: true` for the
+scribe and the lander. Every brief but the lander's must include the absolute path of
+`okf.py`. If no agent tool exists, follow the agent's steps yourself.
 
 A backgrounded scribe takes roughly 2–5 minutes. A `.wiki/<id>.md` with an unfilled `<fill:`
 placeholder means its scribe is still writing, not stalled — the Stop hook already stays quiet

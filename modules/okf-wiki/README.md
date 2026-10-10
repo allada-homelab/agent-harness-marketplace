@@ -10,7 +10,9 @@ learns in the background on cheap models.
   `reader` agent that answers with `concept:<id>` citations.
 - **Write:** the injected rule and a Stop-hook nudge (on a new commit, or once per session
   while the tree is dirty) prompt the agent to `capture` durable findings; a cheap `scribe`
-  agent writes them and the agent prints a receipt (`wiki: +gotcha/<id>`).
+  agent writes them and the agent prints a receipt (`wiki: +gotcha/<id>`). When the user
+  standing-approves wiki-only PRs, a background `lander` agent watches each one with
+  `pr-flow watch --merge-if-only .wiki/` and merges it when green.
 - **Heal:** a concept whose anchor files changed since its verified commit is STALE; the
   scribe re-verifies, fixes or deprecates it.
 - **Grow and prune:** `ingest` mines fix commits, PRs, docs and existing bundles with
