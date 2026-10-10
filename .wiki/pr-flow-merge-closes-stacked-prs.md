@@ -6,6 +6,7 @@ tags: [pr-flow, github, stacked-prs, teardown]
 generated: {by: okf-wiki/opus, at: 2026-09-26T14:22:38Z}
 verified:
   - {by: okf-wiki/opus, at: 2026-09-26T14:22:38Z, commit: 6ac844bcd7e8}
+  - {by: okf-wiki/haiku, at: 2026-10-10T03:19:25Z, commit: 246b99c1bbb2}
 sources:
   - {id: s1, resource: modules/pr-flow/skills/pr-flow/pr-flow.py, title: teardown runs git push origin --delete}
   - {id: s2, resource: https://github.com/allada-homelab/python-template/pull/88, title: stacked PR closed when its base feat/sha-pin-actions was merged and deleted}
