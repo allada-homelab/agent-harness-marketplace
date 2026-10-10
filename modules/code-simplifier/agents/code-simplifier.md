@@ -59,7 +59,9 @@ You are given a scope: a set of files, a diff, or an instruction such as
 5. Ensure all functionality is unchanged. If the project has a fast check
    (typecheck, lint, a targeted test), run it; do not run long suites.
 6. Verify the refined code is genuinely simpler and more maintainable — if a
-   change is not a clear improvement, revert it.
+   change is not a clear improvement, undo that one edit with the edit tool.
+   Never `git checkout`, `git restore`, `git stash` or `git reset` a file: the
+   scope is usually the user's uncommitted work, and those discard it.
 
 ## Report
 
