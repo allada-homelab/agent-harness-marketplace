@@ -67,10 +67,22 @@ concept, and a `.wiki/` file mid-write is not yet valid. Never commit, revert or
 validate <id>` must pass first. Once every receipt is in, commit `.wiki/` in `<root>`, in the
 commit that carries the change that taught it or on this branch right after, so the knowledge
 ships in the same PR. A capture with no work branch to ride on (the work already merged)
-goes up as its own PR; when the user's instructions standing-approve wiki-only PRs, finish it
-with `pr-flow watch --merge-if-only .wiki/` (on pi and dsh, where `pr-flow` is not on
-`PATH`, run the pr-flow skill's `pr-flow.py` with `python3`) instead of waiting for a per-PR yes — and stage the
-`.wiki/index.md` that `validate` regenerates, or the index drifts from the concept.
+goes up as its own PR — stage the `.wiki/index.md` that `validate` regenerates, or the index
+drifts from the concept. When the user's instructions standing-approve wiki-only PRs, do not
+watch it yourself or wait for a per-PR yes: once `pr-flow open` prints the URL, hand it to
+`okf-wiki:lander` in the background (see "Dispatching" in the wiki contract) and go on with
+your work. Its brief is three lines:
+
+```
+root: <absolute path of the PR's worktree>
+pr: <full PR URL>
+watch: pr-flow watch --merge-if-only .wiki/
+```
+
+On pi and dsh, where `pr-flow` is not on `PATH`, the `watch:` line runs the pr-flow skill's
+`pr-flow.py` with `python3` instead. One lander per PR. Until it returns, do not push to that
+branch or remove its worktree. Print its receipt (`wiki-pr: merged <url>`); on any other
+verdict, fix or report it as pr-flow says, and dispatch a new lander after each push.
 Never `rm` or otherwise delete a concept file in a shared checkout (the
 main checkout while you work in a worktree): another session's scribe may be writing it. To
 drop a concept of your own, remove it on your branch after its receipt.
