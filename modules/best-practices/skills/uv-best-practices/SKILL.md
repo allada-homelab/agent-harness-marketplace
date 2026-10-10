@@ -7,7 +7,7 @@ description: Use when working with uv (Astral's Python package and project manag
 
 A curated rule set for using [uv](https://github.com/astral-sh/uv) as
 the Python project tool — outside of containers. Container-side uv
-rules (`UV-001..UV-008`) cover Dockerfile-specific patterns and live in
+rules (`UV-*`) cover Dockerfile-specific patterns and live in
 [`containers-best-practices/references/uv-python.md`](../containers-best-practices/references/uv-python.md);
 this skill covers everything else.
 

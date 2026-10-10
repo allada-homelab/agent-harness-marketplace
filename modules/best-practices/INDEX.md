@@ -464,7 +464,7 @@ _Use when working with Python projects — `.py` files, `pyproject.toml` (withou
 | [`PY-075`](skills/python-best-practices/references/packaging.md#py-075) | Enable PEP 740 build provenance attestations — automatic in `pypa/gh-action-pypi-publish` v1.11+ with `permissions: attestations: write`. Extends PY-062. |
 | [`PY-089`](skills/python-best-practices/references/packaging.md#py-089) | For uv-managed pure-Python projects, prefer the `uv_build` backend (zero-config, fast); see UVP-029 for the uv-side detail. Stay on hatchling for build hooks or non-uv workflows. |
 | [`PY-077`](skills/python-best-practices/references/packaging.md#py-077) | Audit dependencies for known CVEs in CI with `pip-audit` (PyPA, OSV-backed) or `uv audit`. Don't gate releases on it silently — fail the build. |
-| [`PY-090`](skills/python-best-practices/references/packaging.md#py-090) | Pin dependency hashes (`uv lock`, or `--generate-hashes` for pip) and verify them with `--frozen` / `--require-hashes` in CI to blunt substitution attacks. |
+| [`PY-090`](skills/python-best-practices/references/packaging.md#py-090) | Pin dependency hashes (`uv lock`, or `--generate-hashes` for pip) and verify them with `uv sync --locked` / `--require-hashes` in CI to blunt substitution attacks. |
 | [`PY-078`](skills/python-best-practices/references/packaging.md#py-078) | Profile with `scalene` (local, line-level CPU + memory + native time) or `py-spy` (production sampling, attach by PID) *before* reaching for `mypyc`, Cython, or Rust extensions. |
 
 ## repo-best-practices

@@ -59,7 +59,9 @@ For every artifact:
    field names exactly match CC-030 (unknown fields are silently
    ignored); every linked or referenced file exists; scripts are
    referenced through `${CLAUDE_SKILL_DIR}`, `${CLAUDE_PROJECT_DIR}` or
-   `${CLAUDE_PLUGIN_ROOT}`.
+   `${CLAUDE_PLUGIN_ROOT}` — unless the skill must also load on another
+   harness that lacks those variables, where skill-relative paths
+   (`./scripts/x.py`) are correct (CC-045).
 4. **Validate plugins and skill folders** with `claude plugin validate
    <dir>`. If the command isn't available, say so once and continue.
 5. **Look across artifacts:** the same instruction duplicated in files
