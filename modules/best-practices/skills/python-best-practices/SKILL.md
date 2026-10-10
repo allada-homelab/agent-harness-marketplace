@@ -1,6 +1,7 @@
 ---
 name: python-best-practices
 description: Use when working with Python projects — `.py` files, `pyproject.toml` (without `[tool.uv]`), `conftest.py`, `mypy.ini`, `pyrightconfig.json`, `.python-version` — or when the user asks about Python project layout, typing, linting, testing, async, logging, packaging, dependency auditing, or profiling. Mentions of pytest, mypy, pyright, basedpyright, ruff, structlog, hatch, or setuptools-scm are triggers. Covers the PY- rule family. For uv-specific patterns (`uv sync`, `[tool.uv]`, `uv.lock`) use uv-best-practices; for Python-in-Docker use containers-best-practices.
+user-invocable: false
 ---
 
 # Python best practices

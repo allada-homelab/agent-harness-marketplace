@@ -1,6 +1,7 @@
 ---
 name: meta-best-practices
 description: Use when adding, editing, or reviewing rules in the best-practices library — covers the rule-ID format (PREFIX-NNN), severity scale, four-part What/Why/How/When-NOT-to-apply reference structure, SKILL.md shape, third-person description-field rules, and the authoring scripts. Activate on phrases like "best practices format", "add a rule", "rule format", "severity scale", "new domain skill", or when generating content for any *-best-practices skill.
+user-invocable: false
 ---
 
 # Library format spec

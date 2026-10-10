@@ -1,6 +1,7 @@
 ---
 name: go-best-practices
 description: Use when working with Go code — .go files, go.mod, go test / vet / staticcheck / golangci-lint / govulncheck, package layout, errors.Is and %w, context, goroutines, channels and errgroup, net/http servers and clients, graceful shutdown, parameterized SQL, or Go security. Covers the GO- rule family. Container packaging lives in containers-best-practices, gRPC rules in grpc-best-practices.
+user-invocable: false
 ---
 
 # Go best practices

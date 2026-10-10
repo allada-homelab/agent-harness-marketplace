@@ -1,6 +1,7 @@
 ---
 name: containers-best-practices
 description: Use when working with Dockerfiles, docker-compose/compose.yml, buildx, dev containers (devcontainer.json), or .dockerignore — including Python container builds with uv. Covers image hardening, multi-stage builds, layer/cache ordering, BuildKit cache + secret mounts, compose services, GPU + Docker Model Runner, dev-container lifecycle and volume state, and container security footguns. For Python packaging outside containers use python-best-practices or uv-best-practices.
+user-invocable: false
 ---
 
 # Container best practices

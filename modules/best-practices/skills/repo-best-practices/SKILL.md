@@ -1,6 +1,7 @@
 ---
 name: repo-best-practices
 description: Use when editing repository hygiene and CI config — .pre-commit-config.yaml hooks, .github/dependabot.yml, GitHub Actions workflows (.github/workflows/*.yml, permissions, zizmor audits), CODEOWNERS, justfile task-runner recipes that CI calls, or secret scanning (gitleaks). Covers the REPO- rule family (pre-commit as a maintained artifact, one dependency bot with a cooldown, secret scanning, justfile/CI parity, CODEOWNERS, workflow static analysis, least-privilege GITHUB_TOKEN). Language-agnostic repo plumbing; language rules live in the language skills.
+user-invocable: false
 ---
 
 # Repository best practices
