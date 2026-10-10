@@ -5,7 +5,6 @@ okf_version: "0.2"
 # Gotcha
 
 * [Artifacts live beside dsh sessions, not inside them](./artifacts-live-beside-dsh-sessions.md) - Artifacts go in $DSH_HOME/artifacts/<key>/, a sibling of sessions/ (never inside sessions/<key>/), keyed like dsh's projectKey; dsh's chatfile viewer must allowlist that root.
-* [best-practices tools are not in the CI gate](./best-practices-tools-not-in-ci-gate.md) - Neither bin/check.sh nor CI runs best-practices lint.sh or render-index.sh, so stale INDEX.md, Contents blocks or lint errors pass the gate; run both by hand.
 * [bin/check.sh fails on macOS without timeout binary](./check-sh-fails-on-macos-without-timeout.md) - bin/check.sh test suite fails on macOS hosts lacking timeout/gtimeout, though the fallback path passes; check assumes timeout exists to assert the fallback is reachable.
 * [Chrome's IsolateSandboxedIframes silences deferred errors in headless probes](./chrome-isolates-sandboxed-iframes-from-virtual-time.md) - Chrome's sandboxed iframe isolation (`IsolateSandboxedIframes`) blocks `--virtual-time-budget`, silencing deferred errors; fix with `--disable-features=IsolateSandboxedIframes`.
 * [Controlled headless claude -p runs for skill measurement](./claude-p-controlled-skill-runs.md) - Measure a skill instruction with claude -p --tools '' --strict-mcp-config and no --bare: without strict MCP, an auth-reminder leaks into output; --bare fails under OAuth login.
