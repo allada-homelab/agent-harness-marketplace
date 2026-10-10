@@ -42,8 +42,10 @@ Ported from Anthropic's `feature-dev` plugin in
 `skills/feature-dev/SKILL.md`; the TodoWrite instruction became
 harness-neutral; a "Dispatching the specialist agents" section names the
 per-harness delegation tool and a sequential fallback; agent names are
-written as `feature-dev:<agent>` types. `code-explorer` and `code-architect`
-are verbatim. `code-reviewer` also has `Bash` (for read-only `git`), and its
+written as `feature-dev:<agent>` types. All three agents drop `model: sonnet`,
+so they inherit the session's model on every harness, and name `AGENTS.md`
+beside `CLAUDE.md` wherever they look for project guidelines; otherwise
+`code-explorer` and `code-architect` are verbatim. `code-reviewer` also has `Bash` (for read-only `git`), and its
 review scope is the whole change set against a base (committed, staged,
 unstaged and new files) plus the unchanged code around it, instead of
 upstream's unstaged `git diff`. Upstream's reviewer was told to run

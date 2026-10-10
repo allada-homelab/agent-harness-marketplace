@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: agent-transcripts
-  version: 0.8.4
+  version: 0.8.5
   kinds:
   - skills
   - dsh-plugin
@@ -133,7 +133,7 @@ modules:
       tool — as one self-contained file the user opens locally; design, dataviz and diagramming guidance
       plus a check-and-deliver flow.
 - name: best-practices
-  version: 0.6.1
+  version: 0.6.2
   kinds:
   - skills
   - dsh-plugin
@@ -200,11 +200,9 @@ modules:
     - pi
     tags: []
     command: false
-    summary: Use when working with FastAPI apps — building or reviewing APIRouter route modules, Pydantic
-      v2 request/response models, Depends() dependencies, lifespan startup/shutdown, OAuth2/JWT or bearer-token
-      auth, pydantic-settings secrets, async SQLAlchemy sessions, TestClient/httpx tests, uvicorn deployment,
-      or observability (OpenTelemetry tracing/metrics, OTLP export, X-Request-ID request id and log correlation,
-      /healthz and /readyz probes, pure ASGI middleware).
+    summary: Use when working with FastAPI apps — APIRouter routes, Pydantic v2 models, Depends() dependencies,
+      lifespan, OAuth2/JWT or bearer-token auth, pydantic-settings, async SQLAlchemy, TestClient/httpx
+      tests, uvicorn deployment, or OpenTelemetry, request-id logging and health probes.
   - name: go-best-practices
     path: modules/best-practices/skills/go-best-practices/SKILL.md
     harness:
@@ -213,11 +211,9 @@ modules:
     - pi
     tags: []
     command: false
-    summary: Use when working with Go code — .go files and go.mod/go.sum, go build / go test / go test
-      -race / go vet / gofmt / staticcheck / golangci-lint / govulncheck, module and package layout, error
-      handling (errors.Is / %w), the context package, goroutines and channels, errgroup, stdlib net/http
-      servers and clients, graceful shutdown on SIGINT/SIGTERM, parameterized SQL, or Go security (html/template,
-      crypto/rand).
+    summary: Use when working with Go code — .go files, go.mod, go test / vet / staticcheck / golangci-lint
+      / govulncheck, package layout, errors.Is and %w, context, goroutines, channels and errgroup, net/http
+      servers and clients, graceful shutdown, parameterized SQL, or Go security.
   - name: grpc-best-practices
     path: modules/best-practices/skills/grpc-best-practices/SKILL.md
     harness:
@@ -226,13 +222,10 @@ modules:
     - pi
     tags: []
     command: false
-    summary: Use when working with gRPC — .proto files and proto3 schema design, enum zero values and
-      _UNSPECIFIED sentinels, well-known types (google.protobuf.Timestamp / Duration / FieldMask), List
-      pagination (page_size / page_token / next_page_token), buf or protoc generation, grpc-go / grpclib
-      / grpcio servers and clients, google.rpc status codes and rich errors, deadlines and cancellation
-      propagation, streaming RPCs (server/client/bidi), interceptors (auth, logging, panic recovery, protovalidate),
-      TLS / mTLS transport credentials and the insecure-credentials footgun, server reflection + grpcurl/grpcui,
-      health checking, message-size limits and connection reuse.
+    summary: Use when working with gRPC — .proto files and proto3 schema design, buf or protoc generation,
+      grpc-go / grpcio / grpclib servers and clients, google.rpc status codes and rich errors, deadlines,
+      streaming RPCs, interceptors, TLS / mTLS credentials, server reflection and grpcurl, health checking
+      or message-size limits.
   - name: meta-best-practices
     path: modules/best-practices/skills/meta-best-practices/SKILL.md
     harness:
@@ -276,9 +269,10 @@ modules:
     - pi
     tags: []
     command: false
-    summary: Use when working with uv (Astral's Python package and project manager) — `uv sync` / `add`
-      / `lock` / `run` / `tool` / `build` / `publish` / `audit` / `export`, `uvx`, a `uv.lock` or `pylock.toml`
-      file, or a `pyproject.toml` with `[tool.uv]` or `[dependency-groups]`.
+    summary: Use when working with uv, Astral's Python package and project manager — `uv sync` / `add`
+      / `lock` / `run` / `tool` / `build` / `publish`, `uvx`, a `uv.lock`, or a `pyproject.toml` with
+      `[tool.uv]` or `[dependency-groups]`, including workspaces, private registries, CI, publishing and
+      migrating from pip, poetry, PDM or Hatch.
 - name: browser
   version: 0.1.3
   kinds:
@@ -304,7 +298,7 @@ modules:
     command: true
     summary: Drive a browser from any harness.
 - name: code-review
-  version: 0.2.0
+  version: 0.2.1
   kinds:
   - skills
   - dsh-plugin
@@ -326,7 +320,8 @@ modules:
     - github
     - review
     command: true
-    summary: Review a GitHub pull request and post one comment with only the high-confidence issues.
+    summary: Review a GitHub pull request with parallel reviewers and a confidence scorer, and post one
+      comment holding only the high-confidence issues.
 - name: code-simplifier
   version: 0.1.1
   kinds:
@@ -381,7 +376,7 @@ modules:
     ansible-lint, node --check, tsc) and feed its findings back to the agent.
   skills: []
 - name: feature-dev
-  version: 0.1.3
+  version: 0.1.4
   kinds:
   - skills
   - dsh-plugin
@@ -403,7 +398,7 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: okf-wiki
-  version: 0.1.9
+  version: 0.1.10
   kinds:
   - skills
   - dsh-plugin
@@ -504,7 +499,7 @@ modules:
     summary: Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent)
       will execute without the planner present.
 - name: pr-flow
-  version: 0.2.11
+  version: 0.2.12
   kinds:
   - skills
   - dsh-plugin
