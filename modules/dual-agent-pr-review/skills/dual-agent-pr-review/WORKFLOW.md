@@ -3,6 +3,8 @@
 Referenced by the `dual-agent-pr-review` skill's `SKILL.md`. Nothing auto-loads this
 file; the skill must be invoked explicitly (`/dual-agent-pr-review` on Claude Code).
 
+**Contents:** Non-negotiables · Step 1 — preflight and parse the request · Step 2 — snapshot the PR · Step 3 — run both reviews in parallel · Step 4 — build the Venn diagram · Step 5 — assess the PR's existing comments (optional) · Step 6 — reconciliation rounds · Step 7 — verify, then present · Failure modes worth knowing
+
 Two reviewers with different training and different blind spots read the same
 diff independently, then argue their disagreements to a verdict with evidence.
 What survives is the deliverable.
