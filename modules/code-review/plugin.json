@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "code-review",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Automated pull-request review on every harness: a size gate sends a small or generated-only change to one combined reviewer, everything else to a five-lens fan-out plus batch scoring; anything under 80 is dropped, one comment posted with gh.",
   "author": {
     "name": "David Allada",
