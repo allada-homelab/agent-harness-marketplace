@@ -1,6 +1,6 @@
 ---
 name: tend
-description: Health report for this repo's .wiki/ — validation errors and warnings, stale, unanchored and unverified concepts, orphans nothing links to, likely duplicates, and tags to consolidate — with an offer to heal the stale ones in one batch. Use when the user asks to "tend", "check", "clean up" or "audit" the wiki, or when the digest shows invalid or stale concepts.
+description: Health report for this repo's .wiki/ — validation errors and warnings, stale, unanchored and unverified concepts, orphans nothing links to, likely duplicates, and tags to consolidate — with an offer to heal the stale ones in one batch. Use when the user asks to "tend", "check", "clean up" or "audit" the whole wiki, or when the digest shows invalid concepts — not when one concept is marked stale, which the capture skill re-verifies.
 user-invocable: true
 argument-hint: "[--fanout N]"
 ---
