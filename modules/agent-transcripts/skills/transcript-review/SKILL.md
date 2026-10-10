@@ -154,8 +154,13 @@ if you need it.
 ### 4. Record it
 
 ```bash
-uv run --script ./review.py record <native_id> --run-id <your run id> --file verdict.json
+uv run --script ./review.py record <native_id> --run-id <your run id> <<'EOF'
+<the verdict JSON>
+EOF
 ```
+
+Pass the verdict on stdin rather than writing it to a file: it quotes private transcript
+text, and the working directory is usually a git checkout where a stray file gets committed.
 
 Exit 2 means the verdict was refused and nothing was stored; the message says exactly which
 entry was wrong. Fix that entry and run it again — do not drop the category.

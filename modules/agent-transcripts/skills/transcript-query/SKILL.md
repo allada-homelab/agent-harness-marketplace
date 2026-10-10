@@ -44,8 +44,8 @@ uv run --script ./query.py "SELECT count(*) FROM tool_calls WHERE name = ?" Bash
 
 Options: `--dest DIR` overrides the cache root (same resolution as the export and ingest
 skills), `--limit N` sets the row cap (default 50), `--width N` the per-cell character cap
-(default 200). If the index does not exist yet, run `../transcript-ingest/transcripts.py`
-first.
+(default 200). If the index does not exist yet, run
+`uv run --script ../transcript-ingest/transcripts.py ingest` first.
 
 ## Worked queries
 
@@ -192,9 +192,10 @@ TSV. `--min` sets the smallest cluster to report; `--json` emits the groups as d
 
 ### `verdict.schema.json` — validated subagent verdicts
 
-When fanning out excerpt readers, pass `verdict.schema.json` as the `schema` of a
-workflow/`agent()` call so each subagent returns `{session_id, verdict, severity, summary,
-evidence}` (validated, aggregatable) instead of prose that has to be re-parsed.
+When fanning out excerpt readers, have each return JSON matching `./verdict.schema.json`
+— `{session_id, verdict, severity, summary, evidence}` (validated, aggregatable) instead of
+prose that has to be re-parsed. On Claude Code, pass the schema as the `schema` of a workflow
+`agent()` call; on other harnesses, validate each child's reply against it.
 
 ## Reading one message
 
