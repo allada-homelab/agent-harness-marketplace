@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: agent-transcripts
-  version: 0.8.2
+  version: 0.8.3
   kinds:
   - skills
   - dsh-plugin
@@ -24,8 +24,9 @@ modules:
     tags:
     - observability
     command: false
-    summary: Read one agent session end to end, with tool results hidden until asked for, and record a
-      whole-session analysis of its goal, turning points, what went well and badly, why, and what to change.
+    summary: Read one agent session transcript end to end, with tool results hidden until asked for, and
+      record a whole-session analysis of its goal, turning points, what went well and badly, why, and
+      what to change.
   - name: transcript-export-claude
     path: modules/agent-transcripts/skills/transcript-export-claude/SKILL.md
     harness:
@@ -327,7 +328,7 @@ modules:
     command: true
     summary: Review a GitHub pull request and post one comment with only the high-confidence issues.
 - name: code-simplifier
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -380,7 +381,7 @@ modules:
     ansible-lint, node --check, tsc) and feed its findings back to the agent.
   skills: []
 - name: feature-dev
-  version: 0.1.2
+  version: 0.1.3
   kinds:
   - skills
   - dsh-plugin
