@@ -6,6 +6,7 @@ tags: [modules, removal, check-sh, pi, smoke, fleet]
 generated: {by: okf-wiki/opus, at: 2026-09-26T14:22:38Z}
 verified:
   - {by: okf-wiki/opus, at: 2026-09-26T14:22:38Z, commit: 6ac844bcd7e8}
+  - {by: okf-wiki/haiku, at: 2026-10-10T03:34:45Z, commit: 41c5f19df087}
 sources:
   - {id: s1, resource: commit:002649c, title: Remove five modules and the references that outlived them}
   - {id: s2, resource: https://github.com/allada-homelab/agent-harness-marketplace/pull/36, title: "PR #36"}
