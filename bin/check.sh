@@ -21,6 +21,20 @@ uv run --script bin/render-plugin-manifests.py --check || fail=1
 step "module mcp.json manifests are valid and .mcp.json is current"
 uv run --script bin/render-plugin-manifests.py --check-mcp || fail=1
 
+step "best-practices: INDEX.md and reference Contents are current; lint.sh passes"
+# render-index.sh writes in place, so render a copy and diff it against the tree.
+bp=$(mktemp -d)
+cp -R modules/best-practices "$bp/"
+if "$bp/best-practices/tools/render-index.sh" >/dev/null &&
+   diff -r modules/best-practices "$bp/best-practices" >"$bp.diff"; then
+    echo "  ok"
+else
+    echo "  FAIL: run modules/best-practices/tools/render-index.sh and commit the result"
+    head -40 "$bp.diff"; fail=1
+fi
+rm -rf "$bp" "$bp.diff"
+modules/best-practices/tools/lint.sh || fail=1
+
 step "every skill satisfies the portable contract"
 uv run --script bin/lint-skills.py || fail=1
 

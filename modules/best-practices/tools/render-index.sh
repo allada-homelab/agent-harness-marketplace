@@ -94,8 +94,8 @@ for d in "$SKILLS_ROOT"/*/; do
 done
 
 # Sort skills by directory name for deterministic output.
-IFS=$'\n' sorted=($(printf "%s\n" "${skills[@]}" | sort))
-unset IFS
+sorted=()
+while IFS= read -r d; do sorted+=("$d"); done < <(printf '%s\n' "${skills[@]}" | sort)
 
 for skill_dir in "${sorted[@]}"; do
   skill_name="$(basename "$skill_dir")"
