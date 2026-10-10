@@ -135,3 +135,9 @@ placeholder means its scribe is still writing, not stalled — the Stop hook alr
 about it rather than nudging you to commit it. Never interrupt, revert or hand-finish a scribe
 based on the file's on-disk state; wait for its completion notice (the tool call/message
 returning) and its receipt line.
+
+The scribe's "only `.wiki/`" limit is an instruction, not a sandbox (a plugin agent cannot
+carry its own hooks or permission mode), so check it before you commit. Run
+`git -C <root> status --porcelain` before dispatching and again after the last receipt. Any
+path outside `.wiki/` that appears or changes between the two came from a scribe: name it to
+the user, and don't commit or revert it yourself. Commit `.wiki/` paths only.
