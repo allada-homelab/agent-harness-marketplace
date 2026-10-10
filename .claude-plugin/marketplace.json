@@ -60,7 +60,7 @@
       "name": "code-review",
       "description": "Automated pull-request review on every harness: a size gate sends a small or generated-only change to one combined reviewer, everything else to a five-lens fan-out plus batch scoring; anything under 80 is dropped, one comment posted with gh.",
       "category": "development",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "source": "./modules/code-review"
     },
     {
