@@ -218,14 +218,17 @@ stay under `~/.claude/dual-review/runs/` for audit.
 ## Failure modes worth knowing
 
 - **A reviewer that read nothing still answers.** Codex sandboxes every shell
-  call, by default with bubblewrap, which needs an unprivileged user namespace.
+  call; on Linux that is bubblewrap, which needs an unprivileged user namespace
+  (codex 0.162 dropped the landlock fallback — `use_legacy_landlock` now panics).
   Container seccomp policies commonly deny that; codex then fails every command
   and *still returns confident, schema-valid findings* about code it never read.
-  `preflight` picks the backend automatically (bubblewrap where namespaces work,
-  otherwise landlock, which enforces in-kernel and needs no namespace), and `run`
-  rejects any round where codex logged no successful command. If you see that
-  status, treat the findings as void — do not use them because they look
-  plausible.
+  `preflight` runs a command through codex's own read-only sandbox and fails if
+  it cannot start, naming the fix (a seccomp profile in the dev container's
+  `runArgs` that lets bubblewrap unshare and mount — Docker's default plus the
+  syscalls it gates on `CAP_SYS_ADMIN`); `run` additionally rejects any round where codex logged
+  no successful command. If you see that status, treat the findings as void — do
+  not use them because they look plausible. Never "fix" it with
+  `danger-full-access`: that runs the PR's code with your credentials.
 - **Stacked PRs.** `prepare` detects them and warns both reviewers, but findings
   still arrive that belong to the parent branch. When a finding cites a line the
   diff does not touch, check it against `git diff <merge_base> <head>` before

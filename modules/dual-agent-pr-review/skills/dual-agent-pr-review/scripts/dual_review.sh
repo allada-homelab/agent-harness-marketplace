@@ -75,19 +75,20 @@ resolve_codex() {
   echo "$found"
 }
 
-# codex sandboxes tool calls with bubblewrap, which needs unprivileged user
-# namespaces. Inside a devcontainer those are usually blocked, and codex then
-# fails EVERY shell command while still answering — i.e. it reviews from
-# imagination. Detect that up front and run unsandboxed instead (the container
-# is already the sandbox), rather than shipping a fabricated review.
-# Picks codex's sandbox backend. Its default, bubblewrap, needs an unprivileged
-# user namespace; container seccomp policies commonly deny that, and codex then
-# fails every shell call while still answering — a review with no file reads
-# behind it. Landlock enforces in-kernel on the calling process, needs no
-# namespace, and keeps the read-only sandbox intact, so it is the fallback rather
-# than turning the sandbox off.
-probe_codex_sandbox() {
-  if unshare -Ur true >/dev/null 2>&1; then echo "bwrap"; else echo "landlock"; fi
+# Codex sandboxes every shell call. On Linux the only backend is bubblewrap
+# (codex 0.162 dropped landlock, and features.use_legacy_landlock now panics
+# with "filesystem-restricted execution requires bubblewrap"), which needs an
+# unprivileged user namespace that container seccomp profiles commonly deny.
+# Codex then fails every shell command while still answering — a review with no
+# file reads behind it. Probe codex itself, forced read-only, so this is caught
+# in preflight instead of `run` rejecting the round. macOS uses Seatbelt.
+codex_sandbox_works() {
+  [[ "$(uname -s)" == Linux ]] || return 0
+  run_with_timeout 60 "$(resolve_codex)" sandbox --disable use_legacy_landlock \
+    -c 'sandbox_mode="read-only"' -- true >/dev/null 2>&1
+}
+require_codex_sandbox() {
+  codex_sandbox_works || die "codex cannot start its sandbox here: bubblewrap needs an unprivileged user namespace, and this one denies it. In a dev container pass --security-opt seccomp=<profile> in runArgs, where the profile is Docker's default plus unshare, clone, clone3, setns, mount, umount2, pivot_root, mount_setattr, open_tree and move_mount allowed unconditionally (seccomp=unconfined also works but drops the whole filter; no SYS_ADMIN or systempaths needed), and rebuild. Do not work around it with danger-full-access: codex would run the PR's code with your credentials."
 }
 
 require_tools() {
@@ -96,6 +97,7 @@ require_tools() {
   command -v jq  >/dev/null 2>&1 || die "jq not found on PATH."
   gh auth status >/dev/null 2>&1 || die "gh is not authenticated. Run: gh auth login"
   resolve_codex >/dev/null
+  require_codex_sandbox
 }
 
 # ── preflight ────────────────────────────────────────────────────────────────
@@ -105,10 +107,8 @@ cmd_preflight() {
   echo "codex  : $(resolve_codex) ($("$(resolve_codex)" --version 2>/dev/null | head -1))"
   echo "gh     : authenticated"
   echo "runs   : $RUNS_ROOT"
-  case "$(probe_codex_sandbox)" in
-    bwrap)    echo "codex sandbox : bubblewrap (user namespaces available)" ;;
-    landlock) echo "codex sandbox : landlock (no user namespaces here; --enable use_legacy_landlock)" ;;
-  esac
+  if [[ "$(uname -s)" == Linux ]]; then echo "codex sandbox : bubblewrap (read-only probe passed)"
+  else echo "codex sandbox : seatbelt (macOS)"; fi
 }
 
 # ── existing PR discussion ───────────────────────────────────────────────────
@@ -358,7 +358,6 @@ cmd_run() {
     --ignore-user-config --ignore-rules
     -c approval_policy='"never"' -c features.apps=false
     -c web_search='"disabled"' -c shell_environment_policy.inherit='"core"')
-  [[ "$(probe_codex_sandbox)" == "landlock" ]] && codex_iso+=(--enable use_legacy_landlock)
   # --setting-sources "" keeps the PR's .claude/settings.json and the user's allow
   # rules out; --tools removes Skill/WebFetch/Agent outright; dontAsk denies any
   # Bash outside the read-only built-ins and this allow-list (curl, gh, rm…).
