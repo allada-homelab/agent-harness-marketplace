@@ -5,6 +5,7 @@
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODULE_VERSION="$(jq -r '.version // "unknown"' "$SKILL_DIR/../../package.json" 2>/dev/null || echo unknown)"
 RUNS_ROOT="${DUAL_REVIEW_RUNS:-$HOME/.claude/dual-review/runs}"
 WORKTREE_ROOT="${DUAL_REVIEW_WORKTREES:-$HOME/.git-worktree}"
 
@@ -107,17 +108,88 @@ require_tools() {
   command -v gh  >/dev/null 2>&1 || die "gh CLI not found on PATH."
   command -v jq  >/dev/null 2>&1 || die "jq not found on PATH."
   gh auth status >/dev/null 2>&1 || die "gh is not authenticated. Run: gh auth login"
-  resolve_codex >/dev/null
+  local codex_bin; codex_bin=$(resolve_codex)
+  "$codex_bin" login status >/dev/null 2>&1 \
+    || die "codex ($codex_bin) is not logged in. Run: $codex_bin login"
   codex_sandbox_mode >/dev/null
+}
+
+# Names why a codex round failed, from its own output. Every cause listed here
+# reached the old status line as "read no files" or "exit ?", and each one has a
+# different remedy, so the orchestrator should not have to grep the log for it.
+codex_failure_cause() {
+  local dir="$1"
+  if [[ "$(cat "$dir/codex.exit" 2>/dev/null)" == 124 ]]; then
+    echo "codex timed out after ${AGENT_TIMEOUT:-?}s — raise --timeout or narrow the review"; return
+  fi
+  # Only codex's own error lines (`ERROR:` / `<ts> ERROR <target>:` / a panic):
+  # the log also carries command output, and a PR whose code says
+  # `HTTPError("401 Unauthorized")` must not read as an auth failure.
+  local errs
+  errs=$(cat "$dir/codex.log" "$dir/codex.stdout" 2>/dev/null | grep -E '(^|[[:space:]])ERROR[: ]|panicked at' || true)
+  if grep -qiE 'out of credits|insufficient_quota|quota exceeded|usage limit' <<<"$errs"; then
+    echo "codex account is out of credits/quota — refill it, then re-run this round with --only codex"; return
+  fi
+  if grep -qiE '401 Unauthorized|not logged in|please (log|sign) in' <<<"$errs"; then
+    echo "codex is not logged in (401) — run 'codex login', then re-run this round with --only codex"; return
+  fi
+  # A sandbox that cannot start fails each command, not codex itself; the clearest
+  # trace is codex's own final answer, echoed into the log as a {"summary": line.
+  local answer
+  answer=$( { grep -h '^{"summary"' "$dir/codex.log" "$dir/codex.stdout"; cat "$dir/codex.raw.json"; } 2>/dev/null || true)
+  if grep -qiE 'bubblewrap|use_legacy_landlock|panicked' <<<"$errs" \
+     || grep -qiE 'requires bubblewrap|bubblewrap.*(unavailable|not available)' <<<"$answer"; then
+    echo "codex could not start its sandbox (bubblewrap) — run preflight; it picks the right mode for this machine"; return
+  fi
+}
+
+# A lower bound on successful codex commands that did more than read the run dir.
+# A command that only touched $RUN_DIR (diff.patch, pr.json) read the diff, not
+# the code: a run whose worktree reads were all denied once passed on four of
+# those. Codex logs parallel calls as a batch — every `exec` header first, then
+# the results in completion order with no header — so a result cannot be tied
+# to its command; per batch, successes beyond the run-dir commands must have
+# read the worktree.
+codex_worktree_execs() {
+  local log="$1" run_dir="$2"
+  [[ -f "$log" ]] || { echo 0; return; }
+  awk -v rd="$run_dir" '
+    function close_hdr() { if (have) { if (index(cmd, rd)) hrd++; have = 0; cmd = "" } }
+    function close_batch() { close_hdr(); if (s > hrd) n += s - hrd; s = 0; hrd = 0 }
+    /^exec$/ { if (state == "res") close_batch(); else close_hdr(); have = 1; cmd = ""; state = "hdr"; next }
+    /^ succeeded in / { close_hdr(); s++; state = "res"; next }
+    /^ (exited|failed|declined)/ { close_hdr(); state = "res"; next }
+    state == "hdr" && have { cmd = cmd $0 "\n" }
+    END { close_batch(); print n + 0 }' "$log"
 }
 
 # ── preflight ────────────────────────────────────────────────────────────────
 cmd_preflight() {
   require_tools
+  local codex_bin; codex_bin=$(resolve_codex)
+  echo "skill  : dual-agent-pr-review $MODULE_VERSION ($SKILL_DIR)"
   echo "claude : $(command -v claude) ($(claude --version 2>/dev/null | head -1))"
-  echo "codex  : $(resolve_codex) ($("$(resolve_codex)" --version 2>/dev/null | head -1))"
+  echo "codex  : $codex_bin ($("$codex_bin" --version 2>/dev/null | head -1)), logged in"
   echo "gh     : authenticated"
   echo "runs   : $RUNS_ROOT"
+  # Login status does not prove the account can answer: an exhausted workspace
+  # still reports logged in, then fails every round. One tiny call settles it.
+  local probe_dir; probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/dual-review-probe.XXXXXX")
+  local probe_rc=0
+  ( cd "$probe_dir" && run_with_timeout 120 "$codex_bin" exec --skip-git-repo-check --ephemeral \
+      --sandbox "$(codex_sandbox_mode)" --ignore-user-config -c approval_policy='"never"' \
+      --output-last-message "$probe_dir/codex.raw.json" \
+      "Reply with the single word OK." </dev/null >"$probe_dir/codex.stdout" 2>"$probe_dir/codex.log" ) \
+    || probe_rc=$?
+  echo "$probe_rc" > "$probe_dir/codex.exit"
+  if [[ $probe_rc -ne 0 ]] || ! grep -qi 'ok' "$probe_dir/codex.raw.json" 2>/dev/null; then
+    local cause; cause=$(AGENT_TIMEOUT=120 codex_failure_cause "$probe_dir")
+    [[ -n "$cause" ]] || cause="cause unknown; its log follows: $(tail -5 "$probe_dir/codex.log" 2>/dev/null)"
+    rm -rf "$probe_dir"
+    die "codex could not answer a one-line probe (exit $probe_rc): $cause"
+  fi
+  rm -rf "$probe_dir"
+  echo "codex probe : answered"
   if [[ "$(uname -s)" != Linux ]]; then echo "codex sandbox : seatbelt (macOS, read-only)"
   elif [[ "$(codex_sandbox_mode)" == read-only ]]; then echo "codex sandbox : bubblewrap (read-only probe passed)"
   else echo "codex sandbox : NONE — bubblewrap cannot start in this container, so codex runs danger-full-access; the container is the only boundary (its credentials and network are reachable from the PR's checkout)"; fi
@@ -135,7 +207,7 @@ fetch_pr_comments() {
         pullRequest(number:$num){
           reviewThreads(first:100){ nodes{
             isResolved isOutdated path line originalLine
-            comments(first:50){ nodes{ author{login} body url createdAt diffHunk } } } }
+            comments(first:50){ nodes{ databaseId author{login} body url createdAt diffHunk } } } }
           reviews(first:100){ nodes{ author{login} body url createdAt state } }
           comments(first:100){ nodes{ author{login} body url createdAt } } } } }' 2>/dev/null) \
     || { echo '[]' > "$out"; return; }
@@ -144,7 +216,7 @@ fetch_pr_comments() {
     def person: (.author.login // "unknown");
     [ ( .data.repository.pullRequest.reviewThreads.nodes[] | . as $t
         | $t.comments.nodes[0] | select(. != null)
-        | { kind: "inline", author: person, path: $t.path,
+        | { kind: "inline", author: person, path: $t.path, comment_id: .databaseId,
             line: ($t.line // $t.originalLine),
             resolved: $t.isResolved, outdated: $t.isOutdated,
             url: .url, created_at: .createdAt, body: .body,
@@ -171,11 +243,94 @@ render_pr_comments() {
       + (if .path then " · \(.path):\(.line // 0)" else "" end)
       + (if .resolved then " · RESOLVED" else "" end)
       + (if .outdated then " · OUTDATED (written against an older commit)" else "" end)
+      + (if .comment_id then " · reply-to id \(.comment_id)" else "" end)
       + "\n\(.url)\n\n\(.body)\n"
       + (if (.diff_hunk | length) > 0 then "\nCommented on this hunk:\n```diff\n\(.diff_hunk)\n```\n" else "" end)
       + (if (.replies | length) > 0 then "\nReplies:\n" + ([.replies[] | "- **\(.author)**: \(.body)"] | join("\n")) + "\n" else "" end)
       + "\n---\n" )
     end' "$1"
+}
+
+# ── related PRs ──────────────────────────────────────────────────────────────
+# Two things the base branch alone does not reveal: commits on this branch that
+# belong to OTHER PRs (a parent that was squash-merged leaves its original
+# commits here, so the diff silently includes its work), and open PRs touching
+# the same files (a finding or a "follow-up" may already be handled there).
+find_related_prs() {
+  local owner_repo="$1" num="$2" src_repo="$3" merge_base="$4" head_oid="$5" changed="$6" out="$7"
+  local sha prs="" others
+  while read -r sha; do
+    others=$(gh api "repos/$owner_repo/commits/$sha/pulls" \
+      --jq ".[] | select(.number != $num) | \"#\(.number) (\(if .merged_at then \"merged\" else .state end)) \(.title)\"" 2>/dev/null) || continue
+    [[ -n "$others" ]] && prs+="$others"$'\n'
+  done < <(git -C "$src_repo" rev-list --max-count 60 "$merge_base..$head_oid" 2>/dev/null)
+  local overlapping
+  overlapping=$(gh pr list --repo "$owner_repo" --state open --limit 100 --json number,title,files 2>/dev/null \
+    | jq -r --argjson n "$num" --rawfile ch "$changed" '
+        ($ch | split("\n") | map(select(length > 0))) as $mine
+        | .[] | select(.number != $n)
+        | [.files[].path | select(IN($mine[]))] as $shared
+        | select(($shared | length) > 0)
+        | "#\(.number) \(.title) — shares: \($shared[:5] | join(", "))\(if ($shared|length) > 5 then " …" else "" end)"' 2>/dev/null) || overlapping=""
+  {
+    echo "# Related pull requests"
+    echo
+    echo "## Other PRs whose commits are in this PR's diff"
+    if [[ -n "$prs" ]]; then
+      echo "These commits belong to another PR. If that PR is merged, this branch carries"
+      echo "its pre-squash commits and the diff includes work that is not this PR's."
+      echo
+      sort -u <<<"$prs" | sed '/^$/d; s/^/- /'
+    else echo "None found."; fi
+    echo
+    echo "## Open PRs touching the same files"
+    if [[ -n "$overlapping" ]]; then sed 's/^/- /' <<<"$overlapping"; else echo "None found."; fi
+  } > "$out"
+  # Only a MERGED other PR means hidden stacking; an open one is a visible parent
+  # or a sibling, which the base-branch check and the listing already cover.
+  grep -q '(merged)' <<<"$prs"
+}
+
+# Re-review: writes prior.md (the prior run's ledger) and delta.patch (prior head
+# → current head) into run_dir, and prints the brief's re-review note.
+write_prior() {
+  local since="$1" run_dir="$2" src_repo="$3" head_oid="$4"
+  local prior_head; prior_head=$(jq -r .headRefOid "$since/pr.json")
+  {
+    echo "# Prior review of this PR"
+    echo
+    echo "Prior run: $since — reviewed head $prior_head. Current head: $head_oid."
+    echo
+    if [[ -f "$since/final.md" ]]; then cat "$since/final.md"
+    elif [[ -f "$since/venn.md" ]]; then
+      echo "(The prior run left no final.md ledger; its Venn diagram follows. Dispositions are unknown.)"
+      echo; cat "$since/venn.md"
+    else echo "(The prior run left neither final.md nor venn.md.)"; fi
+  } > "$run_dir/prior.md"
+  if git -C "$src_repo" cat-file -e "${prior_head}^{commit}" 2>/dev/null; then
+    # Limited to the PR's own files: a merge from the base between the two heads
+    # would otherwise flood the delta with unrelated base-branch changes.
+    local pr_files=() f
+    while IFS= read -r f; do [[ -n "$f" ]] && pr_files+=("$f"); done < "$run_dir/changed_files.txt"
+    git -C "$src_repo" diff "$prior_head" "$head_oid" -- ${pr_files[@]+"${pr_files[@]}"} \
+      > "$run_dir/delta.patch" || true
+  else
+    info "prior head $prior_head is not in the local repo (force-push or gc) — no delta.patch"
+  fi
+  # Plain if/elif, not `$( [[ … ]] && … )`: an assignment whose last command
+  # substitution fails aborts the script under set -e, and an empty delta is normal.
+  local delta_clause=""
+  if [[ -s "$run_dir/delta.patch" ]]; then
+    delta_clause=", and the change since is \`$run_dir/delta.patch\`"
+  elif [[ "$prior_head" == "$head_oid" ]]; then
+    delta_clause=" — the head has not moved since"
+  fi
+  printf '%s\n' "> **This is a re-review.** A prior run reviewed head \`$prior_head\`; its findings,
+> their dispositions and what was posted are in \`$run_dir/prior.md\`$delta_clause.
+> Still review the whole PR. Read prior.md first: report every prior finding that is
+> still present (same root cause, even if unchanged), and do not re-raise one that
+> prior.md records as rejected, rebutted by the author, or declined by the user
+> unless the code it rests on changed since — then say what changed."
 }
 
 # ── prepare ──────────────────────────────────────────────────────────────────
@@ -184,6 +339,7 @@ render_pr_comments() {
 cmd_prepare() {
   local pr="" task="" claude_model="opus" claude_effort="high"
   local codex_model="gpt-6.1-sol" codex_effort="high" timeout_s=2400
+  local since="" context_repos=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --pr)            pr="$2"; shift 2 ;;
@@ -193,11 +349,17 @@ cmd_prepare() {
       --codex-model)   codex_model="$2"; shift 2 ;;
       --codex-effort)  codex_effort="$2"; shift 2 ;;
       --timeout)       timeout_s="$2"; shift 2 ;;
+      --since)         since="$2"; shift 2 ;;
+      --context-repo)  [[ -d "$2" ]] || die "--context-repo: no such directory: $2"
+                       context_repos+=("$(cd "$2" && pwd)"); shift 2 ;;
       *) die "unknown flag: $1" ;;
     esac
   done
   [[ -n "$pr" ]] || die "--pr is required (URL or number)"
   [[ -n "$task" ]] || task="Do a thorough review. Surface any issues or bugs as blocking or non-blocking."
+  if [[ -n "$since" ]]; then
+    [[ -f "$since/config.env" && -f "$since/pr.json" ]] || die "--since: $since is not a dual-review run dir"
+  fi
   require_tools
 
   local src_repo; src_repo=$(git rev-parse --show-toplevel 2>/dev/null) \
@@ -225,6 +387,10 @@ cmd_prepare() {
   local run_dir="$RUNS_ROOT/$slug"
   local wt="$WORKTREE_ROOT/$(basename "$src_repo")/pr-${num}-review"
   mkdir -p "$run_dir"
+  # A prepare that dies halfway leaves a run dir that looks like a run; config.env
+  # is written last, so its absence marks the dir as a stub to remove.
+  PREP_RUN_DIR="$run_dir"
+  trap '[[ -n "${PREP_RUN_DIR:-}" && ! -f "$PREP_RUN_DIR/config.env" ]] && rm -rf "$PREP_RUN_DIR"; true' EXIT
   jq . <<<"$meta" > "$run_dir/pr.json"
   jq -r '.files[].path' <<<"$meta" > "$run_dir/changed_files.txt"
 
@@ -233,7 +399,12 @@ cmd_prepare() {
   [[ -s "$run_dir/diff.patch" ]] || die "PR diff is empty — wrong PR, or no permission to read it"
 
   info "checking out PR head $head_oid into a worktree…"
-  git -C "$src_repo" fetch -q origin "pull/${num}/head" || die "could not fetch pull/${num}/head"
+  local fetch_err
+  fetch_err=$(git -C "$src_repo" fetch -q origin "pull/${num}/head" 2>&1) || {
+    local hint=""
+    [[ "$fetch_err" == *refs/prefetch* ]] && hint=" — stale maintenance prefetch refs; delete them with: git -C $src_repo for-each-ref --format='%(refname)' refs/prefetch | xargs -n1 git -C $src_repo update-ref -d"
+    die "could not fetch pull/${num}/head: ${fetch_err}${hint}"
+  }
 
   # The diff must be against the PR's OWN base, not the default branch. On a
   # stacked PR those differ, and diffing against main would attribute the parent
@@ -278,6 +449,38 @@ cmd_prepare() {
   local n_comments; n_comments=$(jq 'length' "$run_dir/comments.json")
   local n_live; n_live=$(jq '[.[] | select(.resolved == false and .outdated == false)] | length' "$run_dir/comments.json")
 
+  info "looking for related PRs…"
+  local related_note=""
+  if find_related_prs "$owner_repo" "$num" "$src_repo" "$merge_base" "$head_oid" \
+       "$run_dir/changed_files.txt" "$run_dir/related_prs.md"; then
+    info "WARNING: commits from other PRs are in this diff — see related_prs.md (hidden stacking)"
+    related_note="> **Commits from other pull requests are in this diff** — see
+> \`$run_dir/related_prs.md\`. If such a PR is already merged, its work arrived here
+> as pre-squash commits and is not this PR's change: do not report defects that
+> belong to it, and say so when a finding sits only in that code."
+  fi
+  if grep -q '^- ' "$run_dir/related_prs.md" 2>/dev/null; then
+    related_note+="${related_note:+$'\n\n'}\`$run_dir/related_prs.md\` lists related pull requests. Before suggesting
+a follow-up, check whether one of them already does it."
+  fi
+
+  # Re-review: carry the prior run's outcome and the change since its head.
+  local prior_note="" prior_head=""
+  if [[ -n "$since" ]]; then
+    prior_head=$(jq -r .headRefOid "$since/pr.json")
+    prior_note=$(write_prior "$since" "$run_dir" "$src_repo" "$head_oid")
+  fi
+
+  local context_note
+  if (( ${#context_repos[@]} )); then
+    printf '%s\n' "${context_repos[@]}" > "$run_dir/context_repos.txt"
+    context_note="Read-only checkouts of related repositories you may read: $(printf '`%s` ' "${context_repos[@]}")
+They are NOT at a revision matched to this PR; say which revision you read when you cite one."
+  else
+    context_note="No other repository is available to you. A finding whose failure depends on
+code outside this repository must say so in \`evidence\` and use \`confidence: low\`."
+  fi
+
   cat > "$run_dir/config.env" <<EOF
 RUN_DIR=$run_dir
 SRC_REPO=$src_repo
@@ -297,6 +500,9 @@ CLAUDE_EFFORT=$claude_effort
 CODEX_MODEL=$codex_model
 CODEX_EFFORT=$codex_effort
 AGENT_TIMEOUT=$timeout_s
+SKILL_VERSION=$MODULE_VERSION
+PRIOR_RUN=$since
+PRIOR_HEAD=$prior_head
 EOF
   printf '%s' "$task" > "$run_dir/task.txt"
 
@@ -328,27 +534,53 @@ EOF
 against merge base \`$merge_base\`."
   fi
   brief=${brief//"{{STACKED_NOTE}}"/$stacked_note}
+  brief=${brief//"{{RELATED_NOTE}}"/$related_note}
+  brief=${brief//"{{PRIOR_NOTE}}"/$prior_note}
+  brief=${brief//"{{CONTEXT_NOTE}}"/$context_note}
   brief=${brief//"{{TASK}}"/$task}
   printf '%s' "${brief//"{{ID_PREFIX}}"/CC-}" > "$run_dir/round1/claude.prompt.md"
   printf '%s' "${brief//"{{ID_PREFIX}}"/CX-}" > "$run_dir/round1/codex.prompt.md"
 
   info "base=$base_ref  merge-base=$merge_base  stacked=$([[ "$base_ref" != "$default_branch" ]] && echo yes || echo no)"
   info "existing comments: $n_comments total, $n_live unresolved and current"
+  [[ -z "$since" ]] || info "re-review of $since (prior head $prior_head) — see prior.md"
+  info "skill version: $MODULE_VERSION"
   echo "$run_dir"
 }
 
 # ── run ──────────────────────────────────────────────────────────────────────
-# Dispatches both reviewers in parallel and blocks until both settle. Call this
+# Dispatches the reviewers in parallel and blocks until both settle. Call this
 # with run_in_background and poll `status`; a real review takes many minutes.
+#
+# A side with no prompt file is skipped (an empty docket), and --only re-runs one
+# side while leaving the other's results alone. Any earlier attempt of a side
+# being launched is moved to <round>/attempt-N/ first, so a failed try stays on
+# record and nobody has to rename files or hand-write a .status to recover.
 cmd_run() {
-  local run_dir="${1:?run_dir}" round="${2:?round name}" schema="${3:?schema name}"
+  local only=""
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --only) only="$2"; shift 2 ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  [[ -z "$only" || "$only" == claude || "$only" == codex ]] || die "--only takes claude or codex"
+  local run_dir="${args[0]:?run_dir}" round="${args[1]:?round name}" schema="${args[2]:?schema name}"
   # shellcheck disable=SC1091
   source "$run_dir/config.env"
   local dir="$run_dir/$round"
   local schema_file="$SKILL_DIR/schemas/${schema}.json"
   [[ -f "$schema_file" ]] || die "no such schema: $schema_file"
-  [[ -f "$dir/claude.prompt.md" && -f "$dir/codex.prompt.md" ]] \
-    || die "missing prompts in $dir (write claude.prompt.md and codex.prompt.md first)"
+
+  local sides=() who
+  for who in claude codex; do
+    [[ -z "$only" || "$only" == "$who" ]] || continue
+    if [[ -f "$dir/$who.prompt.md" ]]; then sides+=("$who")
+    elif [[ -n "$only" ]]; then die "--only $who: no $dir/$who.prompt.md"
+    fi
+  done
+  (( ${#sides[@]} )) || die "no prompts in $dir (write claude.prompt.md and/or codex.prompt.md first)"
 
   # Later rounds are composed by hand from the brief templates, and an unfilled
   # placeholder is silent: the agent receives the literal {{DOCKET}} and answers
@@ -356,7 +588,7 @@ cmd_run() {
   # `|| true` is load-bearing: grep exits 1 when it finds nothing, and under
   # `set -euo pipefail` that would abort the run on the happy path.
   local unfilled
-  unfilled=$(grep -oh '{{[A-Z_]*}}' "$dir/claude.prompt.md" "$dir/codex.prompt.md" 2>/dev/null | sort -u | tr '\n' ' ' || true)
+  unfilled=$(for who in "${sides[@]}"; do grep -oh '{{[A-Z_]*}}' "$dir/$who.prompt.md" 2>/dev/null; done | sort -u | tr '\n' ' ' || true)
   [[ -z "${unfilled// /}" ]] || die "unfilled placeholders in $dir prompts: $unfilled"
 
   # Both reviewers read untrusted PR content (diff, description, comments) from a
@@ -379,57 +611,102 @@ cmd_run() {
     --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git show:*),Bash(git log:*),Bash(git blame:*)"
     --settings '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
     --add-dir "$RUN_DIR")
-  rm -f "$dir"/*.status
+  local context_dirs=()
+  if [[ -f "$run_dir/context_repos.txt" ]]; then
+    local d; while IFS= read -r d; do [[ -n "$d" ]] && context_dirs+=(--add-dir "$d"); done < "$run_dir/context_repos.txt"
+  fi
 
-  (
-    cd "$WORKTREE" || exit 1
-    run_with_timeout "$AGENT_TIMEOUT" claude -p "$(cat "$dir/claude.prompt.md")" \
-      --model "$CLAUDE_MODEL" --effort "$CLAUDE_EFFORT" \
-      --output-format json --json-schema "$(cat "$schema_file")" \
-      "${claude_iso[@]}" \
-      </dev/null >"$dir/claude.raw.json" 2>"$dir/claude.log"
-    echo $? > "$dir/claude.exit"
-  ) &
-  local claude_pid=$!
+  # Every check that can refuse the launch is above this line; only now move an
+  # earlier attempt of the sides about to run out of the way.
+  local f n
+  for who in "${sides[@]}"; do
+    local prev=0
+    for f in "$dir/$who".*; do [[ -e "$f" && "$f" != *.prompt.md ]] && prev=1; done
+    if [[ $prev == 1 ]]; then
+      n=1; while [[ -e "$dir/attempt-$n/$who.exit" || -e "$dir/attempt-$n/$who.status" || -e "$dir/attempt-$n/$who.log" ]]; do n=$((n + 1)); done
+      mkdir -p "$dir/attempt-$n"
+      for f in "$dir/$who".*; do [[ "$f" == *.prompt.md ]] || mv "$f" "$dir/attempt-$n/"; done
+      info "$who: earlier attempt moved to $dir/attempt-$n/"
+    fi
+  done
+  # A side with no prompt that has never run is an empty docket, not a failure.
+  for who in claude codex; do
+    [[ -f "$dir/$who.prompt.md" || -f "$dir/$who.status" ]] || echo "skipped (no prompt — empty docket)" > "$dir/$who.status"
+  done
 
-  (
-    cd "$WORKTREE" || exit 1
-    run_with_timeout "$AGENT_TIMEOUT" "$codex_bin" exec "$(cat "$dir/codex.prompt.md")" \
-      --model "$CODEX_MODEL" -c model_reasoning_effort="$CODEX_EFFORT" \
-      "${codex_iso[@]}" \
-      --output-schema "$schema_file" \
-      --output-last-message "$dir/codex.raw.json" \
-      </dev/null >"$dir/codex.stdout" 2>"$dir/codex.log"
-    echo $? > "$dir/codex.exit"
-  ) &
-  local codex_pid=$!
-
-  wait "$claude_pid" || true
-  wait "$codex_pid" || true
+  # `|| rc=$?` is load-bearing: this subshell inherits `set -e`, so a bare failing
+  # launch would end it before the exit code is written, and every non-zero exit
+  # (credits, auth, timeout's 124) would surface as "exit ?".
+  local pids=()
+  if [[ " ${sides[*]} " == *" claude "* ]]; then
+    (
+      cd "$WORKTREE" || exit 1
+      rc=0
+      run_with_timeout "$AGENT_TIMEOUT" claude -p "$(cat "$dir/claude.prompt.md")" \
+        --model "$CLAUDE_MODEL" --effort "$CLAUDE_EFFORT" \
+        --output-format json --json-schema "$(cat "$schema_file")" \
+        "${claude_iso[@]}" ${context_dirs[@]+"${context_dirs[@]}"} \
+        </dev/null >"$dir/claude.raw.json" 2>"$dir/claude.log" || rc=$?
+      echo "$rc" > "$dir/claude.exit"
+    ) &
+    pids+=($!)
+  fi
+  if [[ " ${sides[*]} " == *" codex "* ]]; then
+    (
+      cd "$WORKTREE" || exit 1
+      rc=0
+      run_with_timeout "$AGENT_TIMEOUT" "$codex_bin" exec "$(cat "$dir/codex.prompt.md")" \
+        --model "$CODEX_MODEL" -c model_reasoning_effort="$CODEX_EFFORT" \
+        "${codex_iso[@]}" \
+        --output-schema "$schema_file" \
+        --output-last-message "$dir/codex.raw.json" \
+        </dev/null >"$dir/codex.stdout" 2>"$dir/codex.log" || rc=$?
+      echo "$rc" > "$dir/codex.exit"
+    ) &
+    pids+=($!)
+  fi
+  local pid; for pid in "${pids[@]}"; do wait "$pid" || true; done
 
   # claude wraps the answer in a result envelope; codex writes the bare message.
-  jq -e '.structured_output // (.result | fromjson)' "$dir/claude.raw.json" \
+  [[ " ${sides[*]} " != *" claude "* ]] || jq -e '.structured_output // (.result | fromjson)' "$dir/claude.raw.json" \
      > "$dir/claude.json" 2>/dev/null || true
-  jq -e . "$dir/codex.raw.json" > "$dir/codex.json" 2>/dev/null || true
+  [[ " ${sides[*]} " != *" codex "* ]] || jq -e . "$dir/codex.raw.json" > "$dir/codex.json" 2>/dev/null || true
 
-  local rc=0
-  # A reviewer that never ran a command never read the code, and codex answers
-  # anyway when its sandbox cannot start. Gate on evidence of a successful exec
-  # rather than on one known error string, so any future cause is caught too.
-  if [[ -f "$dir/codex.log" ]] && ! grep -q "succeeded in" "$dir/codex.log"; then
-    echo "failed (codex ran no successful shell command — it read no files, so its findings are unfounded; see codex.log)" \
-      > "$dir/codex.status"
-    rm -f "$dir/codex.json"
-  fi
-  for who in claude codex; do
-    if [[ -f "$dir/$who.status" ]]; then
-      rc=1
-    elif [[ -s "$dir/$who.json" ]] && jq -e 'type=="object"' "$dir/$who.json" >/dev/null 2>&1; then
-      echo "ok" > "$dir/$who.status"
-    else
-      echo "failed (exit $(cat "$dir/$who.exit" 2>/dev/null || echo '?'); see $who.log)" > "$dir/$who.status"
-      rc=1
+  for who in "${sides[@]}"; do
+    local valid=0
+    [[ -s "$dir/$who.json" ]] && jq -e 'type=="object"' "$dir/$who.json" >/dev/null 2>&1 && valid=1
+    if [[ $who == claude ]]; then
+      if [[ $valid == 1 ]]; then echo "ok" > "$dir/claude.status"
+      else echo "failed (exit $(cat "$dir/claude.exit" 2>/dev/null || echo '?'); see claude.log)" > "$dir/claude.status"; fi
+      continue
     fi
+    # A reviewer that never ran a command in the worktree never read the code, and
+    # codex answers anyway when its sandbox cannot start or its account is dead.
+    # Gate on evidence of reads rather than on one known error string.
+    # The cause is looked for only once the round has failed: codex.log carries
+    # command output, so a PR whose code mentions "401" or "bubblewrap" would
+    # otherwise void a good review.
+    local execs cause
+    execs=$(codex_worktree_execs "$dir/codex.log" "$RUN_DIR")
+    if [[ $valid == 1 && $execs -gt 0 ]]; then
+      local items floor
+      items=$(jq '(.findings // .verdicts // .assessments // []) | length' "$dir/codex.json")
+      floor=$(( (items + 2) / 3 ))
+      if [[ $schema != findings && $execs -lt $floor ]]; then
+        echo "ok (low evidence: $execs worktree command(s) for $items item(s) — spot-check its citations)" > "$dir/codex.status"
+      else echo "ok" > "$dir/codex.status"; fi
+    else
+      rm -f "$dir/codex.json"
+      cause=$(codex_failure_cause "$dir")
+      [[ -n "$cause" ]] || if [[ $execs -eq 0 && -f "$dir/codex.log" ]]; then
+        cause="codex ran no successful shell command in the PR worktree — it read no code, so its findings are unfounded"
+      else cause="no valid JSON answer; see codex.log"; fi
+      echo "failed (exit $(cat "$dir/codex.exit" 2>/dev/null || echo '?')): $cause" > "$dir/codex.status"
+    fi
+  done
+  local rc=0
+  for who in claude codex; do
+    case "$(cat "$dir/$who.status" 2>/dev/null)" in ok*|skipped*) ;; *) rc=1 ;; esac
   done
   cmd_status "$run_dir" "$round"
   return $rc
@@ -446,6 +723,27 @@ cmd_status() {
       echo "$who: running"
     fi
   done
+}
+
+# Lines an inline review comment can anchor to: the head-side ranges of every
+# hunk in diff.patch. GitHub rejects a whole review (422) when one of its
+# comments points outside them, so Step 8 checks each anchor before posting.
+# With <path> <line>, exits 0 when that line is anchorable and 1 when it is not.
+cmd_anchors() {
+  local run_dir="${1:?run_dir}" want_path="${2:-}" want_line="${3:-}"
+  local ranges
+  ranges=$(awk '
+    /^\+\+\+ / { path = ($2 == "/dev/null") ? "" : substr($2, 3); next }
+    /^@@ / {
+      split($3, h, ","); start = substr(h[1], 2) + 0; len = (h[2] == "") ? 1 : h[2] + 0
+      if (path != "" && len > 0) print path "\t" start "\t" start + len - 1
+    }' "$run_dir/diff.patch")
+  if [[ -z "$want_path" ]]; then
+    awk -F'\t' '{ print $1 ":" $2 "-" $3 }' <<<"$ranges"; return 0
+  fi
+  [[ "$want_line" =~ ^[0-9]+$ ]] || die "anchors: <line> must be a number"
+  awk -F'\t' -v p="$want_path" -v l="$want_line" \
+    '$1 == p && l >= $2 && l <= $3 { found = 1 } END { exit found ? 0 : 1 }' <<<"$ranges"
 }
 
 cmd_cleanup() {
@@ -465,6 +763,7 @@ case "${1:-}" in
   prepare)   shift; cmd_prepare "$@" ;;
   run)       shift; cmd_run "$@" ;;
   status)    shift; cmd_status "$@" ;;
+  anchors)   shift; cmd_anchors "$@" ;;
   cleanup)   shift; cmd_cleanup "$@" ;;
   *) cat >&2 <<'USAGE'
 usage: dual_review.sh <command>
@@ -472,8 +771,10 @@ usage: dual_review.sh <command>
   prepare --pr <url|number> --task <text>
           [--claude-model opus] [--claude-effort high]
           [--codex-model gpt-6.1-sol] [--codex-effort high] [--timeout 2400]
-  run     <run_dir> <round> <findings|verdicts|comment-verdicts>
+          [--since <prior run_dir>] [--context-repo <path>]...
+  run     [--only claude|codex] <run_dir> <round> <findings|verdicts|comment-verdicts>
   status  <run_dir> <round>
+  anchors <run_dir> [<path> <line>]
   cleanup <run_dir>
 USAGE
      exit 2 ;;

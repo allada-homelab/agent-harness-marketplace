@@ -25,7 +25,10 @@
           "failure_scenario",
           "evidence",
           "confidence",
-          "suggested_fix"
+          "suggested_fix",
+          "action",
+          "introduced_by_pr",
+          "posting_line"
         ],
         "properties": {
           "id": {
@@ -38,7 +41,22 @@
           },
           "severity": {
             "type": "string",
-            "enum": ["blocking", "non-blocking"]
+            "enum": ["blocking", "non-blocking"],
+            "description": "blocking = you would hold the merge for it. Must agree with action: blocking implies fix-before-merge."
+          },
+          "action": {
+            "type": "string",
+            "enum": ["fix-before-merge", "fix-later", "nit"],
+            "description": "Whether it is worth the author's time now, weighing deployment context: flag state, code already scheduled for deletion, deferrals the PR itself documents. A real defect on a dead path is fix-later or nit."
+          },
+          "introduced_by_pr": {
+            "type": "string",
+            "enum": ["yes", "worsened", "no"],
+            "description": "yes = this PR creates the defect; worsened = it existed but this PR makes it more reachable or more harmful; no = pre-existing and untouched in effect."
+          },
+          "posting_line": {
+            "type": "integer",
+            "description": "A line of `file` in the PR head that lies inside a changed hunk of diff.patch, where an inline review comment can anchor: `line` itself when it is in a hunk, else the nearest changed line in the same file that leads to it. 0 when no changed line in `file` relates to it."
           },
           "category": {
             "type": "string",
