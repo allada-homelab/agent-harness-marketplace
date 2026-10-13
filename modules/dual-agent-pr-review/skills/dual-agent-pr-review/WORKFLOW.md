@@ -347,6 +347,15 @@ fixes made by the judge introduce defects of their own.
   the user, not the author.
 - **Event:** `REQUEST_CHANGES` when any Blocking finding is posted, otherwise
   `COMMENT`. Never `APPROVE` from this workflow unless the user says so in words.
+- **Disclose the automation.** After the review, post one top-level PR comment
+  saying it came from this workflow and that the user will do a human pass once
+  every comment is addressed. Take the login from `gh api user --jq .login`, never
+  hard-code one. Include it in the draft the user approves:
+
+  > These review comments were posted automatically by
+  > [@\<login\>](https://github.com/\<login\>)'s `/dual-agent-pr-review` — two
+  > independent AI reviewers whose findings were cross-checked against each other
+  > and the code. Once each comment has been addressed, I'll do a once-over myself.
 
 Show the user the draft, then ask once: **post all / pick ids / don't post**. If
 the answer does not map to exactly one of those, ask again rather than guessing —
@@ -369,8 +378,10 @@ Post the whole review in one call — a JSON body with the event, the short inde
 and a `comments` array of `{path, line, side: "RIGHT", body}` — to
 `gh api repos/<owner>/<repo>/pulls/<n>/reviews --method POST --input <file>`, plus
 one `gh api …/pulls/<n>/comments/<reply-to id>/replies --method POST -f body=…`
-call per thread reply. Then
-append to `final.md` what was posted — the review URL, each comment URL, and every
+call per thread reply, then the disclosure with `gh pr comment <url> --body-file
+<file>` — only once the review itself has posted. Then
+append to `final.md` what was posted — the review URL, each comment URL, the
+disclosure comment URL, and every
 verified finding that was **not** posted with the reason — and show the user that
 ledger with the full review URL.
 
