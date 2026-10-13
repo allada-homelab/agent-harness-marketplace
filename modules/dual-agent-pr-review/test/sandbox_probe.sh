@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# The dual-review preflight must fail where codex cannot start its sandbox.
+# The dual-review preflight must know whether codex can start its sandbox.
 #
 # codex 0.162 dropped its landlock backend: features.use_legacy_landlock, which
 # this script used to pass where `unshare -Ur` failed, now panics, and codex
 # then "reviews" without reading a file. The probe is codex itself, forced
-# read-only, so a sandbox that cannot start fails preflight with the fix named
-# instead of `run` rejecting the round twenty minutes later.
+# read-only. Where it cannot start inside a container, codex runs
+# danger-full-access (the container is the boundary) and preflight says so;
+# on a host preflight fails instead of running the PR's code unsandboxed.
 #
 # The functions are EXTRACTED from the real script; `uname` and `codex` are
-# stubs on PATH so the Linux branch runs on any host.
+# stubs on PATH so the Linux branch runs on any host, and REMOTE_CONTAINERS
+# stands in for a container.
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
@@ -24,20 +26,23 @@ fail() { FAIL=$((FAIL + 1)); printf "  FAIL: %s\n" "$1"; [[ -z "${2:-}" ]] || pr
 echo "── dual_review.sh: codex sandbox probe ──"
 
 FN="$SANDBOX/fn.sh"
-for f in die run_with_timeout resolve_codex codex_sandbox_works require_codex_sandbox; do
+for f in die run_with_timeout resolve_codex in_container codex_sandbox_works codex_sandbox_mode; do
     sed -n "/^$f() {/,/^}/p" "$REPO_ROOT/$SCRIPT" >> "$FN"
 done
-grep -q '^require_codex_sandbox() {' "$FN" \
-    && pass "require_codex_sandbox is defined in $SCRIPT" \
-    || fail "require_codex_sandbox is missing from $SCRIPT"
+grep -q '^codex_sandbox_mode() {' "$FN" \
+    && pass "codex_sandbox_mode is defined in $SCRIPT" \
+    || fail "codex_sandbox_mode is missing from $SCRIPT"
 
 grep -q -- '--enable use_legacy_landlock' "$REPO_ROOT/$SCRIPT" \
     && fail "the launch still passes --enable use_legacy_landlock (codex 0.162+ panics on it)" \
     || pass "no launch passes --enable use_legacy_landlock"
 
-grep -q 'require_codex_sandbox$' "$REPO_ROOT/$SCRIPT" \
+grep -q 'codex_sandbox_mode >/dev/null$' "$REPO_ROOT/$SCRIPT" \
     && pass "require_tools calls the probe, so preflight, prepare and run all gate on it" \
-    || fail "require_tools does not call require_codex_sandbox"
+    || fail "require_tools does not call codex_sandbox_mode"
+grep -qE -- '--sandbox "\$codex_sandbox"' "$REPO_ROOT/$SCRIPT" \
+    && pass "the launch passes the probed mode, not a hard-coded one" \
+    || fail "launch does not use the probed sandbox mode"
 
 BIN="$SANDBOX/bin"; mkdir -p "$BIN"
 cat > "$BIN/uname" <<'STUB'
@@ -50,26 +55,41 @@ printf '%s\n' "$*" >> "$PROBE_LOG"
 [[ "${CODEX_STUB:-ok}" == ok ]] || { echo "thread 'main' panicked: filesystem-restricted execution requires bubblewrap" >&2; exit 101; }
 STUB
 chmod +x "$BIN"/*
-probe() { PROBE_LOG="$SANDBOX/probe.log" PATH="$BIN:$PATH" "$@" bash -c "source '$FN'; require_codex_sandbox" 2>"$SANDBOX/err"; }
+# $@ = env assignments; prints the mode, stderr to $SANDBOX/err. REMOTE_CONTAINERS
+# is cleared unless the case sets it, so a real dev container cannot skew the host case.
+probe() { env -u REMOTE_CONTAINERS -u REMOTE_CONTAINERS_IPC -u CODESPACES PROBE_LOG="$SANDBOX/probe.log" PATH="$BIN:$PATH" "$@" bash -c "source '$FN'; [[ -f /.dockerenv || -f /run/.containerenv ]] && exit 99; codex_sandbox_mode" 2>"$SANDBOX/err"; }
 
 : > "$SANDBOX/probe.log"
-probe env CODEX_STUB=ok; rc=$?
-[[ $rc -eq 0 ]] && pass "a sandbox that starts passes preflight" || fail "expected 0, got $rc" "$(cat "$SANDBOX/err")"
+mode=$(probe env CODEX_STUB=ok); rc=$?
+[[ $rc -eq 0 && "$mode" == read-only ]] && pass "a sandbox that starts gives read-only" || fail "expected read-only rc 0, got '$mode' rc=$rc" "$(cat "$SANDBOX/err")"
 grep -q -- 'sandbox --disable use_legacy_landlock' "$SANDBOX/probe.log" && grep -q 'sandbox_mode="read-only"' "$SANDBOX/probe.log" \
     && pass "the probe runs codex sandbox read-only with the dead flag disabled" \
     || fail "probe args wrong" "$(cat "$SANDBOX/probe.log")"
 
-probe env CODEX_STUB=fail; rc=$?
-[[ $rc -ne 0 ]] && pass "a sandbox that cannot start fails preflight (rc=$rc)" || fail "expected non-zero exit"
-grep -qF -- '--security-opt seccomp=' "$SANDBOX/err" \
-    && pass "the failure names the seccomp fix" \
-    || fail "failure message does not name the fix" "$(cat "$SANDBOX/err")"
+mode=$(probe env CODEX_STUB=fail REMOTE_CONTAINERS=true); rc=$?
+if [[ $rc -eq 99 ]]; then
+    pass "host case skipped: this test is itself running in a container (cannot prove the host branch here)"
+else
+    [[ $rc -eq 0 && "$mode" == danger-full-access ]] \
+        && pass "in a container, a sandbox that cannot start falls back to danger-full-access" \
+        || fail "expected danger-full-access rc 0, got '$mode' rc=$rc" "$(cat "$SANDBOX/err")"
+fi
+
+mode=$(probe env CODEX_STUB=fail); rc=$?
+if [[ $rc -eq 99 ]]; then
+    pass "host case skipped: this test is itself running in a container"
+else
+    [[ $rc -ne 0 && -z "$mode" ]] && pass "on a host, a sandbox that cannot start fails preflight (rc=$rc)" || fail "expected failure, got '$mode' rc=$rc"
+    grep -q "danger-full-access outside a container" "$SANDBOX/err" \
+        && pass "the host failure explains why it does not fall back" \
+        || fail "host failure message wrong" "$(cat "$SANDBOX/err")"
+fi
 
 : > "$SANDBOX/probe.log"
-probe env CODEX_STUB=fail UNAME_STUB=Darwin; rc=$?
-[[ $rc -eq 0 && ! -s "$SANDBOX/probe.log" ]] \
+mode=$(probe env CODEX_STUB=fail UNAME_STUB=Darwin); rc=$?
+[[ $rc -eq 0 && "$mode" == read-only && ! -s "$SANDBOX/probe.log" ]] \
     && pass "macOS skips the probe (Seatbelt needs none)" \
-    || fail "macOS ran or failed the probe" "rc=$rc $(cat "$SANDBOX/probe.log")"
+    || fail "macOS ran or failed the probe" "rc=$rc mode=$mode $(cat "$SANDBOX/probe.log")"
 
 echo
 echo "$PASS passed, $FAIL failed"
