@@ -41,6 +41,9 @@ authority on the run, and its brief templates and schemas sit beside it under
   omitted (`codex:/xhigh`). Defaults: `opus`/`high` and `gpt-6.1-sol`/`high`.
 - If no models or effort are named, use the defaults and say which you used — do not
   ask.
+- "Re-review" (or a PR with an earlier run under `~/.claude/dual-review/runs/`) means
+  `prepare --since <that run dir>`, still with both reviewers.
+- A path to a sibling repository the PR depends on goes to `--context-repo`.
 
 ## Non-negotiables
 
@@ -56,3 +59,12 @@ authority on the run, and its brief templates and schemas sit beside it under
   Never use the output anyway because it looks plausible.
 - **Both reviews run in the background** (`run_in_background: true`) — a real review
   takes 5–20 minutes and will blow past a foreground timeout.
+- **Severity disputes are not yours to settle alone.** A split the rounds did not
+  resolve is presented as Unresolved, never quietly downgraded to non-blocking.
+- **Finish the dual review.** When codex fails, give the fix and re-run that side
+  with `run --only codex`; never recommend dropping codex first, never adjudicate its
+  side yourself, never hand-edit run files. A single-reviewer result happens only
+  when the user chooses it, and is labelled so.
+- **Every run ends with a post-ready draft** (Step 8). Posting never silently drops a
+  verified finding: non-blocking ones are posted with a fix-before-merge / fix-later / nit
+  label, not withheld.

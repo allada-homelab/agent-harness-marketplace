@@ -18,6 +18,10 @@ originality and evidence matter more than agreeing with the obvious reading.
 
 {{STACKED_NOTE}}
 
+{{RELATED_NOTE}}
+
+{{PRIOR_NOTE}}
+
 ## Your materials
 
 You are running with the working directory set to a **read-only worktree checked
@@ -28,6 +32,8 @@ this PR. Nothing you find should be reported against the wrong revision.
 - `{{RUN_DIR}}/pr.json` — PR metadata including the description
 - `{{RUN_DIR}}/changed_files.txt` — every path the PR touches
 - The worktree itself — read any file in the repo, not only the changed ones
+
+{{CONTEXT_NOTE}}
 
 To re-derive the diff yourself, or to see any file as it looked before the PR,
 use the merge base above: `git diff {{MERGE_BASE}} {{PR_HEAD_OID}} -- <path>` and
@@ -61,6 +67,13 @@ network access is not comparable.
    `.agent-context/` guides) when judging style and structure. A violation of a
    documented project convention is a legitimate finding; your personal
    preference is not.
+6. **For every new refusal or validation the PR adds**, list the legitimate
+   inputs it now rejects and who produces them — generated schemas (pydantic,
+   OpenAPI), existing callers, stored data. A 4xx for a shape a common producer
+   emits is a broken contract, not hardening.
+7. **When the PR removes or renames a concept**, search the whole repository for
+   what still mentions it — docstrings, test names, metric tags, docs, config.
+   Prefer removing a vestige over keeping a single-valued remnant of it.
 
 ## Severity
 
@@ -70,6 +83,23 @@ network access is not comparable.
 - **non-blocking** — real but survivable: readability, a missing test for a path
   that is currently correct, a convention slip, a latent risk that needs a
   precondition that does not hold today.
+
+Calibration that past reviews got wrong:
+
+- **"Untested" does not downgrade a confirmed mechanism.** If you traced the
+  failure, it is as blocking as its consequence; the missing probe is a merge
+  precondition, not a reason to soften it.
+- **A deploy-order or cross-repo dependency is blocking until it has shipped.**
+  "The description says merge the other PR first" is not a guard. If this PR
+  breaks against what is deployed today, say so.
+- **A silent fallback on every request is a silent failure**, not a heads-up.
+
+Separately from severity, set `action` — whether the fix is worth the author's
+time now. Weigh what the code is about to become: a defect on a path behind a
+fully-rolled-out flag, or in code the PR schedules for deletion, is real but
+`fix-later` or `nit`. Blocking findings are always `fix-before-merge`. Set
+`introduced_by_pr` honestly; a pre-existing defect the PR does not make worse is
+rarely worth raising at all.
 
 Nothing else is a finding. Do not report praise, summaries of what the code
 does, speculative "consider whether", or restatements of the PR description.
@@ -83,6 +113,14 @@ when re-read against the code. Two failure modes cost you:
   mark `confidence: low` and say what would settle it in `evidence`.
 - **A vague finding cannot be defended.** "This could race" with no specific
   interleaving will be rejected. Name the two paths and the shared state.
+- **A claim about code you cannot read is not evidence.** If the failure depends
+  on another repository or a deployed service you have no checkout of, say so
+  and set `confidence: low`.
+
+Set `posting_line` to a line of the same `file` inside a changed hunk of
+`diff.patch` — that is where an inline review comment can attach. When the defect
+sits on an unchanged line, pick the changed line in that file that leads to it;
+when no changed line in that file relates to it, use 0.
 
 ## Output
 
