@@ -73,5 +73,6 @@ authority on the run, and its brief templates and schemas sit beside it under
   when the user chooses it, and is labelled so.
 - **Someone else's PR gets the review posted by default** (Step 8), unless the request
   said `no-post`; the user's own PR gets a fix list. Posting never silently drops a
-  verified finding: non-blocking ones are posted with a fix-before-merge / fix-later / nit
-  label, not withheld — and every one is its own inline comment.
+  verified finding: non-blocking ones are posted with a severity · category label
+  (e.g. `[Non-blocking · documentation]`), not withheld — and every one is its own
+  inline comment.

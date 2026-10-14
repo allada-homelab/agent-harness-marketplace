@@ -293,10 +293,11 @@ Then present, in this order and with these headings:
   scenario, **one** recommended fix (code when it is short; alternatives as a
   sub-bullet, never a menu in place of an answer), and a provenance tag (`both` /
   `claude only, confirmed` / `codex only, confirmed`).
-- **Non-blocking** — the same shape, terser, each tagged with its action
-  (`fix-before-merge` / `fix-later` / `nit`) so the reader can tell a real fix
-  from noise. A severity label and a recommendation must agree: if you would hold
-  the PR for it, it is blocking.
+- **Non-blocking** — the same shape, terser, each tagged with its `category`
+  (e.g. `documentation`) so the reader can tell what kind of issue it is; say
+  "fine as a follow-up" on a `fix-later` one, and list `nit` ones last. A severity
+  label and a recommendation must agree: if you would hold the PR for it, it is
+  blocking.
 - **Unresolved** — everything still disputed after the last round, including
   every severity split, with both positions and their evidence, and your read
   labelled as yours — framed as the user's call.
@@ -336,8 +337,11 @@ fixes made by the judge introduce defects of their own.
   Unresolved alike. Posting never silently drops a verified finding, never folds
   one into the review body, and never substitutes a thread reply for it.
   Non-blocking ones are labelled so the author can triage them, not withheld.
-  Prefix each comment body with its label: `**[Blocking]**`,
-  `**[Non-blocking · fix-later]**`, `**[Nit]**`.
+  Prefix each comment body with its label — severity, then the finding's
+  `category`: `**[Blocking · correctness]**`, `**[Non-blocking · documentation]**`,
+  `**[Nit · convention]**` (`Nit` for an action of `nit`). Never put the action
+  in the label — "Non-blocking · fix-before-merge" reads as a contradiction; when
+  a non-blocking fix can wait, say so in the comment text.
 - **Unresolved findings are inline questions**, labelled `**[Open question]**`,
   stating both positions in one or two sentences.
 - **Anchor every comment inside a changed hunk.** Use the finding's `file` and
