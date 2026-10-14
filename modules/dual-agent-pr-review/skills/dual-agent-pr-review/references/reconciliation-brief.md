@@ -55,7 +55,10 @@ You are **{{SELF_LABEL}}**. The other reviewer is **{{OTHER_LABEL}}**.
    guard that makes it survivable. These are not guards: "it is untested" (a
    traced mechanism stands without a probe), "the PR description says to merge
    the other PR first" (a deploy-order dependency is blocking until it ships),
-   "it only falls back silently" (a silent fallback is a silent failure).
+   "it only falls back silently" (a silent fallback is a silent failure), "it
+   only affects some other surface" (broken anywhere is blocking), "the docs are
+   just imprecise" (when the code does not do what they say, the behavior is the
+   bug).
 7. Do not raise new findings. If you notice one, describe it in `notes`; it will
    be handled outside this loop.
 

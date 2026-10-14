@@ -93,6 +93,14 @@ Calibration that past reviews got wrong:
   "The description says merge the other PR first" is not a guard. If this PR
   breaks against what is deployed today, say so.
 - **A silent fallback on every request is a silent failure**, not a heads-up.
+- **Broken is blocking, wherever it breaks.** If merging leaves something a user
+  or caller will hit that does not work — this PR's own feature, a shared
+  component it touched, another surface that uses that component — it is
+  blocking. Trace a defect in shared code to every consumer, starting with what
+  this PR's own feature does in that state.
+- **Do not shrink a behavior bug into a doc nit.** When code does not do what its
+  docs, name or contract say, the defect is the behavior unless the doc is plainly
+  the mistake; rate it by what a user sees, not by which line would change.
 
 Separately from severity, set `action` — whether the fix is worth the author's
 time now. Weigh what the code is about to become: a defect on a path behind a

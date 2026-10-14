@@ -190,7 +190,7 @@ about the code — and say which. Otherwise it is worth doing: it tells you whic
 existing review comments still hold against the head commit, which are wrong, and
 which the PR has already fixed — and bot reviewers in particular are confidently
 wrong often enough that adjudicating them is real value. It is also what Step 8
-uses to reply in an existing thread instead of opening a duplicate.
+uses to link an overlapping thread from the new inline comment.
 
 Compose each side's prompt from `${CLAUDE_SKILL_DIR}/references/comment-brief.md`, filling
 `{{SELF_FINDINGS}}` with that agent's own round-1 findings and `{{COMMENTS}}`
@@ -270,7 +270,13 @@ unresolved finding reported honestly as unresolved is a fine outcome.
 
 Open the cited code for every surviving finding. Check the failure scenario is
 reachable: the guard the rejector named, the caller the finder cited, the branch
-that was supposedly missed. **Verify the mechanism, not just that the line
+that was supposedly missed. **Then apply common sense to every non-blocking
+finding: if this merges, will a user or a caller hit something that does not
+work** — in this PR's feature, in a shared component it touched, or anywhere else?
+If yes, it is blocking, whatever the reviewers labelled it; where the two
+reviewers both called it non-blocking and you disagree, list it as Unresolved with
+your reasoning. A behavior that does not match its own docs or contract is a
+behavior bug first, not a documentation nit — judge it by what a user sees. **Verify the mechanism, not just that the line
 exists** — when a claim rests on a tool default, a flag, a dependency group, or a
 config value, run the command or read the file that settles it, and cite it. Say
 "inferred" for anything you could not check. Drop anything that does not survive
@@ -312,8 +318,11 @@ later message about it. Then go to Step 8.
 
 ## Step 8 — post
 
-Every run ends with a post-ready draft and one question. Do not end on "want me
-to post?" without the draft, and do not decide on the user's behalf to post less.
+**Posting is the default.** On anyone else's PR, once Step 7 has verified the
+findings, post the review and the disclosure without asking — unless the user's
+request said not to post (`no-post`, "don't post", "just show me"), in which case
+show the draft and stop. Never decide on the user's behalf to post less than every
+verified finding.
 
 **The user's own PR** (the PR author is the user): there is no one to post to.
 Offer the findings as a fix list instead, blocking first; if they say fix,
@@ -323,43 +332,50 @@ fixes made by the judge introduce defects of their own.
 
 **Anyone else's PR** — draft one review:
 
-- **Every verified Blocking and Non-blocking finding is an inline comment.**
-  Posting never silently drops a verified finding; non-blocking ones are labelled
-  so the author can triage them, not withheld. Prefix each comment body with its
-  label: `**[Blocking]**`, `**[Non-blocking · fix-later]**`, `**[Nit]**`.
+- **Every issue is its own inline comment** — Blocking, Non-blocking and
+  Unresolved alike. Posting never silently drops a verified finding, never folds
+  one into the review body, and never substitutes a thread reply for it.
+  Non-blocking ones are labelled so the author can triage them, not withheld.
+  Prefix each comment body with its label: `**[Blocking]**`,
+  `**[Non-blocking · fix-later]**`, `**[Nit]**`.
 - **Unresolved findings are inline questions**, labelled `**[Open question]**`,
   stating both positions in one or two sentences.
 - **Anchor every comment inside a changed hunk.** Use the finding's `file` and
   `posting_line`, and check each one before posting:
   `dual_review.sh anchors <RUN_DIR> <path> <line>` exits 0 only for a line GitHub
   will accept. GitHub rejects the **whole** review when one comment's anchor is
-  outside the diff. A finding whose `posting_line` is 0 or fails the check still
-  gets posted — as a labelled entry in the review body with its real `file:line`,
-  never dropped. When an inline comment sits on a line other than the defect's,
-  say the real `file:line` in its body.
-- **Reply instead of duplicating.** When a still-live thread already makes the
-  same claim (Step 5's `overlaps_finding`, or a VALID `PC-*`), add a reply to that
-  thread with your evidence instead of a new comment. `comments.md` shows each
-  inline thread's `reply-to id`.
-- **The review body is a short index** — counts and one line per item, plus any
-  findings that could not be anchored inline. No model
+  outside the diff. When the check fails or `posting_line` is 0, the finding is
+  still inline: on the nearest changed line in `file` if it has one; otherwise as
+  a file-level comment on `file` when the PR touches it (posted separately, see
+  below); otherwise on the changed line that leads to the defect. Whenever an
+  inline comment sits on a line other than the defect's, say the real
+  `file:line` in its body.
+- **Link, don't merge, an existing thread.** When a still-live thread already
+  makes the same claim (Step 5's `overlaps_finding`, or a VALID `PC-*`), the
+  finding still gets its own inline comment; say "also raised in <thread URL>" in
+  it so the author can resolve both together.
+- **The review body is a short index** — counts and one line per item, each
+  pointing at its inline comment. No findings live only in the body. No model
   names, round counts, "findings that died", or judge observations; those are for
   the user, not the author.
-- **Event:** `REQUEST_CHANGES` when any Blocking finding is posted, otherwise
-  `COMMENT`. Never `APPROVE` from this workflow unless the user says so in words.
+- **Event: always `REQUEST_CHANGES`** whenever the review posts any comment,
+  non-blocking ones included — it holds the merge until the user's own once-over
+  (see the disclosure below). Never `APPROVE` from this workflow unless the user
+  says so in words.
 - **Disclose the automation.** After the review, post one top-level PR comment
   saying it came from this workflow and that the user will do a human pass once
   every comment is addressed. Take the login from `gh api user --jq .login`, never
-  hard-code one. Include it in the draft the user approves:
+  hard-code one:
 
   > These review comments were posted automatically by
   > [@\<login\>](https://github.com/\<login\>)'s `/dual-agent-pr-review` — two
   > independent AI reviewers whose findings were cross-checked against each other
   > and the code. Once each comment has been addressed, I'll do a once-over myself.
 
-Show the user the draft, then ask once: **post all / pick ids / don't post**. If
-the answer does not map to exactly one of those, ask again rather than guessing —
-"post the fix" is not "post only that one".
+Only with `no-post`: show the user the draft and stop; post later only what they
+then pick. If their answer does not map to exactly one of post all / pick ids /
+don't post, ask again rather than guessing — "post the fix" is not "post only that
+one".
 
 Before posting, re-check the PR:
 
@@ -368,6 +384,7 @@ gh pr view <url> --json state,headRefOid,mergedAt
 ```
 
 - **Merged or closed** → stop and tell the user; do not post to it.
+- **Nothing verified survived** → post nothing, not even the disclosure.
 - **Head moved since `prepare`** → diff old head to new head for the files the
   findings cite; drop or re-anchor findings the new commits fixed or moved, and
   say which.
@@ -377,9 +394,10 @@ gh pr view <url> --json state,headRefOid,mergedAt
 Post the whole review in one call — a JSON body with the event, the short index,
 and a `comments` array of `{path, line, side: "RIGHT", body}` — to
 `gh api repos/<owner>/<repo>/pulls/<n>/reviews --method POST --input <file>`, plus
-one `gh api …/pulls/<n>/comments/<reply-to id>/replies --method POST -f body=…`
-call per thread reply, then the disclosure with `gh pr comment <url> --body-file
-<file>` — only once the review itself has posted. Then
+one call per file-level comment (`gh api …/pulls/<n>/comments --method POST -f
+body=… -f path=<file> -f commit_id=<head oid> -f subject_type=file`), then the
+disclosure with `gh pr comment <url> --body-file <file>` — only once the review
+itself has posted. Then
 append to `final.md` what was posted — the review URL, each comment URL, the
 disclosure comment URL, and every
 verified finding that was **not** posted with the reason — and show the user that
