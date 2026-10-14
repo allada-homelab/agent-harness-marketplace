@@ -358,8 +358,10 @@ fixes made by the judge introduce defects of their own.
   pointing at its inline comment. No findings live only in the body. No model
   names, round counts, "findings that died", or judge observations; those are for
   the user, not the author.
-- **Event:** `REQUEST_CHANGES` when any Blocking finding is posted, otherwise
-  `COMMENT`. Never `APPROVE` from this workflow unless the user says so in words.
+- **Event: always `REQUEST_CHANGES`** whenever the review posts any comment,
+  non-blocking ones included — it holds the merge until the user's own once-over
+  (see the disclosure below). Never `APPROVE` from this workflow unless the user
+  says so in words.
 - **Disclose the automation.** After the review, post one top-level PR comment
   saying it came from this workflow and that the user will do a human pass once
   every comment is addressed. Take the login from `gh api user --jq .login`, never
