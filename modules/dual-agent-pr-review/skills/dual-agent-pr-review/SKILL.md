@@ -1,7 +1,7 @@
 ---
 name: dual-agent-pr-review
 description: Review a GitHub PR with two independent CLI reviewers (Claude Code and Codex) in parallel, then reconcile their findings into one evidence-backed consensus set.
-argument-hint: "<PR url or number> [— review instructions] [claude:<model>/<effort>] [codex:<model>/<effort>]"
+argument-hint: "<PR url or number> [— review instructions] [claude:<model>/<effort>] [codex:<model>/<effort>] [no-post]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, WebFetch
 user-invocable: true
 disable-model-invocation: true
@@ -44,6 +44,8 @@ authority on the run, and its brief templates and schemas sit beside it under
 - "Re-review" (or a PR with an earlier run under `~/.claude/dual-review/runs/`) means
   `prepare --since <that run dir>`, still with both reviewers.
 - A path to a sibling repository the PR depends on goes to `--context-repo`.
+- `no-post` (or "don't post", "just show me") turns off Step 8's default of posting the
+  review to someone else's PR; the run then ends with the draft.
 
 ## Non-negotiables
 
@@ -61,10 +63,15 @@ authority on the run, and its brief templates and schemas sit beside it under
   takes 5–20 minutes and will blow past a foreground timeout.
 - **Severity disputes are not yours to settle alone.** A split the rounds did not
   resolve is presented as Unresolved, never quietly downgraded to non-blocking.
+- **Broken is blocking, wherever it breaks.** If merging leaves something a user or
+  caller will hit that does not work — the PR's own feature or anything else it
+  touches — it is blocking, whatever both reviewers labelled it. Use common sense
+  about what a user sees, not which line would change.
 - **Finish the dual review.** When codex fails, give the fix and re-run that side
   with `run --only codex`; never recommend dropping codex first, never adjudicate its
   side yourself, never hand-edit run files. A single-reviewer result happens only
   when the user chooses it, and is labelled so.
-- **Every run ends with a post-ready draft** (Step 8). Posting never silently drops a
+- **Someone else's PR gets the review posted by default** (Step 8), unless the request
+  said `no-post`; the user's own PR gets a fix list. Posting never silently drops a
   verified finding: non-blocking ones are posted with a fix-before-merge / fix-later / nit
-  label, not withheld.
+  label, not withheld — and every one is its own inline comment.
