@@ -397,7 +397,7 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: okf-wiki
-  version: 0.1.13
+  version: 0.1.14
   kinds:
   - skills
   - dsh-plugin
@@ -498,7 +498,7 @@ modules:
     summary: Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent)
       will execute without the planner present.
 - name: pr-flow
-  version: 0.2.12
+  version: 0.2.13
   kinds:
   - skills
   - dsh-plugin

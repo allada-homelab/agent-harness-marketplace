@@ -40,6 +40,21 @@ def test_green(repo):
     assert last(r) == "pr-flow: watch green https://github.com/o/r/pull/7"
 
 
+def test_dash_c_runs_in_the_worktree_without_cd(repo):
+    root, wt = opened(repo)
+    r = run("-C", str(wt), "watch", cwd=root, replay={"pr_view": [pr(checks=[check("SUCCESS")])]})
+    assert r.returncode == 0, r.stderr
+    assert last(r) == "pr-flow: watch green https://github.com/o/r/pull/7"
+    assert (root / ".git" / "pr-flow" / "feat%2Fw.json").exists()  # the worktree's branch, not main
+
+
+def test_dash_c_missing_dir_refuses(repo):
+    root, _ = opened(repo)
+    r = run("-C", str(root / "nope"), "watch", cwd=root)
+    assert r.returncode == 2
+    assert "-C" in r.stderr and "Traceback" not in r.stderr
+
+
 def test_pending_then_green_polls_until_terminal(repo):
     _, wt = opened(repo)
     r = run("watch", "--interval", "0", cwd=wt,

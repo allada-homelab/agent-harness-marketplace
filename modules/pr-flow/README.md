@@ -6,7 +6,10 @@ PostToolUse hook that hints — never blocks — when a tracked file is edited o
 protected branch in a repo's main checkout.
 
 Verbs: `start <slug> [--base <branch>] [--carry [<path>...] | --leave-dirty]`, `open`,
-`watch [--merge | --merge-if-only <prefix>...]`, `teardown [branch]`, `gc`.
+`watch [--merge | --merge-if-only <prefix>...]`, `teardown [branch]`, `gc`. A global
+`-C <path>` (before the verb, like `git -C`) runs any verb as if started in `<path>`,
+so an agent can run `pr-flow -C <worktree> watch --merge` bare, without a `cd … &&`
+in front that a `pr-flow` permission allow rule would not match.
 `--merge-if-only` merges only when `git diff origin/<base>...<green head>` lists
 nothing outside the given prefixes, for a PR class the user standing-approved. Repeat
 it to allow several; each prefix matches itself as an exact file and everything under
