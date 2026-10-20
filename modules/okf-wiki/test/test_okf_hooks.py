@@ -241,22 +241,85 @@ def test_the_nudge_can_be_switched_off(repo):
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
 
 
-def test_the_nudge_names_concepts_whose_anchor_files_this_session_changed(repo):
-    other = GOOD_BODY.replace("src/app.py", "src/other.py")
-    (repo / "src/other.py").write_text("def resolve_peers():\n    return 2\n")
-    concept(repo, "a")
-    concept(repo, "b", body=other)
-    concept(repo, "c")
-    git(repo, "add", "-A")
-    git(repo, "commit", "-qm", "wiki")
+def test_the_nudge_leaves_re_verification_to_the_next_sessions_digest(repo):
+    committed_wiki(repo, "a")
+    run(repo, "stamp", "a", "--by", "okf-wiki/haiku", "--verified")
+    git(repo, "commit", "-qam", "verify a")
+    start(repo)
+    commit_as(repo, "t@example.com", "edit a's anchor file")
+    assert stop(repo)["reason"] == okf.NUDGE      # no in-session re-verify list to fan out on
+    assert "⚠ [gotcha] a" in ctx(hook(repo, "hook-session-start", {"session_id": "s2", "cwd": str(repo)}))
+
+
+def test_real_work_nudges_once_not_again_when_committed(repo):
+    committed_wiki(repo, "a")
     start(repo)
     (repo / "src/app.py").write_text("def resolve_peers():\n    return 9\n")
-    concept(repo, "c", meta=GOOD_META.replace("Linked modules", "Linked packages"))  # healed alongside
-    reason = stop(repo)["reason"]
-    assert reason.startswith(okf.NUDGE) and reason.endswith("re-verify: a.")  # not b; c healed with it
+    assert stop(repo)["reason"] == okf.NUDGE
+    git(repo, "commit", "-qam", "fix")
+    assert stop(repo) is None                     # the same work, now committed
+    (repo / "src/more.py").write_text("x = 1\n")
+    assert stop(repo) is None                     # more work on a branch already nudged
+
+
+def test_work_on_another_branch_gets_its_own_nudge(repo):
+    committed_wiki(repo, "a")
+    start(repo)
+    commit_as(repo, "t@example.com", "fix")
+    assert stop(repo)["decision"] == "block"
+    git(repo, "checkout", "-qb", "next")
+    commit_as(repo, "t@example.com", "next fix")
+    assert stop(repo)["decision"] == "block"
+
+
+def publish(repo, tmp_path):
+    """Give the repo an `origin` whose main is the current main."""
+    origin = tmp_path / "origin.git"
+    git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    git(repo, "remote", "add", "origin", str(origin))
+    git(repo, "push", "-q", "-u", "origin", "main")
+
+
+def test_merging_in_an_advanced_main_does_not_nudge(repo, tmp_path):
+    committed_wiki(repo, "a")
+    publish(repo, tmp_path)
+    git(repo, "checkout", "-qb", "feature")
+    start(repo)
+    git(repo, "checkout", "-q", "main")
+    commit_as(repo, "t@example.com", "another session's work")  # same email, during this session
+    git(repo, "push", "-q", "origin", "main")
+    git(repo, "checkout", "-q", "feature")
+    git(repo, "merge", "-q", "--no-ff", "--no-edit", "origin/main")
+    assert stop(repo) is None
+    commit_as(repo, "t@example.com", "this session's work")     # the branch's own work still nudges
+    assert stop(repo)["decision"] == "block"
+
+
+def test_a_pins_only_commit_does_not_nudge(repo):
+    (repo / "modules.tsv").write_text("okf-wiki\tv0.2.67\t3f2a9c1\tclaude=on\n")
+    committed_wiki(repo, "a")
+    start(repo)
+    (repo / "modules.tsv").write_text("okf-wiki\tv0.2.68\t8b0e4d7\tclaude=on\n")
+    git(repo, "commit", "-qam", "bump the pin")
+    assert stop(repo) is None
+
+
+def test_a_pins_only_edit_left_uncommitted_does_not_nudge(repo):
+    (repo / "package.json").write_text('{"version": "0.1.12"}\n')
+    committed_wiki(repo, "a")
+    start(repo)
+    (repo / "package.json").write_text('{"version": "0.1.13"}\n')
+    assert stop(repo) is None
+
+
+def test_a_wiki_only_commit_does_not_nudge(repo):
+    committed_wiki(repo, "a")
+    start(repo)
+    concept(repo, "b")
+    run(repo, "index")                            # a capture's validate regenerates the index
     git(repo, "add", "-A")
-    git(repo, "commit", "-qm", "fix")
-    assert stop(repo)["reason"].endswith("re-verify: a.")  # a commit nudges again
+    git(repo, "commit", "-qm", "capture b")
+    assert stop(repo) is None
 
 
 def test_wiki_left_uncommitted_after_the_work_is_committed_gets_one_reminder(repo):
