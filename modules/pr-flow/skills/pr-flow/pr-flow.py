@@ -803,6 +803,9 @@ def cmd_gc(a):
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="pr-flow", description=__doc__.splitlines()[0])
+    # Like `git -C`: lets an agent run a bare `pr-flow -C <worktree> watch` instead of
+    # `cd <worktree> && pr-flow watch`, which a permission allow rule for pr-flow never matches.
+    p.add_argument("-C", dest="chdir", metavar="PATH", help="run as if started in PATH (e.g. the worktree)")
     sub = p.add_subparsers(dest="verb", required=True)
     s = sub.add_parser("start", help="create branch + worktree off the base branch")
     s.add_argument("slug")
@@ -845,6 +848,11 @@ def main(argv=None):
     g.set_defaults(fn=cmd_gc)
     a = p.parse_args(argv)
     try:
+        if a.chdir:
+            try:
+                os.chdir(a.chdir)
+            except OSError as e:
+                raise Fail(f"-C {a.chdir}: {e.strerror}")
         return a.fn(a)
     except Fail as e:
         warn(str(e))

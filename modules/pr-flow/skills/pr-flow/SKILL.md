@@ -27,7 +27,13 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    `.claude/worktrees/` (named after the branch, `/` replaced by `-`), and
    creates the `.agents/worktrees` symlink in any repo on first use. From here
    every file operation and command uses that path — absolute paths for file
-   tools, `cd <path> &&` or `git -C <path>` for commands.
+   tools, `pr-flow -C <path> <verb>` and `git -C <path>` for commands. Run each
+   `pr-flow` command bare, exactly as `pr-flow -C <path> watch --merge`: no
+   `cd <path> &&` in front, no pipe such as `| tail` after, no `export` or
+   inline `VAR=value`. A wrapped command can miss the permission rule that
+   allows `pr-flow` and be held for review, and a pipe reports the pipe's exit
+   code instead of the verdict's. There is nothing to trim: `watch` prints one
+   stderr line per poll and the verdict line.
    A dirty main checkout (uncommitted edits, possibly someone else's) makes
    `start` refuse by default — rerun with `--carry` to move all of it into the
    new worktree, `--carry <path>...` for specific paths only, or `--leave-dirty`

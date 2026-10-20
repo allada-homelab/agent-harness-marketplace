@@ -76,7 +76,7 @@ your work. Its brief is three lines:
 ```
 root: <absolute path of the PR's worktree>
 pr: <full PR URL>
-watch: pr-flow watch --merge-if-only .wiki/
+watch: pr-flow -C <root> watch --merge-if-only .wiki/
 ```
 
 On pi and dsh, where `pr-flow` is not on `PATH`, the `watch:` line runs the pr-flow skill's
