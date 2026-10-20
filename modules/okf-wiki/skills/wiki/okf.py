@@ -1522,7 +1522,9 @@ NUDGE = ("okf-wiki: before you finish, did this work teach something durable and
          "(a gotcha, decision, runbook step, convention, architecture or reference fact that "
          "grepping the code will not reveal)? If yes, use the okf-wiki capture skill, which "
          "briefs the scribe in the background, and print its receipt. If not, finish normally; "
-         "no reply about the wiki is needed.")
+         "no reply about the wiki is needed. Existing concepts whose code changed are marked ⚠ "
+         "in the next session's digest; do not re-verify them now. This is the only nudge on "
+         "this branch this session.")
 
 
 WIKI_COMMIT = ("okf-wiki: .wiki/ has uncommitted concept changes while the work itself is "
@@ -1606,34 +1608,54 @@ def _tree_state(root: Path) -> tuple[dict, set[str]]:
             {_porcelain_path(line) for line in porcelain})
 
 
-def _own_commits(root: Path, old: str, new: str, since: int) -> tuple[int, set[str]] | None:
-    """(this session's non-merge commits in old..new, files they touched); None when `new`
-    does not descend from `old` (a checkout or rebase, not work)."""
+PIN_RE = re.compile(r"\bv?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.-]+)?\b|\b[0-9a-f]{7,40}\b")
+
+
+def _pins_only(diff: str) -> bool:
+    """True when a `-U0` diff only swaps version numbers or commit shas (a pin or ref bump):
+    every removed line has an added twin once those tokens are masked."""
+    removed, added, hunk = [], [], False
+    for line in diff.splitlines():
+        if line.startswith("diff "):
+            hunk = False
+        elif line.startswith("@@"):
+            hunk = True
+        elif line.startswith("Binary files"):
+            return False
+        elif hunk and line[:1] in "+-":
+            (added if line[0] == "+" else removed).append(PIN_RE.sub("\0", line[1:]))
+    return bool(removed) and sorted(removed) == sorted(added)
+
+
+def _upstream_default(root: Path) -> str | None:
+    """origin's default branch (origin/HEAD, else origin/main or origin/master), if fetched."""
+    head = git(root, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD", check=False).strip()
+    for ref in ([head] if head else []) + ["origin/main", "origin/master"]:
+        if git(root, "rev-parse", "-q", "--verify", f"{ref}^{{commit}}", check=False).strip():
+            return ref
+    return None
+
+
+def _own_commits(root: Path, old: str, new: str, since: int) -> int | None:
+    """This session's non-merge commits in old..new that are work; None when `new` does not
+    descend from `old` (a checkout or rebase, not work). Not work: commits the upstream default
+    branch already has (a pull, or main merged in — often the user's other sessions, same
+    email), and commits that touch only .wiki/ or only bump version pins/refs."""
     if old and subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", old, new],
                               capture_output=True).returncode:
         return None
     me = git(root, "config", "user.email", check=False).strip()
-    n, files, mine = 0, set(), False
-    for line in git(root, "log", "--no-merges", "--format=@%ce %ct", "--name-only",
-                    f"{old}..{new}" if old else new, check=False).splitlines():
-        if line.startswith("@"):
-            email, _, ct = line[1:].rpartition(" ")
-            mine = email == me and int(ct) >= since
-            n += mine
-        elif line.strip() and mine:
-            files.add(line.strip().strip('"'))
-    return n, files
-
-
-def _reverify(root: Path, concepts: list[Concept], changed: set[str]) -> list[str]:
-    """Concepts whose anchor files changed, unless the concept itself changed with them."""
-    out = []
-    for c in concepts:
-        if c.error or Path(os.path.relpath(c.path, root)).as_posix() in changed:
+    upstream = _upstream_default(root)
+    n = 0
+    for line in git(root, "log", "--no-merges", "--format=%H %ce %ct", f"{old}..{new}" if old else new,
+                    *(["--not", upstream] if upstream else []), check=False).splitlines():
+        sha, email, ct = line.rsplit(" ", 2)
+        if email != me or int(ct) < since:
             continue
-        if {a.path for a in parse_anchors(c.body)[0]} & changed:
-            out.append(c.id)
-    return sorted(out)
+        diff = git(root, "show", "--format=", "-U0", "--no-color", "--no-ext-diff", sha,
+                   "--", ".", f":(exclude){BUNDLE}", check=False)
+        n += bool(diff.strip()) and not _pins_only(diff)
+    return n
 
 
 def _dirty_invalid(root: Path, concepts: list[Concept], dirty: set[str]) -> list[str]:
@@ -1666,19 +1688,23 @@ def hook_stop(ev: dict) -> str | None:
             old.unlink(missing_ok=True)
     # No baseline (no SessionStart seen, or it was unreadable): judge against a clean tree.
     st = _load_state(sf) or {**now, "fp": "", "since": int(time.time())}
-    changed: set[str] | None = None
+    work = False
     if now["head"] and now["head"] != st.get("head"):
-        own = _own_commits(root, str(st.get("head") or ""), now["head"], int(st.get("since") or 0))
-        if own and own[0]:
-            changed = own[1] | dirty
+        work = bool(_own_commits(root, str(st.get("head") or ""), now["head"], int(st.get("since") or 0)))
         st.update(head=now["head"], fp=now["fp"], dirty_nudged=False)
     elif now["fp"] and now["fp"] != st.get("fp") and not st.get("dirty_nudged"):
-        changed, st["dirty_nudged"] = dirty, True
+        st["dirty_nudged"] = True
+        outside = ("--", ".", f":(exclude){BUNDLE}")
+        work = bool(git(root, "ls-files", "--others", "--exclude-standard", *outside, check=False).strip()
+                    ) or not _pins_only(git(root, "diff", "HEAD", "-U0", "--no-color", "--no-ext-diff",
+                                            *outside, check=False))
+    # One capture nudge per branch per session: committing, merging or further edits on a branch
+    # already nudged are the same work, and every forced turn after the first was a no-op.
+    branch = git(root, "rev-parse", "--abbrev-ref", "HEAD", check=False).strip() if work else ""
     reasons = []
-    if changed is not None:
-        ids = _reverify(root, concepts, changed)
-        reasons.append(NUDGE + (" This session changed anchor files of existing concepts; brief "
-                                f"the scribe to re-verify: {', '.join(ids)}." if ids else ""))
+    if work and branch not in st.get("nudged", []):
+        reasons.append(NUDGE)
+        st["nudged"] = [*st.get("nudged", []), branch]
     elif (now["wiki_fp"] and not now["fp"] and now["wiki_fp"] != st.get("wiki_fp")
           and now["wiki_fp"] != st.get("wiki_nudged")
           and not _dirty_invalid(root, concepts, dirty)):

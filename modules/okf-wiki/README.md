@@ -8,8 +8,10 @@ learns in the background on cheap models.
 - **Read:** a SessionStart hook injects a compact digest of every concept (claim-style
   descriptions, stale ones marked ⚠). The `recall` skill sends deeper questions to a cheap
   `reader` agent that answers with `concept:<id>` citations.
-- **Write:** the injected rule and a Stop-hook nudge (on a new commit, or once per session
-  while the tree is dirty) prompt the agent to `capture` durable findings; a cheap `scribe`
+- **Write:** the injected rule and a Stop-hook nudge (at most once per branch per session,
+  when the session's own commits or edits change more than `.wiki/` or version pins — not
+  for a pull or a merge of the default branch) prompt the agent to `capture` durable
+  findings; concepts the work made stale wait for the next digest's ⚠. A cheap `scribe`
   agent writes them and the agent prints a receipt (`wiki: +gotcha/<id>`). When the user
   standing-approves wiki-only PRs, a background `lander` agent watches each one with
   `pr-flow -C <worktree> watch --merge-if-only .wiki/` and merges it when green.
