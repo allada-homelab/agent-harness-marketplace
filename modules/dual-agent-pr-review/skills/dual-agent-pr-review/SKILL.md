@@ -1,7 +1,7 @@
 ---
 name: dual-agent-pr-review
 description: Review a GitHub PR with two independent CLI reviewers (Claude Code and Codex) in parallel, then reconcile their findings into one evidence-backed consensus set.
-argument-hint: "<PR url or number> [— review instructions] [claude:<model>/<effort>] [codex:<model>/<effort>] [no-post]"
+argument-hint: "<PR url or number> [— review instructions] [claude:<model>/<effort>] [codex:<model>/<effort>] [submit | no-post]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, WebFetch
 user-invocable: true
 disable-model-invocation: true
@@ -44,8 +44,10 @@ authority on the run, and its brief templates and schemas sit beside it under
 - "Re-review" (or a PR with an earlier run under `~/.claude/dual-review/runs/`) means
   `prepare --since <that run dir>`, still with both reviewers.
 - A path to a sibling repository the PR depends on goes to `--context-repo`.
-- `no-post` (or "don't post", "just show me") turns off Step 8's default of posting the
-  review to someone else's PR; the run then ends with the draft.
+- `submit` (or "post it directly") publishes the review at once instead of Step 8's
+  default of leaving it as a pending GitHub review for the user to submit.
+- `no-post` (or "don't post", "just show me") posts nothing to GitHub at all; the run
+  then ends with the draft shown here.
 
 ## Non-negotiables
 
@@ -71,8 +73,9 @@ authority on the run, and its brief templates and schemas sit beside it under
   with `run --only codex`; never recommend dropping codex first, never adjudicate its
   side yourself, never hand-edit run files. A single-reviewer result happens only
   when the user chooses it, and is labelled so.
-- **Someone else's PR gets the review posted by default** (Step 8), unless the request
-  said `no-post`; the user's own PR gets a fix list. Posting never silently drops a
+- **Someone else's PR gets the review posted as a pending (draft) review by default**
+  (Step 8) — published only when the user submits it, or at once with `submit`; nothing
+  is posted with `no-post`. The user's own PR gets a fix list. Posting never silently drops a
   verified finding: non-blocking ones are posted with a severity · category label
   (e.g. `[Non-blocking · documentation]`), not withheld — and every one is its own
   inline comment.
