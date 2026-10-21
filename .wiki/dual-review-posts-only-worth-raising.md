@@ -1,12 +1,13 @@
 ---
 type: decision
 title: Dual-review posts only worth-raising findings
-description: dual-agent-pr-review posts only blocking, non-blocking and unresolved findings, always as a pending draft; nits, NOT_WORTH_RAISING, author-deferred and thread-covered findings stay in final.md, because low tiers were noise.
+description: dual-agent-pr-review posts only blocking, non-blocking and unresolved findings as a pending draft; nits and not-worth-raising ones stay in final.md, since low tiers were noise.
 tags: [skills, github]
-generated: {by: okf-wiki/opus, at: 2026-10-21T12:27:19Z}
+generated: {by: okf-wiki/opus, at: 2026-10-21T12:27:53Z}
 verified:
   - {by: okf-wiki/haiku, at: 2026-10-21T12:26:59Z, commit: cf48a38493be}
   - {by: okf-wiki/opus, at: 2026-10-21T12:27:19Z, commit: cf48a38493be}
+  - {by: okf-wiki/opus, at: 2026-10-21T12:27:53Z, commit: 14857723fa51}
 sources:
   - {id: pr115, resource: https://github.com/allada-homelab/agent-harness-marketplace/pull/115}
   - {id: audit, resource: "Outcome audit 2026-10-21: 63 comments delivered on 12 PRs (teamlumos lumos/ai-agents/infra), outcomes checked against later commits and replies"}

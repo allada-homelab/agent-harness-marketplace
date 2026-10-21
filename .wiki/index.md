@@ -19,7 +19,7 @@ okf_version: "0.2"
 
 # Decision
 
-* [Dual-review posts only worth-raising findings](./dual-review-posts-only-worth-raising.md) - dual-agent-pr-review posts only blocking, non-blocking and unresolved findings, always as a pending draft; nits, NOT_WORTH_RAISING, author-deferred and thread-covered findings stay in final.md, because low tiers were noise.
+* [Dual-review posts only worth-raising findings](./dual-review-posts-only-worth-raising.md) - dual-agent-pr-review posts only blocking, non-blocking and unresolved findings as a pending draft; nits and not-worth-raising ones stay in final.md, since low tiers were noise.
 
 # Runbook
 
