@@ -4,7 +4,6 @@ description: Review a GitHub PR with two independent CLI reviewers (Claude Code 
 argument-hint: "<PR url or number> [— review instructions] [claude:<model>/<effort>] [codex:<model>/<effort>] [no-post]"
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit, WebFetch
 user-invocable: true
-disable-model-invocation: true
 harness: [claude]
 ---
 
