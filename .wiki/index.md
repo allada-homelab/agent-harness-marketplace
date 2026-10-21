@@ -17,6 +17,10 @@ okf_version: "0.2"
 * [skill-creator trigger harness is unreliable for measuring descriptions](./skill-creator-trigger-harness-unreliable.md) - skill-creator's run_eval.py pollutes ~/.claude/commands and under-detects triggering (0-33% vs 12/12 independently), so run it from a scratch dir and measure with claude -p stream-json.
 * [Untrusted worktree agent CLIs need more than a permission mode](./untrusted-worktree-agent-cli-isolation.md) - A permission mode alone does not isolate an agent CLI run on untrusted PR content; claude -p and codex exec each need extra isolation flags.
 
+# Decision
+
+* [Dual-review posts only worth-raising findings](./dual-review-posts-only-worth-raising.md) - dual-agent-pr-review posts only blocking, non-blocking and unresolved findings as a pending draft; nits and not-worth-raising ones stay in final.md, since low tiers were noise.
+
 # Runbook
 
 * [Removing a module](./removing-a-module.md) - Deleting modules/<name> leaves refs the gate misses — a stale root pi exclude, smoke tests naming it, lockfile importers — so sweep them; dated records get a note, not a rewrite.
