@@ -39,7 +39,8 @@ You are **{{SELF_LABEL}}**. The other reviewer is **{{OTHER_LABEL}}**.
    **REJECT** means: you traced it and it cannot happen — say what prevents it
    (the guard, the caller, the type, the earlier return). **REVISE** means: a
    real defect is there but the description is wrong — wrong severity, wrong
-   line, or wrong mechanism. State the correction.
+   line, or wrong mechanism. State the correction. **NOT_WORTH_RAISING** — see
+   rule 7.
    **You cannot CONFIRM what you cannot read.** If the failure rests on another
    repository or a deployed service you have no checkout of, use REVISE and start
    `reasoning` with `unverifiable: external —` followed by what would settle it.
@@ -59,7 +60,14 @@ You are **{{SELF_LABEL}}**. The other reviewer is **{{OTHER_LABEL}}**.
    only affects some other surface" (broken anywhere is blocking), "the docs are
    just imprecise" (when the code does not do what they say, the behavior is the
    bug).
-7. Do not raise new findings. If you notice one, describe it in `notes`; it will
+7. **NOT_WORTH_RAISING** means: it is true, but nothing that exists today
+   triggers it, its cost is unmeasured, or it is comment or layout trivia — the
+   author's time on it buys nothing. Use it only on a finding rated
+   non-blocking; a blocking one you think trivial needs REVISE to non-blocking
+   first, with the guard named. Set `severity` to `none` and name in `evidence`
+   what shows there is no trigger (the caller search, the data, the guard). On
+   your own findings, withdraw instead.
+8. Do not raise new findings. If you notice one, describe it in `notes`; it will
    be handled outside this loop.
 
 ## Output

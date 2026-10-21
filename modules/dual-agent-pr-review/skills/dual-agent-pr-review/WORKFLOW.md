@@ -103,7 +103,13 @@ out of scope. Use the second list before suggesting any follow-up PR.
 `--context-repo` gives the Claude reviewer read access to a sibling checkout (for
 example the service on the other side of an API this PR calls). Without one, both
 briefs tell the reviewers that cross-repo claims are low-confidence, and the
-reconciliation brief forbids CONFIRMing what a reviewer could not read.
+reconciliation brief forbids CONFIRMing what a reviewer could not read. Before
+`prepare`, skim `gh pr diff <n> --name-only` and the diff: when the PR makes a
+deployed service read, call or need something new (a bucket, a secret, an IAM
+action, another service's route), pass the checkout that grants it — usually the
+infra repo — as `--context-repo` if one sits beside the PR's repo. Without it, a
+missing grant is invisible to both reviewers; if there is none, list the grant as
+an unchecked precondition in Step 7.
 
 With `--since`, `prepare` writes `prior.md` (the prior run's `final.md` ledger,
 or its Venn when it has none) and `delta.patch` (prior head → current head), and
@@ -171,7 +177,11 @@ reviewer re-reported it, or you checked it yourself) or FIXED (cite the code tha
 fixes it). A carried-over finding that neither reviewer re-reported and that you
 cannot show fixed goes on the round-2 docket of both sides. Reviewer recall is
 noisy between runs; a finding does not disappear because a reviewer stopped
-mentioning it.
+mentioning it. Read the posted threads in the full `comments.md` first: a prior
+finding the author **deferred** (a ticket, "as a follow-up", "predates this
+branch") or answered as theoretical is marked AUTHOR-DEFERRED — it is settled, so
+it goes on no docket and is never posted again, unless `delta.patch` changed the
+code under it or a reviewer now shows it is blocking.
 
 Report the shape to the user now (counts per bucket, one line each). This is the
 moment the run becomes interesting and it is worth surfacing before the debate.
@@ -189,8 +199,8 @@ Skip this step only when the PR has no comments, or when the user asked only
 about the code — and say which. Otherwise it is worth doing: it tells you which
 existing review comments still hold against the head commit, which are wrong, and
 which the PR has already fixed — and bot reviewers in particular are confidently
-wrong often enough that adjudicating them is real value. It is also what Step 8
-uses to link an overlapping thread from the new inline comment.
+wrong often enough that adjudicating them is real value. It is also how Step 8
+knows which findings an existing thread already covers.
 
 Compose each side's prompt from `${CLAUDE_SKILL_DIR}/references/comment-brief.md`, filling
 `{{SELF_FINDINGS}}` with that agent's own round-1 findings and `{{COMMENTS}}`
@@ -246,8 +256,8 @@ present its docket as **unadjudicated** (see *When codex cannot run*).
 
 **Round 3 dockets.** Only ids still open. A finding's *owner* now answers:
 
-- every finding of its own the other side REJECTed — the owner gets a rebuttal
-  before anything is dropped;
+- every finding of its own the other side REJECTed or called NOT_WORTH_RAISING —
+  the owner gets a rebuttal before anything is dropped;
 - every finding of its own the other side REVISEd to a different severity, when
   the owner has not yet accepted that severity.
 
@@ -260,6 +270,13 @@ one CONFIRMs and the other REJECTs, when the two REVISE to different severities,
 when a REVISE was never answered by the owner, or when the round that would have
 settled it was voided. A disputed id goes to **Unresolved** in Step 7 with both
 positions — never to Non-blocking because you leaned that way.
+
+**NOT_WORTH_RAISING** applies only to a non-blocking finding, so it is never a
+severity dispute. The id is **not worth raising** when the owner withdraws it or
+does not answer in round 3, or when the owner's rebuttal names no trigger that
+exists today — a caller, an input, a stored row. That last test is a fact you
+check in the code, not a lean. When the rebuttal does name a real trigger, the
+finding stays non-blocking.
 
 Cap yourself at two reconciliation rounds (round 2 and round 3) and stop even if
 something is still disputed — the loop is yours, not the script's, so nothing
@@ -282,10 +299,22 @@ config value, run the command or read the file that settles it, and cite it. Say
 "inferred" for anything you could not check. Drop anything that does not survive
 your own read, and say you dropped it.
 
+**Verify the fix as well as the defect.** When the recommended fix names a tool
+version, a flag, a command or a config value, check that it does what you say —
+run it, or read the docs or changelog that settles it. A wrong remedy costs the
+author a round (relocking with the uv version that writes the old lockfile
+revision re-broke the lock it was meant to fix).
+
+**Use your own evidence against non-blocking findings, too.** When your checks
+show a non-blocking finding's trigger occurs nowhere today — zero affected rows,
+pages or log lines, a monitor showing no fallbacks — it is not worth raising.
+Mark it so and say what showed it. This never applies to a blocking finding: there
+the evidence goes to the user as Unresolved, per the severity rule above.
+
 Write `<RUN_DIR>/final.md` — the ledger a later re-review reads. One line per id:
-id · `file:line` · severity · action · disposition (blocking / non-blocking /
-unresolved / withdrawn / rejected / dropped-by-judge) · provenance. Step 8 appends
-what was posted.
+id · `file:line` · severity · action · disposition (blocking / non-blocking / nit /
+unresolved / not-worth-raising / author-deferred / withdrawn / rejected /
+dropped-by-judge) · provenance. Step 8 appends what was posted.
 
 Then present, in this order and with these headings:
 
@@ -295,12 +324,16 @@ Then present, in this order and with these headings:
   `claude only, confirmed` / `codex only, confirmed`).
 - **Non-blocking** — the same shape, terser, each tagged with its `category`
   (e.g. `documentation`) so the reader can tell what kind of issue it is; say
-  "fine as a follow-up" on a `fix-later` one, and list `nit` ones last. A severity
-  label and a recommendation must agree: if you would hold the PR for it, it is
-  blocking.
+  "fine as a follow-up" on a `fix-later` one. A severity label and a
+  recommendation must agree: if you would hold the PR for it, it is blocking.
+- **Nits** — one line each. They are for you, not the author: Step 8 does not
+  post them.
 - **Unresolved** — everything still disputed after the last round, including
   every severity split, with both positions and their evidence, and your read
   labelled as yours — framed as the user's call.
+- **Not worth raising / author-deferred** — one line each with what settled it
+  (the NOT_WORTH_RAISING evidence, your zero-impact check, or the author's
+  deferral).
 - **Withdrawn** — findings their *owner* retracted, and by whom.
 - **Rejected** — findings the other side REJECTed and the owner did not defend,
   or that you dropped after your own read — say which. Withdrawn and Rejected are
@@ -319,13 +352,13 @@ later message about it. Then go to Step 8.
 
 ## Step 8 — post
 
-**A draft review is the default.** On anyone else's PR, once Step 7 has verified
-the findings, post them without asking as a **pending** GitHub review — the review,
-its inline comments and the disclosure, visible only to the user until they submit
-it from the PR's Files tab. Two requests change that: `submit` ("post it directly",
-"submit it") publishes the review at once, and `no-post` ("don't post", "just show
-me") shows the draft here and stops. Never decide on the user's behalf to post less
-than every verified finding.
+**Always a draft.** On anyone else's PR, once Step 7 has verified the findings,
+post them without asking as a **pending** GitHub review — the review, its inline
+comments and the disclosure, visible only to the user until they submit it from
+the PR's Files tab. This workflow never publishes a review itself; the user's own
+read comes first, every time. `no-post` ("don't post", "just show me") shows the
+draft here and posts nothing. What a draft carries is fixed below — never decide
+on the user's behalf to leave out more than that.
 
 **The user's own PR** (the PR author is the user): there is no one to post to.
 Offer the findings as a fix list instead, blocking first; if they say fix,
@@ -335,15 +368,16 @@ fixes made by the judge introduce defects of their own.
 
 **Anyone else's PR** — draft one review:
 
-- **Every issue is its own inline comment** — Blocking, Non-blocking and
-  Unresolved alike. Posting never silently drops a verified finding, never folds
-  one into the review body, and never substitutes a thread reply for it.
-  Non-blocking ones are labelled so the author can triage them, not withheld.
-  Prefix each comment body with its label — severity, then the finding's
-  `category`: `**[Blocking · correctness]**`, `**[Non-blocking · documentation]**`,
-  `**[Nit · convention]**` (`Nit` for an action of `nit`). Never put the action
-  in the label — "Non-blocking · fix-before-merge" reads as a contradiction; when
-  a non-blocking fix can wait, say so in the comment text.
+- **Every Blocking, Non-blocking and Unresolved finding is its own inline
+  comment**, never folded into the review body. Prefix each comment body with its
+  label — severity, then the finding's `category`: `**[Blocking · correctness]**`,
+  `**[Non-blocking · documentation]**`. Never put the action in the label —
+  "Non-blocking · fix-before-merge" reads as a contradiction; when a non-blocking
+  fix can wait, say so in the comment text.
+- **Not posted, each recorded in `final.md` with its reason:** nits (an action of
+  `nit` — in past runs none was significant, and authors fixed them anyway at a
+  round's cost); not-worth-raising and author-deferred findings; and findings an
+  existing thread already covers (below). The user sees all of them in Step 7.
 - **Unresolved findings are inline questions**, labelled `**[Open question]**`,
   stating both positions in one or two sentences.
 - **Anchor every comment inside a changed hunk.** Use the finding's `file` and
@@ -351,32 +385,29 @@ fixes made by the judge introduce defects of their own.
   `dual_review.sh anchors <RUN_DIR> <path> <line>` exits 0 only for a line GitHub
   will accept. GitHub rejects the **whole** review when one comment's anchor is
   outside the diff. When the check fails or `posting_line` is 0, the finding is
-  still inline: on the nearest changed line in `file` if it has one; otherwise, with
-  `submit` only, as a file-level comment on `file` when the PR touches it (posted
-  separately, see below — a pending review cannot hold one); otherwise on the
-  changed line that leads to the defect. Whenever an
-  inline comment sits on a line other than the defect's, say the real
-  `file:line` in its body.
-- **Link, don't merge, an existing thread.** When a still-live thread already
-  makes the same claim (Step 5's `overlaps_finding`, or a VALID `PC-*`), the
-  finding still gets its own inline comment; say "also raised in <thread URL>" in
-  it so the author can resolve both together.
+  still inline: on the nearest changed line in `file` if it has one; otherwise on
+  the changed line that leads to the defect. Whenever an inline comment sits on a
+  line other than the defect's, say the real `file:line` in its body. (A pending
+  review cannot hold a file-level comment.)
+- **Don't duplicate an existing thread.** When a still-live thread already makes
+  the same claim (Step 5's `overlaps_finding`, or a VALID `PC-*`), the thread
+  covers it: do not post it again — record it as covered by that thread's URL and
+  tell the user, who can add to the thread. Post it as its own inline comment only
+  when it adds what the thread lacks — a higher severity, a different failure, the
+  trigger the thread could not name — and then say "also raised in <thread URL>".
 - **The review body is a short index** — counts and one line per item, each
   pointing at its inline comment. No findings live only in the body. No model
   names, round counts, "findings that died", or judge observations; those are for
   the user, not the author.
-- **Event: `REQUEST_CHANGES`** whenever the review has any comment, non-blocking
-  ones included — it holds the merge until the user's own once-over (see the
-  disclosure below). A draft carries no event: GitHub creates a review with the
-  `event` left out as PENDING, and the user picks the event when submitting, so
-  tell them to submit it as **Request changes**. Never `APPROVE` from this workflow
-  unless the user says so in words.
-- **Disclose the automation.** In a draft, end the review body with the
-  disclosure, so it goes public only with the review. With `submit`, post it as
-  one top-level PR comment after the review instead. Either way it says the review
-  came from this workflow and that the user will do a human pass once every
-  comment is addressed. Take the login from `gh api user --jq .login`, never
-  hard-code one:
+- **No event.** GitHub creates a review with `event` left out as PENDING, and the
+  user picks the event when submitting. Recommend **Request changes** when the
+  draft has a Blocking or Open-question comment, and **Comment** otherwise —
+  requesting changes for non-blocking items alone holds a merge nothing should
+  hold. Never recommend Approve unless the user says so in words.
+- **Disclose the automation** at the end of the review body, so it goes public
+  only with the review. It says the review came from this workflow and that the
+  user will do a human pass once every comment is addressed. Take the login from
+  `gh api user --jq .login`, never hard-code one:
 
   > These review comments were drafted automatically by
   > [@\<login\>](https://github.com/\<login\>)'s `/dual-agent-pr-review` — two
@@ -395,7 +426,8 @@ gh pr view <url> --json state,headRefOid,mergedAt
 ```
 
 - **Merged or closed** → stop and tell the user; do not post to it.
-- **Nothing verified survived** → post nothing, not even the disclosure.
+- **Nothing postable survived** (no Blocking, Non-blocking or Unresolved finding
+  left to post) → post nothing, not even the disclosure.
 - **Head moved since `prepare`** → diff old head to new head for the files the
   findings cite; drop or re-anchor findings the new commits fixed or moved, and
   say which.
@@ -406,22 +438,17 @@ gh pr view <url> --json state,headRefOid,mergedAt
   — only the user's own pending review is visible to them) → show it and ask;
   never delete or submit it yourself.
 
-Post the whole review in one call — a JSON body with the short index (and, in a
-draft, the disclosure), a `comments` array of `{path, line, side: "RIGHT", body}`,
-and `"event": "REQUEST_CHANGES"` only with `submit` (leave `event` out for a draft)
-— to `gh api repos/<owner>/<repo>/pulls/<n>/reviews --method POST --input <file>`.
-Check that the response's `state` is `PENDING` for a draft, `CHANGES_REQUESTED`
-with `submit`. With `submit` only, follow it with one call per file-level comment
-(`gh api …/pulls/<n>/comments --method POST -f body=… -f path=<file> -f
-commit_id=<head oid> -f subject_type=file`) and then the disclosure with `gh pr
-comment <url> --body-file <file>`. Then append to `final.md` what was posted — the
-review URL and id, whether it is pending or submitted, each comment URL (with
-`submit`), the disclosure comment URL (with `submit`), and every verified finding
-that was **not** posted with the reason — and show the user that ledger with the
-full review URL. For a draft, tell them how to publish it: open the PR's Files
-tab and choose **Finish your review → Request changes**, or ask you to submit it,
-which is `gh api repos/<owner>/<repo>/pulls/<n>/reviews/<id>/events --method POST
--f event=REQUEST_CHANGES`.
+Post the whole review in one call — a JSON body with the short index and the
+disclosure, a `comments` array of `{path, line, side: "RIGHT", body}`, and no
+`event` — to `gh api repos/<owner>/<repo>/pulls/<n>/reviews --method POST --input
+<file>`. Check that the response's `state` is `PENDING`. Then append to `final.md`
+what was posted — the pending review URL and id, and every verified finding that
+was **not** posted with the reason — and show the user that ledger with the full
+review URL. Tell them how to publish it: open the PR's Files tab and choose
+**Finish your review →** the recommended event. Submit it yourself only when they
+ask you to, with the event they name: `gh api
+repos/<owner>/<repo>/pulls/<n>/reviews/<id>/events --method POST -f
+event=<REQUEST_CHANGES|COMMENT>`.
 
 Offer `dual_review.sh cleanup <RUN_DIR>` to remove the worktree. Run artifacts
 stay under `~/.claude/dual-review/runs/` for audit and for the next `--since`.

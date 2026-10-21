@@ -74,17 +74,22 @@ network access is not comparable.
 7. **When the PR removes or renames a concept**, search the whole repository for
    what still mentions it — docstrings, test names, metric tags, docs, config.
    Prefer removing a vestige over keeping a single-valued remnant of it.
+8. **When the PR makes a deployed service read, call or need something new** — a
+   bucket, a secret or SSM parameter, an IAM action, an env var, another
+   service's route — name the grant or config that must exist and where it is
+   set. If that is outside these materials, say so and set `confidence: low`;
+   the missing grant is the failure, not the code.
 
 ## Severity
 
 - **blocking** — merging this causes incorrect behavior, data loss, a security
   hole, a broken contract for an existing consumer, a crash, or a silent
   failure. Anything you would hold the PR for.
-- **non-blocking** — real but survivable: readability, a missing test for a path
-  that is currently correct, a convention slip, a latent risk that needs a
-  precondition that does not hold today.
+- **non-blocking** — real, reachable today, and worth the author's time: a
+  wrong result on an uncommon path, a missing test for a behavior this PR
+  introduces, a documented-convention slip that will mislead the next reader.
 
-Calibration that past reviews got wrong:
+Calibration that past reviews got wrong, toward blocking:
 
 - **"Untested" does not downgrade a confirmed mechanism.** If you traced the
   failure, it is as blocking as its consequence; the missing probe is a merge
@@ -101,6 +106,26 @@ Calibration that past reviews got wrong:
 - **Do not shrink a behavior bug into a doc nit.** When code does not do what its
   docs, name or contract say, the defect is the behavior unless the doc is plainly
   the mistake; rate it by what a user sees, not by which line would change.
+
+Calibration that past reviews got wrong, toward noise — authors fix these
+dutifully, which costs them a round and buys nothing. None of these is a finding;
+drop it rather than file it as a nit:
+
+- **No trigger today.** "No current caller hits this", a precondition that does
+  not hold, data that does not occur (every live date is quoted, zero dangling
+  entries). If nothing that exists now reaches it and this PR does not make it
+  likely, it is not a defect yet.
+- **Unmeasured performance.** "This now runs serially" or "each call reloads"
+  with no size, count or latency that makes it matter. Name the number or drop it.
+- **Unverifiable behavior.** A failure that rests on what an upstream echoes or a
+  browser renders, with nothing in reach that shows it does. Verify it or drop it.
+- **Comment and layout trivia.** A comment that now sits above different code, a
+  JSDoc that moved, a `Raises:` list missing a subclass of one it already names, a
+  helper with one call site, a glob in prose that also matches something
+  harmless. Raise a doc only when it tells a reader something false that they
+  will act on.
+- **Already on the PR.** If the PR description or an earlier commit in it already
+  names the gap as known, it is not news.
 
 Separately from severity, set `action` — whether the fix is worth the author's
 time now. Weigh what the code is about to become: a defect on a path behind a
