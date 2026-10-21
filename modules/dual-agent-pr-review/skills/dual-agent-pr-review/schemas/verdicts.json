@@ -17,13 +17,13 @@
           },
           "verdict": {
             "type": "string",
-            "enum": ["CONFIRM", "REJECT", "REVISE"],
-            "description": "CONFIRM: real as stated. REJECT: not a real defect. REVISE: real but mis-stated (wrong severity, wrong location, or wrong mechanism) - say the correction in reasoning."
+            "enum": ["CONFIRM", "REJECT", "REVISE", "NOT_WORTH_RAISING"],
+            "description": "CONFIRM: real as stated. REJECT: not a real defect. REVISE: real but mis-stated (wrong severity, wrong location, or wrong mechanism) - say the correction in reasoning. NOT_WORTH_RAISING: true but nothing today triggers it, its cost is unmeasured, or it is comment/layout trivia - only for a finding rated non-blocking."
           },
           "severity": {
             "type": "string",
             "enum": ["blocking", "non-blocking", "none"],
-            "description": "The severity you believe is correct. Use \"none\" with verdict REJECT."
+            "description": "The severity you believe is correct. Use \"none\" with verdict REJECT or NOT_WORTH_RAISING."
           },
           "reasoning": {
             "type": "string",

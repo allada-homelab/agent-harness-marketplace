@@ -329,8 +329,9 @@ write_prior() {
 > their dispositions and what was posted are in \`$run_dir/prior.md\`$delta_clause.
 > Still review the whole PR. Read prior.md first: report every prior finding that is
 > still present (same root cause, even if unchanged), and do not re-raise one that
-> prior.md records as rejected, rebutted by the author, or declined by the user
-> unless the code it rests on changed since — then say what changed."
+> prior.md records as rejected, rebutted by the author, deferred by the author (a
+> ticket, a follow-up), or declined by the user unless the code it rests on changed
+> since — then say what changed."
 }
 
 # ── prepare ──────────────────────────────────────────────────────────────────
