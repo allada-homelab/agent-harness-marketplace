@@ -8,6 +8,8 @@
 #   4. Missing entries           SKILL.md index entries must have ## RULE-NNN
 #   5. Dead local links          [text](relative-path) must resolve
 #   6. Frontmatter               name + description present; description is third-person
+#   7. Requires. syntax          "**Requires.** python>=3.15[, ...]" directly under its heading
+#   8. Requires. agreement       index suffix "_(requires ...)_" matches the reference line
 #
 # Exits non-zero on any failure. Run from any cwd.
 #
@@ -187,6 +189,50 @@ for skill_dir in "${skills[@]}"; do
       fi
     done <<< "$index_ids"
   fi
+
+  # ---- 7, 8. Requires. syntax and index agreement ----
+  # Reference side: the first non-blank line under a rule heading may be
+  # "**Requires.** <terms>"; a Requires line anywhere else is misplaced.
+  ref_requires=""
+  if [[ -f /tmp/lint-refs.$$ ]]; then
+    ref_requires="$(awk '
+      /^## [A-Z][A-Z]*-[0-9][0-9]*( |$)/ { id = $2; fresh = 1; next }
+      /^[[:space:]]*$/ { next }
+      /^\*\*Requires\.\*\*/ {
+        v = $0; sub(/^\*\*Requires\.\*\*[[:space:]]*/, "", v)
+        if (fresh && id != "") print id "\t" v; else print "MISPLACED\t" (id != "" ? id : "?")
+        fresh = 0; next
+      }
+      { fresh = 0 }
+    ' /tmp/lint-refs.$$)"
+  fi
+  # Index side: "- **ID** — summary _(requires <terms>)_" at end of line.
+  idx_requires="$(grep -E '^- \*\*[A-Z]{2,7}-[0-9]{3,}\*\*.*_\(requires .*\)_[[:space:]]*$' <<< "$skill_stripped" \
+    | sed -E 's/^- \*\*([A-Z]{2,7}-[0-9]{3,})\*\*.*_\(requires (.*)\)_[[:space:]]*$/\1\t\2/' || true)"
+  req_term='[a-z][a-z0-9-]*>=[0-9]+(\.[0-9]+)*( \(preview(: [a-z0-9][a-z0-9._-]*)?\))?'
+  req_re="^${req_term}((, | or )${req_term})*$"
+  while IFS=$'\t' read -r rid val; do
+    [[ -z "$rid" ]] && continue
+    if [[ "$rid" == MISPLACED ]]; then
+      err "${skill_name}: **Requires.** line in ${val} is not directly under its rule heading"
+      continue
+    fi
+    if ! grep -qE "$req_re" <<< "$val"; then
+      err "${skill_name}: ${rid} **Requires.** '${val}' does not match '<component>>=<version>[ (preview[: feature])][, | or ...]'"
+    fi
+    idx_val="$(awk -F'\t' -v id="$rid" '$1 == id { print $2; exit }' <<< "$idx_requires")"
+    if [[ -z "$idx_val" ]]; then
+      err "${skill_name}: ${rid} has **Requires.** ${val} but its SKILL.md index line lacks _(requires ${val})_"
+    elif [[ "$idx_val" != "$val" ]]; then
+      err "${skill_name}: ${rid} index says requires '${idx_val}' but the reference says '${val}'"
+    fi
+  done <<< "$ref_requires"
+  while IFS=$'\t' read -r iid ival; do
+    [[ -z "$iid" ]] && continue
+    if ! awk -F'\t' -v id="$iid" '$1 == id { f = 1 } END { exit !f }' <<< "$ref_requires"; then
+      err "${skill_name}: ${iid} index line has _(requires ${ival})_ but its reference entry has no **Requires.** line"
+    fi
+  done <<< "$idx_requires"
 
   # Track for cross-skill collision warning.
   if [[ -n "$ref_ids" ]]; then

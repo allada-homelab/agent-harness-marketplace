@@ -73,7 +73,7 @@ See [`references/dockerfile.md`](./references/dockerfile.md).
 - **DOCKER-029** — Run `docker build --check` as a Dockerfile lint step in CI (Buildx ≥0.15, Dockerfile ≥1.8); it exits non-zero on violations, and `# check=error=true` fails ordinary builds too.
 - **DOCKER-030** — Make image builds bit-for-bit reproducible via `SOURCE_DATE_EPOCH` + `--output type=image,...,rewrite-timestamp=true` (BuildKit ≥0.13).
 - **DOCKER-031** — Use `COPY --parents` (Dockerfile ≥1.20) to preserve source directory structure instead of flattening or post-copy `mkdir`.
-- **DOCKER-032** — Cap heavy `RUN` steps with build-time resource limits (`--resource cpu=,memory=`) on shared builders.
+- **DOCKER-032** — Cap heavy `RUN` steps with build-time resource limits (`--resource cpu=,memory=`) on shared builders. _(requires buildkit>=0.31, dockerfile>=1.25)_
 - **DOCKER-033** — Pin `RUN --network=none` on steps that must not touch the network, to enforce reproducibility.
 
 ## Rules — Dev containers
@@ -134,7 +134,7 @@ See [`references/compose.md`](./references/compose.md).
 - **COMPOSE-023** — Set `security_opt: ["no-new-privileges:true"]` on production services; closes the setuid-escalation path that DOCKER-005 alone doesn't.
 - **COMPOSE-026** — Declare `logging:` on long-lived services — prefer the `local` driver (rotates by default); on `json-file` set `max-size` + `max-file`, since it has no size limit and silently fills the host disk.
 - **COMPOSE-027** — Use `post_start` / `pre_stop` lifecycle hooks (Compose ≥2.30) for privileged setup/teardown without weakening the service.
-- **COMPOSE-028** — Require Compose ≥2.40.2 (or v5) before resolving any remote OCI compose artifact (`include: oci://`, `-f oci://`) — CVE-2025-62725 path-traversal via artifact layer annotations.
+- **COMPOSE-028** — Require Compose ≥2.40.2 (or v5) before resolving any remote OCI compose artifact (`include: oci://`, `-f oci://`) — CVE-2025-62725 path-traversal via artifact layer annotations. _(requires compose>=2.40.2)_
 - **COMPOSE-029** — Set `init: true` on services whose image runs the app as PID 1 without an init — signals get forwarded and zombies reaped; doesn't replace DOCKER-006 for images you build.
 
 ## Rules — Buildx & cache backends
@@ -149,7 +149,7 @@ and "Security & build" (SEC-002, 004, 006).
 - **BUILDX-004** — Use `docker buildx bake` for multi-target / declarative builds — replaces long CLI commands, reads `compose.yaml` directly, builds all targets in parallel.
 - **BUILDX-005** — The default `docker` driver exports caches and builds multi-platform images only with the containerd image store, and never exports tarballs. Switch to `docker-container` (or `kubernetes`) for full BuildKit features. `setup-buildx-action` does this for you in CI.
 - **BUILDX-006** — For non-trivial multi-arch builds, use native runners per architecture (multi-node builder, or separate CI jobs + `imagetools create`). QEMU emulation is much slower for CPU-bound builds.
-- **BUILDX-007** — Use `docker buildx debug build` (still experimental) — or `docker buildx dap build` (out of experimental since buildx v0.33.0) for editor integration — for interactive step-through of failing builds; replaces the `RUN sleep 999` + `docker exec` hack.
+- **BUILDX-007** — Use `docker buildx debug build` (still experimental) — or `docker buildx dap build` (out of experimental since buildx v0.33.0) for editor integration — for interactive step-through of failing builds; replaces the `RUN sleep 999` + `docker exec` hack. _(requires buildx>=0.12 (preview))_
 - **BUILDX-008** — Min-mode provenance is attached by default and already makes the push an index; registries that can't store one need `--provenance=false` / `BUILDX_NO_DEFAULT_ATTESTATIONS=1`, not `mode=min`. `mode=max` records build-arg values.
 - **BUILDX-009** — Use `bake` matrix targets + composable HCL attributes for multi-variant builds.
 - **BUILDX-010** — Pin the Docker GitHub Actions (`setup-buildx-action@v4`, `build-push-action@v7`, `bake-action@v7`) by commit SHA.

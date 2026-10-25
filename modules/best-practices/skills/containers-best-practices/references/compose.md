@@ -1646,6 +1646,8 @@ On Compose older than 2.30 the keys are ignored; gate on the version.
 
 ## COMPOSE-028 — Require Compose ≥2.40.2 (or v5) before using `include:` with OCI/registry sources
 
+**Requires.** compose>=2.40.2
+
 **What.** Pin a Compose version of at least 2.40.2 (every v5 release
 postdates the fix) before using the `include:` directive (COMPOSE-019)
 with OCI-artifact sources, or running a remote application with

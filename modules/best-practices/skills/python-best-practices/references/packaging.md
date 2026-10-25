@@ -701,6 +701,8 @@ def test_old_api_deprecated():
 
 ## PY-070 — `@warnings.deprecated` (PEP 702) for type-checker-visible deprecations
 
+**Requires.** python>=3.13 or typing-extensions>=4.5
+
 **What.** On Python 3.13+ (or `typing_extensions ≥ 4.5`), decorate
 deprecated callables and classes with
 [`@warnings.deprecated`](https://peps.python.org/pep-0702/). This

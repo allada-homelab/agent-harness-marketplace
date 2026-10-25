@@ -377,6 +377,8 @@ non-matching version.
 
 ## PY-088 — Use ruff range suppression for multi-line blocks
 
+**Requires.** ruff>=0.15
+
 **What.** Ruff 0.15+ supports block-level suppression:
 `# ruff: disable[CODE]` opens a suppressed range and `# ruff: enable[CODE]`
 closes it; `# ruff: file-ignore[CODE]` suppresses for a whole file. Use

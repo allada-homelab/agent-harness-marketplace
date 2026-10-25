@@ -342,6 +342,8 @@ gates.
 
 ## UVP-070 — Use `uv lock --upgrade-group <group>` to refresh one group in isolation
 
+**Requires.** uv>=0.11.4
+
 **What.** `uv lock --upgrade-group <group>` (added in uv 0.11.4) upgrades
 every package in one dependency group to its latest compatible version
 without touching packages in other groups — more targeted than
@@ -370,6 +372,8 @@ change, or a full `uv lock --upgrade` in a scheduled, reviewed PR.
 ---
 
 ## UVP-075 — Set a relative `exclude-newer` as a resolver-side release cooldown
+
+**Requires.** uv>=0.9.17
 
 **What.** Set `[tool.uv] exclude-newer` to a relative duration
 (`"7 days"`, `"1 week"`, or ISO 8601 `"P7D"`) so `uv lock` ignores any

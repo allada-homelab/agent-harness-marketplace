@@ -129,6 +129,48 @@ Notes:
   whole-file stubs ("This reference file is a stub; rules forthcoming")
   rather than half-written rule entries.
 
+## Version floors (`Requires.`)
+
+A rule whose **How** only works from some version on carries one
+extra line directly under its heading, before **What.**, and repeats
+it at the end of its `SKILL.md` index line:
+
+```markdown
+## PY-081 — Use `TypedDict(closed=True)` for strict JSON shapes
+
+**Requires.** python>=3.15
+```
+
+```markdown
+- **PY-081** — Use `TypedDict(closed=True)` / `extra_items=` for strict JSON shapes. _(requires python>=3.15)_
+```
+
+Syntax: `<component>>=<version>` terms, each optionally followed by
+` (preview)` or ` (preview: <feature>)` for a feature behind a preview
+or experimental flag. `, ` joins terms that are all required; ` or `
+joins alternatives — e.g. `uv>=0.13 (preview: check-command), python>=3.12`
+or `python>=3.13 or typing-extensions>=4.10`. Components are
+lowercase names (`python`, `go`, `sqlite`, `postgres`, `uv`, `ruff`,
+`pytest`, `fastapi`, `starlette`, `compose`, `buildkit`,
+`dockerfile`).
+
+Add one when:
+
+- a **runtime** floor (`python`, `go`, `postgres`) is newer than the
+  oldest release upstream still supports (`sqlite`, which has no
+  support window: newer than the system library of the oldest
+  still-supported Ubuntu LTS and Debian stable);
+- a **tool or library** feature was added in the last 12 months or in
+  the current major line (skip floors every supported install
+  already meets);
+- the feature is **preview or experimental** — always, with the
+  `(preview…)` suffix.
+
+Not when the rule only mentions a version in passing but its advice
+holds below it. An agent applying a tagged rule compares the floor
+with the project's own (`requires-python`, `go.mod`'s `go` directive,
+the pinned tool) and, below it, reports that the rule does not apply.
+
 ## `SKILL.md` shape
 
 Every domain skill's `SKILL.md` follows this skeleton:
@@ -257,9 +299,11 @@ Run `tools/lint.sh` from the module root. It fails on:
 4. **Missing rule entry** — a rule ID in the `SKILL.md` rule index that has no matching `## RULE-NNN` header in `references/*.md`.
 5. **Dead cross-skill link** — a `[...](...)` link pointing to a path that doesn't exist.
 6. **Frontmatter format** — `name:` and `description:` fields present; `description:` is third-person heuristic check (doesn't start with "I", "You", "This skill").
+7. **`Requires.` syntax** — a `**Requires.**` line that doesn't match the grammar in "Version floors", or one that isn't directly under its rule heading.
+8. **`Requires.` agreement** — a rule's `SKILL.md` index suffix `_(requires …)_` and its reference `**Requires.**` line differ, or only one of them exists.
 
-Run `tools/lint.sh` before every PR; the marketplace's `bin/check.sh` is
-the CI gate and does not invoke it.
+Run `tools/lint.sh` before every PR; the marketplace's `bin/check.sh`,
+the CI gate, runs it too.
 
 ## What `tools/render-index.sh` produces
 

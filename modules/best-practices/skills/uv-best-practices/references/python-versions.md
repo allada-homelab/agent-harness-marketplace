@@ -371,6 +371,8 @@ test against the lockfile only. The matrix is library-specific.
 
 ## UVP-067 — Keep managed interpreters patched with `uv python upgrade`
 
+**Requires.** uv>=0.10.0
+
 **What.** `uv python upgrade` (stable since uv 0.10.0) upgrades a managed
 CPython install to the latest patch within its minor version and
 **auto-upgrades any virtual environments** pointing at the old patch.
