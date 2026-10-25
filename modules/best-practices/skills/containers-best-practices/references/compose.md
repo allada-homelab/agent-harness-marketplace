@@ -1445,10 +1445,12 @@ specifically for `devices.gpu`. That inconsistency was confusing.
 `gpus:` is a top-level service field with spec-documented
 standalone-Compose semantics, no Swarm caveats.
 
-It's also what the docs now lead with — examples on
-[docs.docker.com](https://docs.docker.com/compose/how-tos/gpu-support/)
-use `gpus:` exclusively for Compose ≥2.30. The longhand still works
-for backward compatibility.
+The [Compose file reference](https://docs.docker.com/reference/compose-file/services/#gpus)
+documents `gpus:` ("Requires: Docker Compose 2.30.0 and later") as
+"equivalent to a device request with an implicit gpu capability". The
+[GPU support how-to](https://docs.docker.com/compose/how-tos/gpu-support/)
+still shows only the `deploy.resources.reservations.devices` longhand,
+which keeps working.
 
 **How.** Common patterns:
 

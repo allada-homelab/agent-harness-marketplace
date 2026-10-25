@@ -8,7 +8,7 @@
 - SEC-004 — Build multi-platform with `buildx` only when needed
 - SEC-005 — Never leak `.git`, lockfile-only artifacts, or `node_modules` into images
 - SEC-006 — Use BuildKit secret mounts for build-time credentials
-- SEC-008 — Minimize `RUN` layers without sacrificing readability
+- SEC-008 — Combine related `RUN` steps; don't chase a minimum layer count
 - SEC-009 — Use the compose `secrets:` block, not environment variables
 - SEC-010 — Don't substitute ARGs in `@sha256:` digests; use literal version+digest pairs
 - SEC-011 — Add `.venv` (and other platform-specific build dirs) to `.dockerignore`
@@ -326,14 +326,16 @@ mirror URL). Default to "this is a secret" unless you're sure it isn't.
 
 ---
 
-## SEC-008 — Minimize `RUN` layers without sacrificing readability
+## SEC-008 — Combine related `RUN` steps; don't chase a minimum layer count
 
 **What.** Combine related steps into a single `RUN`, but don't chain
 unrelated work just to save a layer.
 
-**Why.** Each `RUN` produces a new layer. Layers have overhead (metadata,
-mount/unmount, potential cache misses), and old artifacts in a layer
-persist even if later `RUN` steps delete them. The classic example:
+**Why.** Each `RUN` produces a new layer, and files a layer writes
+persist in the image even if a later `RUN` deletes them. Layer *count*
+itself is no longer the target — Docker's best-practices guide dropped
+its "minimize the number of layers" advice in favor of multi-stage builds
+and build-cache ordering. The classic example:
 
 ```dockerfile
 # bad — temporary apt lists persist in layer 1, deleted in layer 2 but still occupy space
@@ -635,10 +637,11 @@ images regardless of stack.
 ## SEC-012 — Don't `COPY` `.env` files into images
 
 **What.** Reject any `COPY .env`, `COPY *.env`, `COPY .env.*`, or wildcard
-copy whose target resolves to a dotenv file. Even when `.dockerignore`
-excludes `.env*`, an *explicit* `COPY` instruction in the Dockerfile
-bypasses the ignore list — `.dockerignore` only filters the *implicit*
-build-context send for `COPY .` / `COPY src/`, not for named-file copies.
+copy whose target resolves to a dotenv file. `.dockerignore` filters
+the build context for every `COPY`, named files included — with `.env`
+excluded, `COPY .env /app/` fails with `"/.env": not found` and
+`COPY .env* /app/` silently copies nothing. The leak happens when `.env`
+is *not* ignored: then any of these, or a broad `COPY . .`, bakes it in.
 
 **Why.** `.env` files almost universally contain real secrets:
 `DATABASE_URL` with embedded password, `*_API_KEY`, `*_TOKEN`,
@@ -648,9 +651,9 @@ the file is recoverable from the prior layer via `docker save` /
 `docker history`. Anyone who can `docker pull` the image can extract the
 secret.
 
-It's also a redundant layer of risk on top of SEC-001: most teams expect
-`.dockerignore` to be the last line of defense, then a Dockerfile line
-explicitly names the very file the ignore list excluded. The fix is to
+A Dockerfile line that names `.env` only picks it up while `.env` is
+missing from `.dockerignore` (SEC-001) — so the line is a build break,
+a dead wildcard, or a live leak, never useful. The fix is to
 never reference `.env` from a Dockerfile at all — provide secrets at
 runtime via the compose `secrets:` block (SEC-009) or the orchestrator's
 secret store.

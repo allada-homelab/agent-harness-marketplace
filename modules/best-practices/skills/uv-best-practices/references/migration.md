@@ -6,7 +6,7 @@
 - UVP-060 — Use `migrate-to-uv` for poetry / pip-tools / PDM / Hatch — manually verify the resolver-output diff
 - UVP-061 — `uv export --format requirements.txt --no-hashes --no-dev` for downstream consumers; generate, never commit
 - UVP-062 — Prefer `uv export --format pylock.toml` over `requirements.txt` when downstream supports PEP 751
-- UVP-074 — Generate a CycloneDX SBOM with `uv export --format cyclonedx`
+- UVP-074 — Generate a CycloneDX SBOM with `uv export --format cyclonedx1.5`
 <!-- /toc -->
 
 Detailed entries for `UVP-060..UVP-062`. Covers migrating to uv from
@@ -268,12 +268,15 @@ target catches up.
 
 ---
 
-## UVP-074 — Generate a CycloneDX SBOM with `uv export --format cyclonedx`
+## UVP-074 — Generate a CycloneDX SBOM with `uv export --format cyclonedx1.5`
 
 **Requires.** uv>=0.9.11 (preview: sbom-export)
 
-**What.** Since uv 0.9.11, `uv export --format cyclonedx` emits a
-CycloneDX Software Bill of Materials from the resolved lockfile. This is
+**What.** Since uv 0.9.11, `uv export --format cyclonedx1.5` emits a
+CycloneDX v1.5 Software Bill of Materials from the resolved lockfile.
+It is still **experimental** in uv 0.13.5: without
+`--preview-features sbom-export` it warns that the format "may change
+without warning". This is
 distinct from `pylock.toml` (UVP-062): a lockfile is for *reproducible
 installs*; an SBOM is for *attestation and audit* (CVE scanning, license
 inventory, SBOM-aware deploy gates).
@@ -287,7 +290,7 @@ separate scanner that might misparse uv's lock format.
 **How.**
 
 ```bash
-uv export --format cyclonedx --no-dev -o sbom.json   # CI artifact
+uv export --format cyclonedx1.5 --preview-features sbom-export --no-dev -o sbom.json   # CI artifact
 ```
 
 **When NOT to apply.** Projects with no supply-chain compliance

@@ -9,7 +9,7 @@
 - UVP-053 — `uv version` manages the project version (uv 0.7+); use `uv self version` for the binary
 - UVP-054 — Resolution strategy for libraries: matrix-test `lowest-direct` and `highest`
 - UVP-067 — Keep managed interpreters patched with `uv python upgrade`
-- UVP-073 — uv's default managed Python is 3.14 since 0.9.0 — pin explicitly
+- UVP-073 — uv's default managed Python is 3.15 since 0.13.0 — pin explicitly
 <!-- /toc -->
 
 Detailed entries for `UVP-050..UVP-054`. Covers the
@@ -398,18 +398,19 @@ exact installed patch should manage the installer separately and set
 
 ---
 
-## UVP-073 — uv's default managed Python is 3.14 since 0.9.0 — pin explicitly
+## UVP-073 — uv's default managed Python is 3.15 since 0.13.0 — pin explicitly
 
-**What.** Since uv 0.9.0 (Oct 2025), uv's default managed Python is
-**3.14** (previously 3.13). A project initialized without a
-`.python-version`, on a machine with no pinned managed Python, gets 3.14.
+**What.** Since uv 0.13.0, uv's default stable Python is **3.15**
+(3.14 from uv 0.9.0, 3.13 before that). When no version is requested or
+pinned and no compatible interpreter is already installed, uv downloads
+3.15.
 Free-threaded 3.14 (`3.14t`) no longer requires an explicit opt-in flag.
 
 **Why.** This is a behavioral default change: a repo without
-`.python-version` that *implicitly* relied on 3.13 now silently gets 3.14
-on a fresh machine running uv ≥0.9. Libraries not yet tested against 3.14
-can surface new syntax warnings, deprecation behavior (e.g. deferred
-annotations), or compatibility breaks — at `uv run` time, not when you
+`.python-version` that *implicitly* relied on 3.14 now silently gets 3.15
+on a fresh machine running uv ≥0.13. Libraries not yet tested against 3.15
+can surface new syntax warnings, deprecation behavior, or compatibility
+breaks — at `uv run` time, not when you
 chose to upgrade.
 
 **How.** Anchor the runtime explicitly rather than inheriting the moving
@@ -419,7 +420,7 @@ default:
 uv python pin 3.12        # immune to uv's default-version changes
 ```
 
-Projects that *want* 3.14 should pin it too, so every contributor and CI
+Projects that *want* 3.15 should pin it too, so every contributor and CI
 agree on the minor.
 
 **When NOT to apply.** A project that deliberately tracks uv's latest

@@ -6,7 +6,7 @@
 - OBS-001 — `/healthz` is liveness (no dependency checks); `/readyz` is readiness (checks the database, 503 problem+json when it can't)
 - OBS-003 — OTel API always instrumented; SDK/exporters only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
 - OBS-004 — `X-Request-ID` reused if safe (else generated), echoed on every response, and stamped on every log line with the active `trace_id`/`span_id`
-- OBS-005 — HTTP metrics as OTel metrics pushed over OTLP, on the stable `http.server.request.duration` (`OTEL_SEMCONV_STABILITY_OPT_IN=http`); `OTEL_METRICS_EXPORTER=none` turns them off
+- OBS-005 — HTTP metrics as OTel metrics pushed over OTLP, on the stable `http.server.request.duration` (native on FastAPI 0.142+, else `OTEL_SEMCONV_STABILITY_OPT_IN=http`); `OTEL_METRICS_EXPORTER=none` turns them off
 - OBS-006 — Pure ASGI middleware, not Starlette's `BaseHTTPMiddleware`, for anything that sets a ContextVar (request id)
 <!-- /toc -->
 
@@ -98,7 +98,12 @@ sensible.
 
 ## OBS-003 — OTel API always instrumented; SDK/exporters only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
 
-**What.** A `from_environment()` factory returns the API's
+**What.** On FastAPI 0.142+, use the native telemetry: install
+`fastapi[standard]` (or `fastapi[opentelemetry]`) and set
+`FASTAPI_OTEL_AUTO_CONFIGURE=true`. FastAPI records HTTP spans, metrics
+and error logs against the API, and only when an OTLP endpoint is set does
+it create SDK providers with OTLP exporters, which it flushes at lifespan
+shutdown. On older FastAPI, a `from_environment()` factory returns the API's
 `NoOpTracerProvider` / `NoOpMeterProvider` when
 `OTEL_EXPORTER_OTLP_ENDPOINT` is unset or empty. When it's set, it builds
 SDK providers: a `TracerProvider` with a
@@ -119,7 +124,10 @@ variables, so a deployment configures them without app-specific
 settings.
 Sources: https://github.com/open-telemetry/opentelemetry-python/blob/v1.44.0/docs/api/index.rst,
 https://github.com/open-telemetry/opentelemetry-specification/blob/v1.61.0/specification/protocol/exporter.md,
-https://github.com/open-telemetry/opentelemetry-specification/blob/v1.61.0/specification/configuration/sdk-environment-variables.md
+https://github.com/open-telemetry/opentelemetry-specification/blob/v1.61.0/specification/configuration/sdk-environment-variables.md,
+https://fastapi.tiangolo.com/advanced/opentelemetry/
+
+> By default, FastAPI uses configured providers without adding exporters. When automatic setup is enabled and an OTLP endpoint is set in the environment, FastAPI adds an exporter for that destination to each enabled provider.
 
 > The OpenTelemetry Python API provides the core interfaces and no-op implementations for instrumenting applications with traces, metrics, and logs.
 
@@ -128,7 +136,22 @@ https://github.com/open-telemetry/opentelemetry-specification/blob/v1.61.0/speci
 
 > If `service.name` is also provided in `OTEL_RESOURCE_ATTRIBUTES`, then `OTEL_SERVICE_NAME` takes precedence.
 
-**How.**
+**How.** On FastAPI 0.142+:
+
+```python
+from fastapi import FastAPI
+
+# Probes would drown the real traffic.
+app = FastAPI(telemetry={"exclude": lambda scope: scope["path"] in {"/healthz", "/readyz"}})
+```
+
+Deploy with `FASTAPI_OTEL_AUTO_CONFIGURE=true`, `OTEL_SERVICE_NAME=myapp`
+and, for example, `OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318`.
+Instrument the SQLAlchemy engine against the global providers FastAPI
+sets (`SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)`)
+so an HTTP span and its SQL spans share a trace id.
+
+On older FastAPI, wire the providers by hand:
 
 ```python
 import os
@@ -191,9 +214,15 @@ spans share a trace id. Deploy with, for example,
 `OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318`.
 
 **When NOT to apply.** The spec gives `OTEL_EXPORTER_OTLP_ENDPOINT` a
-default (`http://localhost:4318`), so "unset means off" is this app's
-choice, not the spec's: a deployment that relies on a node-local
-collector at that default must set the variable explicitly. The
+default (`http://localhost:4318`), so "unset means off" is FastAPI's and
+this factory's choice, not the spec's: a deployment that relies on a node-local
+collector at that default must set the variable explicitly. FastAPI's
+auto-configuration supports only the `otlp`/`none` exporters over
+`http/protobuf`; anything else fails its setup with a logged warning and
+the app runs without export, so configure those providers yourself and
+pass `telemetry={"auto_configure": False}`. Pick one HTTP layer: when
+`FastAPIInstrumentor`'s middleware is present, the native HTTP telemetry
+steps aside. In the fallback the
 providers are wired by hand rather than by `opentelemetry-instrument`
 auto-configuration, so `OTEL_TRACES_EXPORTER` isn't honoured and of
 `OTEL_METRICS_EXPORTER` only `none` is (OBS-005); `OTEL_SDK_DISABLED`
@@ -289,10 +318,14 @@ optional.
 
 ---
 
-## OBS-005 — HTTP metrics as OTel metrics pushed over OTLP, on the stable `http.server.request.duration` (`OTEL_SEMCONV_STABILITY_OPT_IN=http`); `OTEL_METRICS_EXPORTER=none` turns them off
+## OBS-005 — HTTP metrics as OTel metrics pushed over OTLP, on the stable `http.server.request.duration` (native on FastAPI 0.142+, else `OTEL_SEMCONV_STABILITY_OPT_IN=http`); `OTEL_METRICS_EXPORTER=none` turns them off
 
-**What.** No `/metrics` scrape endpoint. With an endpoint configured
-(OBS-003), a `MeterProvider` with a
+**What.** No `/metrics` scrape endpoint. On FastAPI 0.142+, the native
+telemetry (OBS-003) records `http.server.request.duration` and
+`http.server.active_requests` itself, exports them over OTLP when an
+endpoint is set, and skips metric export when `OTEL_METRICS_EXPORTER=none`;
+no opt-in variable or factory code is needed. On older FastAPI, with an
+endpoint configured (OBS-003), a `MeterProvider` with a
 `PeriodicExportingMetricReader(OTLPMetricExporter())` receives the
 FastAPI and SQLAlchemy instrumentors' metrics. The image sets
 `OTEL_SEMCONV_STABILITY_OPT_IN=http`, so the FastAPI instrumentation
@@ -319,7 +352,8 @@ https://github.com/open-telemetry/opentelemetry-specification/blob/v1.61.0/speci
 
 > - `"none"`: No automatically configured exporter for metrics.
 
-**How.** In the OBS-003 factory:
+**How.** On FastAPI 0.142+, nothing beyond OBS-003's deployment
+variables. On older FastAPI, in the OBS-003 factory:
 
 ```python
 meter_provider: metrics.MeterProvider = metrics.NoOpMeterProvider()
@@ -339,8 +373,9 @@ ENV OTEL_SEMCONV_STABILITY_OPT_IN=http
 
 **When NOT to apply.** A Prometheus-only stack with no collector is
 simpler with a pull `/metrics` endpoint (the spec's `prometheus`
-exporter). Once the instrumentation's next major version emits only the
-stable conventions, the opt-in variable is dead and can go.
+exporter). The opt-in variable only steers the contrib instrumentation:
+drop it once the app uses FastAPI's native telemetry, or once the
+instrumentation's next major version emits only the stable conventions.
 
 ---
 

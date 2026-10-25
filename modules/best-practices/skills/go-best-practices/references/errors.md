@@ -4,7 +4,7 @@
 **Contents:**
 
 - GO-004 — Wrap errors with `%w` to preserve the cause
-- GO-005 — Match with `errors.Is` / `errors.As`, never `==`
+- GO-005 — Match with `errors.Is` / `errors.AsType`, never `==`
 - GO-006 — Return errors; don't `panic` or `os.Exit` in reusable code
 <!-- /toc -->
 
@@ -48,17 +48,18 @@ with no added context (`fmt.Errorf("%w", err)`) — that's pure noise.
 
 ---
 
-## GO-005 — Match with `errors.Is` / `errors.As`, never `==`
+## GO-005 — Match with `errors.Is` / `errors.AsType`, never `==`
 
 **What.** Test for a specific error *value* (sentinel) with `errors.Is(err,
-sentinel)` and for a specific error *type* with `errors.As(err, &target)` —
-the error first, a pointer to the target variable second.
-Comparing `err == sentinel` only works when the function you called returned
+sentinel)` and for a specific error *type* with `errors.AsType`, whose type
+argument names the target type and which returns the match and a bool. The older `errors.As(err, &target)` is
+equivalent but fills a target variable; the Go docs say "For most uses,
+prefer AsType". Comparing `err == sentinel` only works when the function you called returned
 exactly that value, unwrapped.
 
 **Why.** The moment any layer adds context with `%w` (GO-004) — which is the
 recommended pattern everywhere — `==` starts returning false for the same
-logical condition, silently. `errors.Is`/`As` walk the whole wrap chain. A
+logical condition, silently. `errors.Is`/`AsType` walk the whole wrap chain. A
 typical break shows up as "404 handling stopped working" right after someone
 "improved" error messages, and nobody notices until a user hits the wrong
 branch.
@@ -70,16 +71,16 @@ if errors.Is(err, sql.ErrNoRows) {
     return nil, errNotFound   // callers map this to 404 / NotFound
 }
 
-var netErr *net.OpError
-if errors.As(err, &netErr) {
+if netErr, ok := errors.AsType[*net.OpError](err); ok {
     // typed extraction — e.g. retry on transient network errors
     log.Printf("network op failed: %v", netErr)
 }
 ```
 
-`errors.As` walks the wrap chain (following `Unwrap`) and assigns the first
-error whose type matches the target. Prefer it over a type switch on the raw
-`err`, which only ever sees the outermost wrapper.
+`errors.AsType` walks the wrap chain (following `Unwrap`) and returns the
+first error whose type matches `E`. Prefer it over a type switch on the raw
+`err`, which only ever sees the outermost wrapper. Keep `errors.As` for a
+target type that doesn't implement `error`, which `AsType` can't express.
 
 **When NOT to apply.** Direct `==` on errors you produced yourself in the same
 scope and returned unwrapped is fine (rare). For *sentinel-style* errors that

@@ -85,7 +85,8 @@ raw user content behind `template.HTML`.
 
 **What.** Security-sensitive randomness — API keys, session tokens, password
 salts, password-reset codes, unguessable IDs — comes from `crypto/rand`
-(`crypto/rand.Read` or `crypto/rand.Int(rand.Reader, max)`). `math/rand` (and
+(`crypto/rand.Text`, `crypto/rand.Read`, or `crypto/rand.Int(rand.Reader,
+max)`). `math/rand` (and
 `math/rand/v2`) is a deterministic PRNG for simulation and tests; anything an
 attacker can observe or predict must not come from it.
 
@@ -100,11 +101,11 @@ uniform randomness.
 **How.**
 
 ```go
+token := rand.Text()   // ≥128 bits, base32 — for tokens, passwords, reset codes
+
 b := make([]byte, 32)
-if _, err := rand.Read(b); err != nil {
-    return err        // crypto/rand can fail (entropy unavailable)
-}
-token := base64.RawURLEncoding.EncodeToString(b)   // URL-safe, no padding
+rand.Read(b)           // never returns an error since Go 1.24; crashes instead
+key := base64.RawURLEncoding.EncodeToString(b)   // URL-safe, no padding
 ```
 
 Prefer `crypto/rand.Int` when you need a range without modulo bias.

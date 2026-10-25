@@ -413,6 +413,7 @@ triage. Distroless images contain no shell, package manager, or `coreutils`
 | `*-slim` (Debian) | 70–150 MB | Familiar tooling, glibc, full wheel compatibility | Larger than minimal alternatives | Default — works with the widest software set |
 | Alpine | 5–15 MB | Very small | musl libc; some Python/Node native deps still ship glibc-only wheels | Pure Go/Rust; Node when tested with musl; Python only when you've verified your full dependency tree has musllinux wheels |
 | Distroless (`static`/`base`/`cc`) | 2–30 MB | No shell, no package manager, smaller attack surface | No shell = harder to debug; need glibc-aware build stage | Production runtime for compiled binaries; Python via `gcr.io/distroless/python3` (~50 MB+, not as tiny) |
+| Docker Hardened Images (`dhi.io/*`) | Varies by variant | Minimal/distroless runtime variants, non-root by default, SBOMs + SLSA Build L3 provenance; community tier is Apache 2.0 | Pull needs `docker login dhi.io` (Docker account); runtime variants lack a shell/package manager, so build stages use the `-dev` tags | Production runtime when you want a vendor-patched minimal base with attestations and accept a Docker-account dependency in CI |
 | Scratch | ~0 MB | Smallest possible | Bring your own everything (certs, timezone data, libc if needed) | Static Go/Rust binaries; when you really know what you need |
 
 For **Python on Alpine specifically**: the old "always quintuples build
@@ -673,7 +674,10 @@ include `${TARGETARCH}` in every `--mount=type=cache` `id=` so each arch
 has its own cache slice. Otherwise concurrent multi-arch builds corrupt
 each other's caches.
 
-**Why.** Cache mount IDs default to the `target=` path, which is arch-blind.
+**Why.** Cache mount IDs default to the `target=` path, which is arch-blind,
+and the default `sharing=shared` lets concurrent writers use one mount.
+(Docker's docs document both but prescribe no per-arch `id=`; the
+scoping is community practice derived from them.)
 A single builder running both amd64 and arm64 stages simultaneously sees
 both writing to the same cache mount — and the resulting state contains
 native binaries from both architectures mixed together. Common failure

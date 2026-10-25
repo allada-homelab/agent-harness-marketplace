@@ -65,7 +65,7 @@ See [`references/project-layout.md`](./references/project-layout.md).
 See [`references/typing.md`](./references/typing.md).
 
 - **PY-010** — Use modern syntax: `X | Y` (PEP 604), `list[str]` / `dict[str, int]` (PEP 585), `Self` (PEP 673). No `Union[X, Y]`, no `typing.List`.
-- **PY-011** — Default to `basedpyright` (or `pyright`) for new projects; stay on `mypy` for established codebases unless conformance gaps block you. `pyrefly` (Meta, stable 1.0) is a fast new option worth evaluating when you don't need mypy plugins; `ty` (Astral) is still beta.
+- **PY-011** — Default to `pyright` (or `basedpyright`) for new projects; stay on `mypy` for established codebases unless conformance gaps block you. `pyrefly` (Meta, stable 1.0) is a fast new option worth evaluating when you don't need mypy plugins; `ty` (Astral) is still beta.
 - **PY-012** — Configure strict mode in `pyproject.toml` (`[tool.mypy] strict = true` or `[tool.pyright] typeCheckingMode = "strict"`).
 - **PY-013** — `Protocol` for structural interfaces (duck typing with type safety); `abc.ABC` only when enforced inheritance is required.
 - **PY-014** — Use `if TYPE_CHECKING:` for type-only imports + `from __future__ import annotations` at the top of files that need forward refs (on Python 3.14+ deferred evaluation is the default, so the future import is no longer needed for forward refs — see PY-080).
@@ -167,4 +167,4 @@ them).
 
 See [`references/packaging.md`](./references/packaging.md).
 
-- **PY-078** — Profile with `scalene` (local, line-level CPU + memory + native time) or `py-spy` (production sampling, attach by PID) *before* reaching for `mypyc`, Cython, or Rust extensions.
+- **PY-078** — Profile with `scalene` (local, line-level CPU + memory + native time) or `py-spy` (production sampling, attach by PID) — or, on Python 3.15+, the stdlib `profiling.sampling` (Tachyon) — *before* reaching for `mypyc`, Cython, or Rust extensions.

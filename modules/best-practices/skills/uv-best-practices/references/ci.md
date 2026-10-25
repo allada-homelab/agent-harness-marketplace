@@ -91,9 +91,11 @@ config; the cost of a compromised CI run can be high.
 
 The action caches `~/.cache/uv` (the wheel/source-dist cache), keyed
 on hashed `**/uv.lock`, `**/pyproject.toml`, and `**/requirements*.txt`
-contents. It runs `uv cache prune --ci` in post-run to keep the
-cache lean (strips pre-built wheels that are cheap to re-download,
-keeps source-built wheels that are expensive).
+contents. With `prune-cache: true` it runs `uv cache prune --ci`
+before saving to keep the cache lean (strips pre-built wheels that are
+cheap to re-download, keeps source-built wheels that are expensive).
+That input defaulted to `true` through v8.x and is `false` since
+v9.0.0, so set it explicitly if you want pruning.
 
 Do **not** add `actions/cache` on top of this for the uv directory —
 duplicated work. And **never** cache `.venv/` across runs.
@@ -215,18 +217,17 @@ env:
   UV_LINK_MODE: "copy"
 ```
 
-**Why.** uv's default `link-mode` is `hardlink` — it hardlinks wheel
-contents from the cache directly into the venv, which is fast and
-cheap on disk. Hardlinks require both sides to be on the *same*
-filesystem; cross-filesystem hardlinks fall back to copy *with a
-warning*:
+**Why.** uv's default `link-mode` is `clone` (copy-on-write) on macOS
+and Linux and `hardlink` on Windows — it links wheel contents from the
+cache directly into the venv, which is fast and cheap on disk. Both
+require the cache and venv to be on the *same* filesystem; across
+filesystems uv falls back to a full copy *with a warning* (uv 0.13.5,
+default mode):
 
 ```
-warning: Failed to hardlink files; falling back to full copy.
-This may lead to degraded performance.
-If the cache and target directories are on different filesystems,
-hardlinking may not be supported.
-Set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.
+warning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.
+         If the cache and target directories are on different filesystems, hardlinking may not be supported.
+         If this is intentional, set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.
 ```
 
 The warning isn't *wrong* — performance is genuinely degraded — but
@@ -272,7 +273,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 **When NOT to apply.** Local development on a single filesystem (the
 common case for macOS / Linux dev machines). Don't set
-`UV_LINK_MODE=copy` there — hardlinks are faster, and the warning
+`UV_LINK_MODE=copy` there — clone/hardlink is faster, and the warning
 won't fire.
 
 ---
@@ -413,9 +414,10 @@ gate.
 
 **Requires.** uv>=0.10.0
 
-**What.** `uv workspace list` (stable since uv 0.10.0; `--output-format
-json` for scripting) lists every member of a uv workspace with name and
-path. Use it to drive per-member CI matrices instead of hardcoding the
+**What.** `uv workspace list` (stable since uv 0.10.0) prints every
+member of a uv workspace, root included, one name per line (`--paths`
+prints absolute paths instead; there is no `--output-format json` in uv
+0.13.5). Use it to drive per-member CI matrices instead of hardcoding the
 member list.
 
 **Why.** A hardcoded member list in CI drifts the moment someone adds a
@@ -426,7 +428,7 @@ the set from `[tool.uv.workspace]` globs, so it can't fall out of sync.
 **How.**
 
 ```bash
-for m in $(uv workspace list --output-format json | jq -r '.[].name'); do
+for m in $(uv workspace list); do
   echo "::group::$m"; uv run --package "$m" pytest; echo "::endgroup::"
 done
 ```

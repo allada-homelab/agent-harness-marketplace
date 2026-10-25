@@ -211,8 +211,8 @@ constants.
 
 ## FAPI-006 — Version the API by URL path prefix (`/v1`), not by header
 
-**What.** Expose versions as `app.include_router(v1, prefix="/v1")` /
-`app.include_router(v2, prefix="/v2")`. Avoid header-based versioning
+**What.** Expose major versions as `app.include_router(v1, prefix="/v1")` /
+`app.include_router(v2, prefix="/v2")`. Avoid header-based major versioning
 (`Accept-Version: 2`) in FastAPI-generated APIs.
 
 **Why.** Header versioning is absent from default access logs,
@@ -234,3 +234,7 @@ app.include_router(v2_router, prefix="/v2", tags=["v2"])
 contract that already standardizes on media-type versioning
 (`Accept: application/vnd.api.v2+json`), or a single-consumer internal
 API where you roll forward in place and never run two versions at once.
+Finer-grained versions *within* a path major version can ride a header or
+query parameter: Google's interface-based versioning keeps `v1` in the
+path and sends a date version in `X-Goog-Api-Version` or `$apiVersion`
+(https://google.aip.dev/185).

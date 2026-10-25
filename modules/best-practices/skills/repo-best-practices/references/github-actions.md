@@ -10,7 +10,7 @@
 Detailed entries for `REPO-009..REPO-010`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
-Citations point at the [zizmor docs](https://github.com/zizmorcore/zizmor/blob/v1.30.1/docs/index.md)
+Citations point at the [zizmor docs](https://docs.zizmor.sh/)
 and GitHub's [secure use reference](https://docs.github.com/en/actions/reference/security/secure-use.md).
 
 ---
@@ -18,7 +18,8 @@ and GitHub's [secure use reference](https://docs.github.com/en/actions/reference
 ## REPO-009 — Statically audit GitHub Actions workflows (zizmor) for injection, over-broad permissions, persisted credentials and unpinned actions
 
 **What.** zizmor runs as a pre-commit hook (and thus in CI via
-`just hooks`, REPO-007) against every workflow file, flagging
+`just hooks`, REPO-007) against every workflow file (plus
+`.github/dependabot.yml`, `action.yml` and `.pre-commit-{config,hooks}.yaml`), flagging
 template-injection, over-broad `permissions:`, persisted credentials, and
 unpinned actions.
 
@@ -28,7 +29,7 @@ untrusted `${{ }}` input into a shell step, a token with more scope than
 the job needs, a checkout step that leaves credentials persisted for a
 later malicious step to exfiltrate). Catching them statically, before
 merge, is cheaper than an incident review.
-Source: https://github.com/zizmorcore/zizmor/blob/v1.30.1/docs/index.md
+Source: https://docs.zizmor.sh/
 
 > `zizmor` is a static analysis tool for your CI/CD.
 > It can find and fix security issues in common CI/CD setups,
@@ -40,7 +41,7 @@ Source: https://github.com/zizmorcore/zizmor/blob/v1.30.1/docs/index.md
   # Static analysis of the workflows themselves: template injection, over-broad permissions,
   # credential persistence, unpinned actions.
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: fa412071e4f5d44d44f9e365f4676f9df92456a2  # frozen: v1.30.1
+    rev: c92afdf2c6ca336aaa8f39e2bd8d48f62dbd8e1f  # frozen: v1.31.1
     hooks:
       - id: zizmor
 ```

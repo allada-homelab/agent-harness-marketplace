@@ -344,8 +344,8 @@ the types, but Python itself never evaluates them.
 
 On **Python 3.14+**, deferred annotation evaluation (PEP 649/749) is the
 default, so the future import is no longer needed for forward references
-or for the `TYPE_CHECKING` pattern — though it still works and is not yet
-deprecated (see PY-080). The `if TYPE_CHECKING:` block itself stays
+or for the `TYPE_CHECKING` pattern — it is deprecated as of 3.14 but still
+works unchanged (see PY-080). The `if TYPE_CHECKING:` block itself stays
 necessary regardless of version: deferred evaluation fixes *forward
 references*, but the import cycle is still real at runtime if the import
 isn't guarded. Libraries that introspect annotations at runtime (Pydantic,
@@ -701,9 +701,9 @@ and don't need it.
 PEP 749) the default, so `from __future__ import annotations` is no
 longer needed for forward references or type-only annotations. Once a
 project's floor is 3.14+, removing the import is reasonable cleanup —
-but it is **optional**, not a correctness fix: the import still works and
-is **not yet deprecated** (a `DeprecationWarning` is expected only after
-Python 3.13 reaches end-of-life, ~2029).
+but it is **optional**, not a correctness fix: the 3.14 docs mark the
+import **deprecated**, yet it still works unchanged on 3.14 and removal
+won't happen until after Python 3.13 reaches end-of-life (2029).
 
 **Why.** Keeping a now-unnecessary import is harmless, but on a
 3.14+-only codebase it's dead style that suggests the file predates the
