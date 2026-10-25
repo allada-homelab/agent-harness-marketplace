@@ -24,6 +24,7 @@
 - SEC-022 — Sign images with keyless cosign and verify with an explicit identity
 - SEC-023 — Prefer a hardened/minimal verified base for production runtimes
 - SEC-024 — Run the daemon rootless (or with userns-remap) on hosts that run untrusted workloads
+- SEC-027 — Scan the built image in CI and fail the job on severity
 <!-- /toc -->
 
 Detailed explanation for each `SEC-NNN` rule. Covers `.dockerignore`,
@@ -314,7 +315,20 @@ RUN --mount=type=secret,id=gh_token,env=GH_TOKEN \
     gh release download v1.2.3 --repo myorg/tool
 ```
 
+Add `required=true` to a secret the step can't do without. By default
+(`required` "Defaults to `false`") a secret the build wasn't given is
+just missing: checked live, an `env=` secret mount built without
+`--secret` ran its step with an empty variable and the build exited 0. With `required=true` "the instruction
+errors out when the secret is unavailable" (`secret tok: not found`,
+rc=1):
+
+```dockerfile
+RUN --mount=type=secret,id=gh_token,env=GH_TOKEN,required=true \
+    gh release download v1.2.3 --repo myorg/tool
+```
+
 Cite: [build secrets](https://docs.docker.com/build/building/secrets/),
+[Dockerfile reference — RUN --mount=type=secret](https://docs.docker.com/reference/dockerfile/#run---mounttypesecret),
 [build variables — build args in provenance](https://docs.docker.com/build/building/variables/).
 
 For runtime secrets (DB passwords, API keys), use orchestrator-native
@@ -1337,6 +1351,16 @@ cosign verify ghcr.io/org/app@sha256:... \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 ```
 
+Verify third-party bases the same way before adopting a new digest pin
+(SEC-010), against the *publisher's* identity. For images with GitHub
+artifact attestations, `--owner` is that binding. Checked live: the uv
+image verified with `--owner astral-sh` (rc=0) and failed with a wrong
+owner (rc=1, HTTP 404). UV-001 applies this to the uv image:
+
+```bash
+gh attestation verify --owner astral-sh oci://ghcr.io/astral-sh/uv:0.13.5
+```
+
 **When NOT to apply.** Projects with no supply-chain threat model, or
 fully air-gapped builds with no Fulcio/Rekor reachability — there, sign
 with a managed key out-of-band instead, but still verify with a pinned
@@ -1433,5 +1457,44 @@ files owned by remapped UIDs) cost more than they protect. Dev
 containers and tools that assume the rootful daemon's socket and UID
 mapping break under a rootless daemon — keep those on the default
 daemon deliberately rather than by accident.
+
+---
+
+## SEC-027 — Scan the built image in CI and fail the job on severity
+
+**What.** After the build and before the push or deploy, scan the image
+you just built and fail the job on findings at or above a chosen severity.
+With Trivy that's `--exit-code 1` plus `--severity`. Scan the digest you're
+about to ship, not a tag.
+
+**Why.** A scan that only reports doesn't block anything: "By default,
+Trivy exits with code 0 even when security issues are detected. Use the
+`--exit-code` option if you want to exit with a non-zero exit code." A
+pipeline with a bare `trivy image` step is green on every CVE. SEC-021
+pins the scanner itself; this rule makes its result gate the release.
+Checked live (Trivy 0.69.3, pinned by digest): `alpine:3.15.0` gave
+`Total: 15 (HIGH: 14, CRITICAL: 1)` and rc=1; `alpine:3.22` gave rc=0.
+
+**How.**
+
+```bash
+# fail on fixable HIGH/CRITICAL in the image about to ship
+trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed \
+  ghcr.io/org/app@sha256:...
+```
+
+Run the scanner image or action pinned per SEC-021. `--ignore-unfixed`
+("display only fixed vulnerabilities") keeps the gate on findings a
+rebuild or bump can actually clear.
+
+Cite: [Trivy — exit code](https://trivy.dev/docs/latest/configuration/others/#exit-code),
+[Trivy — filtering](https://trivy.dev/docs/latest/configuration/filtering/).
+
+**When NOT to apply.** Scheduled rescans of images already in production
+should report and open issues rather than fail a build nobody is waiting
+on. A finding you've triaged as not exploitable belongs in the scanner's
+ignore file (`.trivyignore`) with a reason, not in a lower threshold.
+Don't gate a security hotfix on unrelated pre-existing findings; ship it,
+then fix those.
 
 ---

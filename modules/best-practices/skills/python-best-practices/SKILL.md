@@ -78,6 +78,7 @@ See [`references/typing.md`](./references/typing.md).
 - **PY-082** — Use `TypeForm[T]` (PEP 747) for functions that accept a type expression at runtime, instead of `type[T]` or `Any`. _(requires python>=3.15 or typing-extensions>=4.13)_
 - **PY-092** — On basedpyright, start from `typeCheckingMode = "recommended"` (or `"all"`), not `"strict"` — strict leaves every basedpyright-only rule off; downgrade per rule for untyped deps.
 - **PY-093** — Under basedpyright, suppress with `# pyright: ignore[rule]`; pyright ignores the code in `# type: ignore[code]`, so it silences the whole line.
+- **PY-098** — Use `sentinel("NAME")` (PEP 661) instead of `_MISSING = object()` — readable repr, survives copy/pickle, narrows in type checkers. _(requires python>=3.15 or typing-extensions>=4.16)_
 
 ## Rules — Linting & formatting
 
@@ -146,7 +147,7 @@ See [`references/packaging.md`](./references/packaging.md).
 - **PY-062** — Publish from CI via **Trusted Publishing (OIDC)**, not API tokens. Use `pypa/gh-action-pypi-publish` with `id-token: write` permission.
 - **PY-063** — Build with `uv build` or `python -m build` — both produce sdist + wheel together. Verify with `twine check dist/*` before upload.
 - **PY-064** — Upload to TestPyPI first to catch metadata / README rendering issues. PyPI doesn't allow overwriting a release.
-- **PY-065** — Dev dependencies go in `[project.optional-dependencies]` (or `[dependency-groups]` per UVP-001), never `[project.dependencies]`. End-users of your library shouldn't install pytest.
+- **PY-065** — Dev dependencies go in `[project.optional-dependencies]` (or `[dependency-groups]` per UVP-001 — a PyPA standard, `pip install --group` on pip 25.1+), never `[project.dependencies]`. End-users of your library shouldn't install pytest.
 - **PY-066** — `warnings.warn(..., DeprecationWarning, stacklevel=2)` for public API deprecations. `stacklevel=2` points the warning at the caller, not your library's internals.
 - **PY-070** — `@warnings.deprecated` (PEP 702, 3.13+ / `typing_extensions`) for type-checker-visible deprecations — flags call sites inline at edit time, not just at runtime. _(requires python>=3.13 or typing-extensions>=4.5)_
 - **PY-072** — Use PEP 723 inline script metadata (`# /// script` block) for standalone scripts with deps; `uv run script.py` consumes it directly.
@@ -168,3 +169,4 @@ them).
 See [`references/packaging.md`](./references/packaging.md).
 
 - **PY-078** — Profile with `scalene` (local, line-level CPU + memory + native time) or `py-spy` (production sampling, attach by PID) — or, on Python 3.15+, the stdlib `profiling.sampling` (Tachyon) — *before* reaching for `mypyc`, Cython, or Rust extensions.
+- **PY-095** — Use `lazy import` / `lazy from ... import` (PEP 810) for heavy modules most runs don't use; module scope only, never around side-effect imports. _(requires python>=3.15)_

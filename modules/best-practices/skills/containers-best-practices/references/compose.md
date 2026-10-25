@@ -28,6 +28,7 @@
 - COMPOSE-027 — Use `post_start` / `pre_stop` lifecycle hooks for privileged setup/teardown
 - COMPOSE-028 — Require Compose ≥2.40.2 (or v5) before using `include:` with OCI/registry sources
 - COMPOSE-029 — Set `init: true` on services whose image has no init process
+- COMPOSE-030 — Validate the merged model in CI with `docker compose config --quiet`
 <!-- /toc -->
 
 Detailed explanation for each `COMPOSE-NNN` rule.
@@ -1715,5 +1716,37 @@ Cite: [compose reference — init](https://docs.docker.com/reference/compose-fil
 `ENTRYPOINT` (DOCKER-006 applied) — a second init adds nothing. It does
 not replace DOCKER-006 for images you build: bake the init into the image
 so it behaves the same under `docker run`, Kubernetes and Compose.
+
+---
+
+## COMPOSE-030 — Validate the merged model in CI with `docker compose config --quiet`
+
+**What.** Run `docker compose config --quiet` in CI, with the same `-f`
+files, profiles and env the deploy uses, before any `up`/`deploy` step.
+
+**Why.** `config` "merges the Compose files set by `-f` flags, resolves
+variables in the Compose file, and expands short-notation into the
+canonical format"; `-q` / `--quiet` means "Only validate the configuration,
+don't print anything". It exits non-zero on the errors that otherwise
+surface at deploy time — checked live on Compose v5.6.0, each rc=1:
+
+- a misspelled key: `services.web.prots false schema`
+- a dangling reference: `service "web" depends on undefined service "db"`
+- a required variable left unset: `required variable TAG is missing a value`
+
+**How.**
+
+```bash
+# same files + env as the deploy; non-zero exit fails the job
+docker compose -f compose.yaml -f compose.prod.yaml --env-file .env.ci config --quiet
+```
+
+Cite: [docker compose config](https://docs.docker.com/reference/cli/docker/compose/config/).
+
+**When NOT to apply.** Don't read a pass as "the config is correct".
+It validates schema shape and references, not values the engine reads
+later: `restart: sometimes` passed with rc=0 in the same test. It also
+can't see host state (ports in use, missing bind-mount sources, images
+that don't exist). Keep a smoke `up` for those.
 
 ---

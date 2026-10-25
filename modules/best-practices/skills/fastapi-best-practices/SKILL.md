@@ -40,6 +40,7 @@ See [`references/structure.md`](./references/structure.md).
 - **FAPI-004** — Use a `lifespan` context manager for startup/shutdown; never `@app.on_event`.
 - **FAPI-005** — Share startup-created resources via `app.state`, not module-level globals.
 - **FAPI-006** — Version the API by URL path prefix (`/v1`), not by header.
+- **FAPI-094** — Type lifespan state: yield a `TypedDict` and read it through one dependency that casts to `Request[AppState]`; never annotate a route parameter as `Request[AppState]`. _(requires starlette>=0.52)_
 
 ## Rules — Models & validation
 
@@ -67,6 +68,7 @@ See [`references/dependencies.md`](./references/dependencies.md).
 - **FAPI-030** — Declare dependencies as `Annotated[T, Depends(fn)]` and reuse via type aliases.
 - **FAPI-031** — Wrap `yield` dependencies in `try/finally` so cleanup runs on error.
 - **FAPI-032** — Use `Security(fn, scopes=[...])` (not `Depends`) for OAuth2 scope-bearing auth.
+- **FAPI-095** — Use `Depends(fn, scope="function")` when a `yield` dependency must close before the response is sent (the default closes after it). _(requires fastapi>=0.121)_
 
 ## Rules — Path operations
 
@@ -76,6 +78,7 @@ See [`references/path-operations.md`](./references/path-operations.md).
 - **FAPI-041** — Use `status.HTTP_*` constants and semantic codes (`201` create, `204` delete).
 - **FAPI-042** — Use cursor (keyset) pagination for large collections; offset only for small bounded sets.
 - **FAPI-043** — Use `BackgroundTasks` only for fire-and-forget work; escalate durable jobs to a queue.
+- **API-004** — Generate typed clients from a committed `openapi.json` with stable operation IDs (`generate_unique_id_function`); a test fails when the schema drifts.
 
 ## Rules — Error handling
 
@@ -85,6 +88,7 @@ See [`references/errors.md`](./references/errors.md).
 - **FAPI-051** — Override `RequestValidationError` to stabilize the 422 response shape.
 - **FAPI-052** — Register a catch-all `Exception` handler for a uniform `500` body; don't log in it (the server already does).
 - **FAPI-053** — Use a structured `detail` (dict with a code) for machine-readable errors.
+- **API-003** — Return RFC 9457 `application/problem+json` bodies (`type`, `title`, `status`, string `detail`) for public HTTP API errors.
 
 ## Rules — Security
 

@@ -17,6 +17,7 @@
 - PY-082 — Use `TypeForm[T]` for functions that accept a type expression at runtime
 - PY-092 — On basedpyright, start from `typeCheckingMode = "recommended"` (or `"all"`), not `"strict"`
 - PY-093 — Under basedpyright, suppress with `# pyright: ignore[rule]`, not `# type: ignore[code]`
+- PY-098 — Use `sentinel("NAME")` (PEP 661) instead of `_MISSING = object()`
 <!-- /toc -->
 
 Detailed entries for `PY-010..PY-019` plus selected newer rules
@@ -901,5 +902,45 @@ pyright (for example, a library with a mypy CI job plus pyright
 users). There, keep `# type: ignore[mypy-code]` for mypy and add the
 pyright form on the same line only where pyright also reports an
 error.
+
+---
+
+## PY-098 — Use `sentinel("NAME")` (PEP 661) instead of `_MISSING = object()`
+
+**Requires.** python>=3.15 or typing-extensions>=4.16
+
+**What.** For a "no value given" marker that must differ from `None`,
+define `MISSING = sentinel("MISSING")` at module scope (a builtin on
+3.15; `typing_extensions` before that), annotate parameters as
+`int | MISSING`, and compare with `is`.
+
+**Why.** An `object()` sentinel fails in three ways. Its repr is
+`<object object at 0x...>` in error messages and docs. `copy.deepcopy`
+and `pickle` produce a different object, so an `is` check fails after a
+copy or across processes. And type checkers cannot narrow it: after `if
+default is MISSING: raise`, a parameter typed `int | object` is still
+`int | object`, so `return default` is an error in both mypy and pyright.
+A `sentinel` has the repr `MISSING`, keeps its identity through
+`copy.deepcopy` and `pickle`, and narrows correctly in mypy and pyright.
+
+**How.**
+
+```python
+MISSING = sentinel("MISSING")   # before 3.15: from typing_extensions import sentinel
+
+
+def get(key: str, default: int | MISSING = MISSING) -> int:
+    if default is MISSING:
+        raise KeyError(key)
+    return default              # narrowed to int
+```
+
+**When NOT to apply.** Use `None` as the default when `None` is not a
+meaningful value. Pickling works only for a sentinel bound at module or
+class scope under its own name; one made inside a function cannot be
+pickled. Backport caveat: pyright 1.1.414 does not know
+`typing_extensions.sentinel` yet ("unknown import symbol"). Until it
+does, import the soft-deprecated alias `typing_extensions.Sentinel`,
+which both pyright and mypy accept.
 
 ---

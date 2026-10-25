@@ -6,6 +6,7 @@
 - GO-007 — Pass `context.Context` as the first parameter of blocking/I-O functions; never store it in a struct
 - GO-008 — Bound every goroutine's lifetime; a goroutine without a stop path is a leak
 - GO-009 — Use `golang.org/x/sync/errgroup` for fan-out that cancels on first error
+- GO-022 — Expose iteration as `iter.Seq`/`iter.Seq2`, not channels or callbacks; stop when `yield` returns false
 <!-- /toc -->
 
 Detailed entries for `GO-007..GO-009`. Each follows the four-part
@@ -128,3 +129,56 @@ use `errgroup.Group` without `WithContext` or a plain `WaitGroup` if you must
 collect every result. `errgroup` does not bound concurrency (no semaphore): a
 worker pool needs an explicit cap (buffered-channel semaphore) on top. For a
 trivial loop with no error path or I/O, a plain loop is simpler than any group.
+
+---
+
+## GO-022 — Expose iteration as `iter.Seq`/`iter.Seq2`, not channels or callbacks; stop when `yield` returns false
+
+**What.** A function or method that walks a sequence returns
+`iter.Seq[V]` (or `iter.Seq2[K, V]` for pairs), so callers write `for v :=
+range s.All()` and can pass it to `slices.Collect` or other iterator
+adapters. Inside the iterator, return as soon as `yield` returns false.
+Name it after the sequence (`All`, `Backward`, `Lines`), following the
+`iter` package conventions.
+
+**Why.** The older shapes each have a cost. An iterator fed by a channel
+needs a producer goroutine, and that goroutine blocks forever when the
+consumer `break`s early: a leak (GO-008). A custom callback
+(`Walk(func(V) bool)`) makes every API invent its own stop protocol.
+`iter.Seq` is the one shape that `range` and the standard library accept.
+The rule inside the iterator is strict: `yield` returning false means the
+loop body has exited. An iterator that ignores it panics on the caller's
+`break` with `runtime error: range function continued iteration after
+function for loop body returned false` (Go 1.27.3).
+
+**How.**
+
+```go
+type Set[V comparable] struct{ m map[V]struct{} }
+
+// All returns an iterator over the set's elements.
+func (s *Set[V]) All() iter.Seq[V] {
+    return func(yield func(V) bool) {
+        for v := range s.m {
+            if !yield(v) {
+                return // the caller broke out of its loop
+            }
+        }
+    }
+}
+
+for v := range set.All() {
+    if v == target {
+        break // safe: All stops on the false yield
+    }
+}
+vals := slices.Collect(set.All())
+```
+
+**When NOT to apply.** Return a slice when the data is small, already in
+memory, and the caller always wants all of it. A pipeline that is
+concurrent by design (workers that fan out) still uses channels.
+Range-over-func needs `go 1.23` or later in `go.mod`; with `go 1.21` the
+build fails with "requires go1.23 or later". An iterator over a stream
+that cannot restart (a reader's lines) is single-use, and the `iter` docs
+say its doc comment "should document this fact".

@@ -24,9 +24,12 @@
 - PROMPT-018 — Keep long-horizon state in files and git
 - PROMPT-019 — A text-only `end_turn` is not completion
 - PROMPT-020 — Parallel tool calls; never guess parameters
+- PROMPT-021 — Omit sampling parameters
+- PROMPT-022 — Cap an agentic loop with `task_budget`
+- PROMPT-023 — Opus 5.5: explore connected apps before acting
 <!-- /toc -->
 
-Detailed entries for `PROMPT-001..PROMPT-020` — system prompts and
+Detailed entries for `PROMPT-001..PROMPT-023` — system prompts and
 messages sent to current Claude models through the API (Fable 5.1,
 Mythos 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5, and the earlier current
 models). Several rules are model-specific; each says which models. Check
@@ -39,6 +42,7 @@ General
 - PROMPT-001 — Pass the colleague test
 - PROMPT-002 — Structure with XML tags; documents first, query last
 - PROMPT-003 — No prefilled final assistant turn
+- PROMPT-021 — Omit sampling parameters
 
 Thinking and effort
 - PROMPT-004 — Adaptive thinking and `effort`, not `budget_tokens`
@@ -64,6 +68,8 @@ Agentic coding
 Unattended loops
 - PROMPT-019 — A text-only `end_turn` is not completion
 - PROMPT-020 — Parallel tool calls; never guess parameters
+- PROMPT-022 — Cap an agentic loop with `task_budget`
+- PROMPT-023 — Opus 5.5: explore connected apps before acting
 
 ---
 
@@ -428,3 +434,99 @@ Make independent tool calls in parallel. If a required parameter is unknown, ask
 
 **When NOT to apply.** Calls that depend on each other's results run in
 sequence.
+
+---
+
+## PROMPT-021 — Omit sampling parameters
+
+**What.** Don't send `temperature`, `top_p` or `top_k`. Claude Opus 4.7
+and later models accept only the default values; the Opus 5.5 migration
+guide lists the three as removed. Under API version `2026-10-21`, a
+request that sends any of them returns a 400 on every model, even at the
+default value.
+
+**Why.** Code that sets `temperature: 0` for "deterministic" output
+breaks on the new models and the new API version, and it never
+guaranteed identical outputs on earlier models either. On a model that
+still accepts other values (Sonnet 4.6 under `2023-06-01`), the setting
+has no replacement once removed.
+
+**How.** Delete the parameters; steer variety and consistency in the
+prompt or with `effort`.
+
+```diff
+ client.messages.create(
+     model="claude-opus-5-5",
+     max_tokens=16000,
+-    temperature=0,
+     messages=messages,
+ )
+```
+
+**When NOT to apply.** A request on an older model (Sonnet 4.6) that
+relies on a non-default value can stay on API version `2023-06-01` and
+keep it.
+
+---
+
+## PROMPT-022 — Cap an agentic loop with `task_budget`
+
+**What.** For long agentic loops, set `output_config.task_budget` (beta
+header `task-budgets-2026-03-13`): one token budget for the whole loop,
+covering thinking, tool calls, tool results and output. The model sees a
+running countdown and finishes gracefully as it runs out. It is advisory;
+`max_tokens` stays the hard per-request cap. Supported on Opus 4.7 and
+later, Sonnet 5.5, Haiku 5.5, Fable and Mythos 5 and 5.1; not on Sonnet
+5, the 4.6 models or Haiku 4.5.
+
+**Why.** `effort` sets how hard Claude thinks per step, not how much work
+it does across steps, so a loop without a budget can run long and stop
+mid-action at `max_tokens`. A budget that is too small has the opposite
+failure: Claude may decline the task, scope it down hard or stop early.
+The minimum is 20,000 tokens; less returns a 400.
+
+**How.** Set it once on the first request and let the server count;
+decrementing it client-side under-reports the budget and breaks the
+prompt cache. Pass `remaining` only after your own code compacts the
+history.
+
+```python
+client.beta.messages.stream(
+    model="claude-opus-5-5",
+    max_tokens=128000,
+    output_config={"effort": "high", "task_budget": {"type": "tokens", "total": 64000}},
+    messages=messages,
+    betas=["task-budgets-2026-03-13"],
+)
+```
+
+**When NOT to apply.** Single-turn requests, unsupported models, and
+Claude Code or Cowork sessions, which don't support task budgets.
+
+---
+
+## PROMPT-023 — Opus 5.5: explore connected apps before acting
+
+**What.** In an Opus 5.5 agent that works across several connected apps
+(email, documents, spreadsheets, CRM records), add one system-prompt
+sentence telling it to look through the relevant sources, including ones
+the task doesn't name, before it changes anything.
+
+**Why.** Anthropic's Opus 5.5 prompting guide: "Claude Opus 5.5 tends to
+get to work quickly", while the information a task depends on "often sits
+somewhere the request doesn't explicitly mention" (a policy in an old
+email thread, a rule on another spreadsheet tab). In Anthropic's testing
+the instruction made Opus 5.5 complete noticeably more multi-app tasks
+correctly at both `medium` and `max` effort, for slightly more tool calls
+and tokens.
+
+**How.** The guide's sentence:
+
+```text
+Before taking any action, explore broadly with tool calls: list and open the emails, documents, spreadsheet tabs and records across the available apps that could be relevant to this task, including ones the task does not explicitly mention, and use what you find.
+```
+
+**When NOT to apply.** Agents whose searchable records hold untrusted
+content: the instruction tells the model to act on what it finds (keep
+that content out, or skip the sentence). Also tightly specified tasks,
+and models other than Opus 5.5 until their own guide says the same.

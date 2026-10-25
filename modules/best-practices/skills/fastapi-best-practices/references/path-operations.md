@@ -7,6 +7,7 @@
 - FAPI-041 — Use `status.HTTP_*` constants and semantic codes (`201` create, `204` delete)
 - FAPI-042 — Use cursor (keyset) pagination for large collections; offset only for small bounded sets
 - FAPI-043 — Use `BackgroundTasks` only for fire-and-forget work; escalate durable jobs to a queue
+- API-004 — Generate typed clients from a committed OpenAPI schema; fail CI when it drifts
 <!-- /toc -->
 
 Detailed entries for `FAPI-040..FAPI-043`. Each follows the four-part
@@ -154,3 +155,63 @@ async def signup(data: SignupIn, bg: BackgroundTasks) -> UserOut:
 **When NOT to apply.** The rule is the boundary itself — anything
 retryable, long-running, or that must survive a restart crosses it and
 belongs in a task queue, not `BackgroundTasks`.
+
+---
+
+## API-004 — Generate typed clients from a committed OpenAPI schema; fail CI when it drifts
+
+**What.** Give operations stable IDs with `generate_unique_id_function`
+(tag + function name), export `app.openapi()` to a committed
+`openapi.json`, and generate clients from that file. For TypeScript,
+FastAPI's docs use Hey API (`npx @hey-api/openapi-ts -i ./openapi.json -o
+src/client`); OpenAPI Generator covers other languages. A test compares
+the committed file with `app.openapi()`, so a route change cannot ship
+without a regenerated schema.
+
+**Why.** A hand-written client drifts from the server without any
+signal: a renamed field or a new required parameter becomes a 422 in
+production. A generated client makes it a build error. FastAPI's docs
+say "if you build the client, it will error out if you have any
+mismatch". By default FastAPI builds operation IDs from the function
+name, path and method (`createItemItemsPost`), so moving a route renames
+the generated method. A tag + name ID keeps the names stable. The
+committed schema also makes every API change visible in review.
+
+**How.**
+
+```python
+# app/main.py
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
+
+
+def unique_id(route: APIRoute) -> str:
+    return f"{route.tags[0]}-{route.name}"   # every route needs a tag
+
+
+app = FastAPI(generate_unique_id_function=unique_id)
+```
+
+```python
+# tests/test_openapi.py
+import json
+import pathlib
+
+from app.main import app
+
+
+def test_openapi_schema_is_current() -> None:
+    committed = json.loads(pathlib.Path("openapi.json").read_text())
+    assert app.openapi() == committed, "schema drifted: regenerate openapi.json and the clients"
+```
+
+```bash
+python -c "import json; from app.main import app; print(json.dumps(app.openapi(), indent=2))" > openapi.json
+npx @hey-api/openapi-ts -i ./openapi.json -o src/client
+```
+
+**When NOT to apply.** An API with no typed-language clients, or whose
+only client is Python code in the same repo that imports the Pydantic
+models directly. With the tag-based ID function, an untagged route
+raises `IndexError` at import, so tag every route or fall back to the
+route name. FastAPI emits OpenAPI 3.1, so the generator must support 3.1.

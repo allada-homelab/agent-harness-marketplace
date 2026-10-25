@@ -434,7 +434,7 @@ done
 ```
 
 **When NOT to apply.** A workspace whose CI just syncs and tests the root
-(`uv sync --locked` covers all members in one job) doesn't need
+(`uv sync --locked --all-packages` covers all members in one job, UVP-077) doesn't need
 enumeration — this is for *per-member* build/test/publish steps.
 
 ---

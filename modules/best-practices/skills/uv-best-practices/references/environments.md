@@ -11,6 +11,7 @@
 - UVP-025 — Use `[[tool.uv.index]]` named indexes; mark private indexes `explicit = true`
 - UVP-066 — `uv run --with` builds an ephemeral overlay; add `--no-project --isolated` for true isolation
 - UVP-068 — Use `--active` to make uv respect an activated venv
+- UVP-077 — In a workspace, `uv sync --all-packages` installs every member; bare `uv sync` does not
 <!-- /toc -->
 
 Detailed entries for `UVP-020..UVP-025`. Covers production sync
@@ -410,6 +411,16 @@ export UV_INDEX_INTERNAL_PASSWORD="${INTERNAL_TOKEN}"
 ```
 
 In CI, set those via the runner's secret store; never commit credentials.
+On a developer machine, `uv auth login` (uv 0.8.15+) stores them once
+instead; read the secret from stdin so it stays out of shell history:
+
+```bash
+uv auth login pypi.corp.example --username alice --password -   # prompts on stdin
+```
+
+The store is a plaintext file (`~/.local/share/uv/credentials/credentials.toml`
+on Unix); the encrypted system keychain backend is the `native-auth`
+preview feature. Source: https://docs.astral.sh/uv/concepts/authentication/cli/
 
 **When NOT to apply.** Single-index projects that only use public
 PyPI — no `[[tool.uv.index]]` block needed; PyPI is the default.
@@ -476,5 +487,39 @@ uv sync --active        # sync into the activated venv, not ./.venv
 `UV_PROJECT_ENVIRONMENT` (UVP-022) instead. Don't bake `--active` into
 CI scripts, where the "active" venv may be an unrelated leftover from
 a previous step; pin the path explicitly there.
+
+---
+
+## UVP-077 — In a workspace, `uv sync --all-packages` installs every member; bare `uv sync` does not
+
+**What.** At a workspace root, `uv sync` installs the root package and
+its dependencies only. A member the root doesn't depend on is left out,
+and because sync is exact by default, a later bare `uv sync` removes a
+member installed earlier. Use `uv sync --all-packages` to install every
+member into the shared `.venv`, or `--package <name>` for one; `uv run`
+and `uv export` take the same flags.
+
+**Why.** The lockfile covers the whole workspace (`uv lock` "operates on
+the entire workspace at once"), so it is easy to assume sync does too. In
+uv 0.13.5, with a root and an independent member `memb`, `uv sync
+--locked` installed only `ws`; `uv sync --locked --all-packages`
+installed `ws` and `memb`; a following bare `uv sync --locked` uninstalled
+`memb` again. Tests that import a member then fail with
+`ModuleNotFoundError` in CI but pass on a machine that last ran
+`--all-packages`.
+Source: https://docs.astral.sh/uv/concepts/projects/workspaces/
+
+> `uv lock` operates on the entire workspace at once, while `uv run` and `uv sync` operate on the workspace root by default, though both accept a `--package` argument
+
+**How.**
+
+```bash
+uv sync --locked --all-packages          # CI: every member, from the lockfile
+uv run --all-packages pytest             # keeps the members installed while running
+```
+
+**When NOT to apply.** Workspaces whose root depends on every member
+already get them all from bare `uv sync`. Per-member CI jobs use
+`--package` instead (UVP-069).
 
 ---

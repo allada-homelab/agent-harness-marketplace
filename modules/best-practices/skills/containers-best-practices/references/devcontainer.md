@@ -29,6 +29,7 @@
 - DEVC-024 — Headless configs must do what the editor does for you
 - DEVC-025 — A Docker socket in the container is root on the host — make it an explicit choice
 - DEVC-026 — Pin dev container base images to image-major + language + OS, or a digest
+- DEVC-027 — Set `"overrideCommand": false` when the image's own command must run
 <!-- /toc -->
 
 Detailed explanation for each `DEVC-NNN` rule.
@@ -1542,5 +1543,45 @@ Cite: [devcontainers/images python manifest (tag scheme)](https://github.com/dev
 **When NOT to apply.** Throwaway or exploratory containers where picking
 up the newest OS automatically is the point. Even then, expect feature
 option breakage on OS switches.
+
+---
+
+## DEVC-027 — Set `"overrideCommand": false` when the image's own command must run
+
+**What.** With an `image` or `build` (Dockerfile) config, the tool replaces
+the image's `CMD` with a sleep loop unless you set
+`"overrideCommand": false`. Set it when the container only works with its
+default command running (a service image, an entrypoint that starts a
+daemon). Compose configs already default to `false`.
+
+**Why.** The spec: overrideCommand "Tells devcontainer.json supporting
+services / tools whether they should run `/bin/sh -c "while sleep 1000; do
+:; done"` when starting the container instead of the container's default
+command … Defaults to true for when using an image Dockerfile and false
+when referencing a Docker Compose file." The failure is silent: the
+container starts and attaches, but the server never ran. Checked live with
+devcontainer CLI 0.87.0 on an image whose `CMD` writes a marker file:
+with the default, PID 1 was the CLI's `while sleep 1 & wait $!` loop and
+no marker existed; with `false`, PID 1 was the image's command and the
+marker was there. The same image under a Compose config ran its `CMD`
+with no setting.
+
+**How.**
+
+```jsonc
+{
+  "build": { "dockerfile": "Dockerfile" },
+  // the image's CMD starts the service this container exists to run
+  "overrideCommand": false
+}
+```
+
+Cite: [devcontainer.json reference — overrideCommand](https://containers.dev/implementors/json_reference/).
+
+**When NOT to apply.** Ordinary dev images whose `CMD` is a shell or
+exits immediately (most language base images) — the default keeps the
+container alive, and turning it off makes it stop as soon as that command
+ends. Compose configs don't need it; set it there only to opt *in* to the
+sleep loop (`true`) for a service whose command exits.
 
 ---

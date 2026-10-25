@@ -53,6 +53,7 @@ See [`references/concurrency.md`](./references/concurrency.md).
 - **GO-007** — Pass `context.Context` as the first parameter of blocking/I-O functions; never store it in a struct field.
 - **GO-008** — Bound every goroutine's lifetime with a stop path (WaitGroup, errgroup, cancelable ctx) — a goroutine without one is a leak.
 - **GO-009** — Use `golang.org/x/sync/errgroup` for fan-out that cancels on first error.
+- **GO-022** — Expose iteration as `iter.Seq`/`iter.Seq2` (range-over-func), not channels or callbacks; return as soon as `yield` returns false.
 
 ## Rules — HTTP (stdlib net/http)
 
@@ -61,6 +62,7 @@ See [`references/http.md`](./references/http.md).
 - **GO-010** — Set `ReadHeaderTimeout`/`ReadTimeout`/`WriteTimeout`/`IdleTimeout` on `http.Server`; wrap slow handlers in `http.TimeoutHandler`.
 - **GO-011** — Outbound HTTP: carry context and give the client a timeout; never lean on `http.DefaultClient`'s zero timeout.
 - **GO-020** — Shut down `http.Server` gracefully on SIGINT/SIGTERM via `signal.NotifyContext` + `srv.Shutdown`; treat `http.ErrServerClosed` as the clean sentinel.
+- **GO-021** — Route with `http.ServeMux` patterns (`"GET /items/{id}"`, `{path...}`, `{$}`) and `r.PathValue`; the module's `go` line must be 1.22+ or patterns silently 404.
 
 ## Rules — Security
 
@@ -89,3 +91,6 @@ See [`references/testing.md`](./references/testing.md).
 
 - **GO-017** — Table-driven tests with subtests; `t.Helper()` in test helpers; `t.Parallel()` only for truly independent cases.
 - **GO-018** — Gate CI on `go test -race` over all packages; the race detector is the only tool that finds data races, and a green run is evidence, not proof.
+- **GO-023** — Test every custom `slog.Handler` with `testing/slogtest.Run`; the built-in handlers need nothing.
+- **GO-024** — Pass `t.Context()` to whatever a test starts that takes a context; it is canceled just before `t.Cleanup` runs.
+- **GO-025** — Fuzz parsers of untrusted input with `f.Fuzz`; run bounded `go test -fuzz` per target in CI and commit `testdata/fuzz/` findings.

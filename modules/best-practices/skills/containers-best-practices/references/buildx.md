@@ -13,6 +13,7 @@
 - BUILDX-008 — `--sbom=true --provenance=mode=max` + registry-compatibility caveats
 - BUILDX-009 — Use `bake` matrix targets + composable attributes for multi-variant builds
 - BUILDX-010 — Pin the Docker GitHub Actions by commit SHA
+- BUILDX-011 — Gate build inputs with a build policy (`Dockerfile.rego`), loaded explicitly in CI
 <!-- /toc -->
 
 Detailed explanation for each `BUILDX-NNN` rule. These cover the
@@ -662,5 +663,70 @@ and let Dependabot/Renovate bump the SHA with the version comment.
 
 **When NOT to apply.** Nothing real for CI pipelines — always pin. A
 throwaway local experiment that never runs in CI can float.
+
+---
+
+## BUILDX-011 — Gate build inputs with a build policy (`Dockerfile.rego`), loaded explicitly in CI
+
+**Requires.** buildx>=0.31 (preview), buildkit>=0.27
+
+**What.** Put a Rego policy next to the Dockerfile (`Dockerfile.rego`; for
+`app.Dockerfile`, `app.Dockerfile.rego`) that allows only the inputs you
+approve, such as digest-pinned images, approved registries, or checksummed
+URLs. Buildx loads it automatically. In CI, also name it with
+`--policy reset=true,filename=Dockerfile.rego`, so a deleted or renamed
+policy fails the job instead of being skipped.
+
+**Why.** Review rules like DOCKER-002 and SEC-017 are conventions; nothing
+stops a PR from adding `FROM someimage:latest`. A policy is checked before
+the build starts: buildx "evaluates each input against the policy before
+the build starts" and "allows the build to proceed only if all inputs
+pass". "If Buildx can't find a matching `.rego` file, the build proceeds
+without policy evaluation." The docs offer `--policy strict=true` for this
+case, but on buildx v0.38.0 a build with `strict=true` and no policy file
+still exited 0. The explicit `filename=` failed (`policy file
+Dockerfile.rego not found`, rc=1). Docker's docs say "Build policies is
+currently an experimental feature" (Buildx ≥0.31.0, BuildKit ≥0.27.0).
+Buildx v0.38.0 printed no experimental warning and needed no flag.
+
+**How.** `Dockerfile.rego` — allow the local context, and images only when
+pinned by digest:
+
+```rego
+package docker
+
+default allow := false
+
+allow if input.local
+
+allow if {
+    input.image
+    contains(input.image.ref, "@sha256:")
+}
+
+decision := {"allow": allow}
+```
+
+```bash
+# CI: load exactly this policy; fails if the file is missing
+docker buildx build --policy reset=true,filename=Dockerfile.rego .
+# debug a denial: shows each input and the decision
+docker buildx build --progress=plain --policy log-level=debug .
+```
+
+Checked live (buildx v0.38.0, BuildKit v0.34.0): `FROM alpine:3.20` failed
+with `source "docker-image://docker.io/library/alpine:3.20" not allowed by
+policy: action DENY` (rc=1). The same image pinned `@sha256:` built
+(rc=0). `docker buildx policy eval docker-image://alpine:3.20` tests a
+rule without a build (`ERROR: policy denied`, rc=1).
+
+Cite: [build policies](https://docs.docker.com/build/policies/),
+[using build policies](https://docs.docker.com/build/policies/usage/).
+
+**When NOT to apply.** Below Buildx 0.31 / BuildKit 0.27. The feature is
+experimental, so its input fields and flags can change (the strict-mode
+behavior above already differs from the docs). Pin the buildx version in
+CI before relying on it (BUILDX-010). Local exploratory builds can rely on
+auto-loading alone.
 
 ---

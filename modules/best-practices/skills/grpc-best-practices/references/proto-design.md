@@ -9,6 +9,7 @@
 - GRPC-019 — Reserve enum `0` for a `_UNSPECIFIED` sentinel; never put a real value there
 - GRPC-020 — Model time with `google.protobuf.Timestamp`/`Duration`, not raw `int64` or strings
 - GRPC-021 — Paginate unbounded `List` RPCs with `page_size`/`page_token`/`next_page_token`
+- GRPC-022 — Write new schemas in protobuf editions, pinned to the newest edition every generator in the build supports
 <!-- /toc -->
 
 Detailed entries for `GRPC-001..GRPC-003` and `GRPC-019..GRPC-021`. Each follows the four-part
@@ -270,3 +271,60 @@ response is simpler and is what GRPC-009 recommends. And pagination is for
 client-driven paging, not continuous feeds: when the client wants everything as
 fast as the server can produce it, server streaming (GRPC-009/010) is the right
 tool.
+
+---
+
+## GRPC-022 — Write new schemas in protobuf editions, pinned to the newest edition every generator in the build supports
+
+**Requires.** protoc>=32 or buf>=1.68
+
+**What.** New `.proto` files start with `edition = "2024";` instead of
+`syntax = "proto3";`. Editions are the protobuf language versions that
+replace proto2 and proto3. Behavior comes from named features
+(`features.field_presence`, `features.enum_type`,
+`features.utf8_validation`), each with a default per edition that a file
+or field can override. Choose the edition by your toolchain, not by the
+newest release: protoc or buf, *and every language plugin and runtime you
+generate for*, must support it.
+
+**Why.** Editions remove proto3's main trap by default. Singular fields
+have explicit presence (`field_presence` defaults to `EXPLICIT` in 2023
+and 2024, `IMPLICIT` in proto3), so "unset" versus zero (GRPC-002) works
+without remembering `optional`. But editions change faster than the
+toolchains. Edition 2026 shipped in protoc 36.0 (2026-08-20) and buf
+1.75.0 (2026-10-21). Even so, the current stable Go plugin rejects it
+(protoc-gen-go v1.36.12: "use of edition 1002 not yet supported by the
+Go Protobuf runtime"), and so does Python's grpcio-tools 1.84.1 ("Edition
+2026 is later than the maximum supported edition 2024"). Edition 2024
+generated and compiled for both. An edition also changes the generated
+code, not only the schema syntax. In Go, Edition 2024 makes the Opaque
+API the default, so `&pb.GetItemRequest{Id: ...}` no longer compiles and
+callers use builders and setters (`pb.GetItemRequest_builder{...}.Build()`,
+`HasId()`).
+
+**How.**
+
+```proto
+edition = "2024";
+
+package items.v1;
+
+option go_package = "example.com/items/gen/items/v1;itemsv1";
+
+message GetItemRequest {
+  string id = 1;                                             // explicit presence by default
+  int32 page_size = 2 [features.field_presence = IMPLICIT]; // proto3 behavior where zero == unset is fine
+}
+```
+
+To convert an existing proto3 file, the protobuf docs recommend
+Prototiller, which adds the feature settings that keep proto3 behavior.
+
+**When NOT to apply.** Existing proto3 files can stay as they are: every
+toolchain still supports proto3, and a conversion changes the generated
+API (the Go Opaque default) for every consumer. If any generator in your
+matrix (a language plugin, the gRPC plugin, a gateway or validation
+plugin) lacks Edition 2024, use 2023 (protoc 27+) or proto3. Never move to
+a newer edition before all of them support it. protobuf.dev itself
+disagrees on the current edition (the overview says 2024, the support
+table lists 2026), so check the plugins, not the docs.

@@ -6,6 +6,7 @@
 - GO-010 — Set timeouts on `http.Server`; wrap slow handlers in `http.TimeoutHandler`
 - GO-011 — Outbound HTTP: carry context and give the client a timeout
 - GO-020 — Shut down `http.Server` gracefully on SIGINT/SIGTERM
+- GO-021 — Route with `http.ServeMux` method and wildcard patterns; read wildcards with `r.PathValue`
 <!-- /toc -->
 
 Detailed entries for `GO-010..GO-011` and `GO-020`. Each follows the four-part
@@ -166,3 +167,51 @@ start protocol-specific graceful shutdown, but should not wait for shutdown to
 complete") plus its own connection registry. And if the shutdown context
 expires, `Shutdown` returns the context's error with handlers still running;
 reach for `srv.Close` only when you genuinely want the abrupt stop.
+
+---
+
+## GO-021 — Route with `http.ServeMux` method and wildcard patterns; read wildcards with `r.PathValue`
+
+**What.** Register handlers on the standard `http.ServeMux` with the Go
+1.22 pattern syntax, `[METHOD ][HOST]/[PATH]`: `"GET /items/{id}"`,
+`"GET /files/{path...}"` (the rest of the path), and `"GET /{$}"` (exactly
+`/`). Read a wildcard with `r.PathValue("id")`. Don't hand-parse
+`r.URL.Path`, and don't add a third-party router just to get methods and
+path parameters.
+
+**Why.** Prefix routing with `strings.Split` and `if r.Method != ...` checks
+in each handler is code that gets method handling wrong (no 405, no
+`Allow` header) and mis-parses paths. The mux does this once. On Go
+1.27.3: a POST to a `GET`/`DELETE` route gets `405` with `Allow: DELETE,
+GET, HEAD`, a `GET` pattern also matches `HEAD`, the most specific pattern
+wins, and two conflicting patterns panic at registration instead of one
+shadowing the other at runtime. The trap is the `go` line in `go.mod`,
+not the toolchain version. In a module that says `go 1.21`, `"GET
+/items/{id}"` matches nothing: `GET /items/5` returns 404 and nothing
+reports an error. `PathValue` at least fails the build there
+("requires go1.22 or later (module is go1.21)").
+
+**How.**
+
+```go
+mux := http.NewServeMux()
+mux.HandleFunc("GET /items/{id}", getItem)
+mux.HandleFunc("DELETE /items/{id}", deleteItem)
+mux.HandleFunc("GET /files/{path...}", serveFile) // remainder, slashes included
+mux.HandleFunc("GET /{$}", home)                  // exactly "/", not every path
+
+func getItem(w http.ResponseWriter, r *http.Request) {
+    id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+    if err != nil {
+        http.Error(w, "bad id", http.StatusBadRequest)
+        return
+    }
+    fmt.Fprintf(w, "item %d", id)
+}
+```
+
+**When NOT to apply.** Patterns the mux cannot express still need a
+router or your own parsing: wildcards must be whole segments
+(`"/b_{bucket}"` is invalid), and there are no regex constraints. Raise a
+module's `go` line to 1.22 or later before you rely on patterns. Make sure
+`GODEBUG=httpmuxgo121=1` is not set, because it restores the old matching.

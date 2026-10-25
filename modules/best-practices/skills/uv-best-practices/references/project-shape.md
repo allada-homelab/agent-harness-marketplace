@@ -518,6 +518,23 @@ conflicts = [
 Each entry in `conflicts` is an array of 2+ extras/groups; the outer
 array can hold multiple independent conflict sets.
 
+In a workspace, all members share one lockfile, so extras in *different*
+members can conflict too. Declare those in the root `pyproject.toml` with
+the `package` key (stable; uv 0.13.5 locks it with no preview warning):
+
+```toml
+[tool.uv]
+conflicts = [
+  [
+    { package = "member1", extra = "cpu" },
+    { package = "member2", extra = "gpu" },
+  ],
+]
+```
+
+`{ package = "member1" }` with no `extra` names that member's own
+`[project.dependencies]`.
+
 **When NOT to apply.** Extras / groups that *can* coexist — the
 common case. Adding entries to `conflicts` for compatible extras
 makes uv fork resolution unnecessarily, bloating the lockfile and

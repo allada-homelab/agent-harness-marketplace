@@ -35,6 +35,8 @@ _Use when writing, reviewing, or auditing Claude Code configuration or Claude pr
 | [`CC-022`](skills/claude-code-best-practices/references/claude-md.md#cc-022) | Subdirectory CLAUDE.md loads when its directory is touched and is summarized away at compaction. |
 | [`CC-023`](skills/claude-code-best-practices/references/claude-md.md#cc-023) | Tell Claude what to preserve when the conversation compacts. |
 | [`CC-024`](skills/claude-code-best-practices/references/claude-md.md#cc-024) | A checked-in CLAUDE.md has an owner and is audited with `/doctor` and `/doctor prompt-audit`. |
+| [`CC-080`](skills/claude-code-best-practices/references/claude-md.md#cc-080) | Auto memory holds one developer's learned corrections; rules the team or CI must follow stay in CLAUDE.md. _(requires claude-code>=2.1.59)_ |
+| [`CC-081`](skills/claude-code-best-practices/references/claude-md.md#cc-081) | `AGENTS.md` loads only when no project `CLAUDE.md` or `CLAUDE.local.md` exists; import it with `@AGENTS.md` to share one file. _(requires claude-code>=2.1.277)_ |
 | [`CC-025`](skills/claude-code-best-practices/references/rules.md#cc-025) | Scope rules with `paths:`; an unscoped rule loads in every session like CLAUDE.md. |
 | [`CC-026`](skills/claude-code-best-practices/references/rules.md#cc-026) | One short concern per rule file. |
 | [`CC-027`](skills/claude-code-best-practices/references/rules.md#cc-027) | A cross-cutting concern is one path-scoped rule, not copies in several nested CLAUDE.md files. |
@@ -110,6 +112,9 @@ _Use when writing, reviewing, or auditing Claude Code configuration or Claude pr
 | [`PROMPT-018`](skills/claude-code-best-practices/references/prompts.md#prompt-018) | Keep long-horizon state in files and git. |
 | [`PROMPT-019`](skills/claude-code-best-practices/references/prompts.md#prompt-019) | A text-only `end_turn` is not completion; nudge on open items, at most two or three times. |
 | [`PROMPT-020`](skills/claude-code-best-practices/references/prompts.md#prompt-020) | Parallel tool calls for independent operations; never guess parameters. |
+| [`PROMPT-021`](skills/claude-code-best-practices/references/prompts.md#prompt-021) | Omit `temperature`, `top_p` and `top_k`: Claude 4.7 and later accept only the defaults, and API version `2026-10-21` rejects them on every model. |
+| [`PROMPT-022`](skills/claude-code-best-practices/references/prompts.md#prompt-022) | Cap a whole agentic loop with the advisory `output_config.task_budget` (beta); `max_tokens` stays the hard per-request limit. |
+| [`PROMPT-023`](skills/claude-code-best-practices/references/prompts.md#prompt-023) | Opus 5.5 multi-app agents: tell the model to explore the connected apps before acting. |
 
 ## containers-audit
 
@@ -155,6 +160,7 @@ _Use when working with Dockerfiles, docker-compose/compose.yml, buildx, dev cont
 | [`DOCKER-031`](skills/containers-best-practices/references/dockerfile.md#docker-031) | Use `COPY --parents` (Dockerfile ≥1.20) to preserve source directory structure instead of flattening or post-copy `mkdir`. |
 | [`DOCKER-032`](skills/containers-best-practices/references/dockerfile.md#docker-032) | Cap heavy `RUN` steps with build-time resource limits (`--resource cpu=,memory=`) on shared builders. _(requires buildkit>=0.31, dockerfile>=1.25)_ |
 | [`DOCKER-033`](skills/containers-best-practices/references/dockerfile.md#docker-033) | Pin `RUN --network=none` on steps that must not touch the network, to enforce reproducibility. |
+| [`DOCKER-035`](skills/containers-best-practices/references/dockerfile.md#docker-035) | Bind-mount build-only inputs (`RUN --mount=type=bind`, output written outside the read-only mount) instead of `COPY`ing them into a layer and the build cache. |
 | [`DEVC-001`](skills/containers-best-practices/references/devcontainer.md#devc-001) | Map host UID/GID to avoid file-ownership pain on bind mounts (`updateRemoteUserUID`; it skips taken UIDs, is off on macOS, only re-owns `$HOME`, and misfires under rootless Docker). |
 | [`DEVC-002`](skills/containers-best-practices/references/devcontainer.md#devc-002) | Put long-running installs in the **image**, not `postCreateCommand`. |
 | [`DEVC-003`](skills/containers-best-practices/references/devcontainer.md#devc-003) | Use official `features` for common tooling instead of hand-rolling; `:1` pins the feature major, the `version` option is the tool version. |
@@ -181,6 +187,7 @@ _Use when working with Dockerfiles, docker-compose/compose.yml, buildx, dev cont
 | [`DEVC-024`](skills/containers-best-practices/references/devcontainer.md#devc-024) | Configs started headless (CLI, CI, agents) must do what VS Code does for you: agent forwarding, gitconfig, known_hosts, port forwarding, GPG. |
 | [`DEVC-025`](skills/containers-best-practices/references/devcontainer.md#devc-025) | A Docker socket (docker-outside-of-docker) is root on the host — every credential boundary is moot with it, especially with auto-approve agents; make it an explicit, documented choice. |
 | [`DEVC-026`](skills/containers-best-practices/references/devcontainer.md#devc-026) | Pin mcr dev container images to `<image-major>-<lang>-<os>` (e.g. `python:3-3.14-trixie`) or a digest; short tags float across image majors and OS releases, which breaks features. |
+| [`DEVC-027`](skills/containers-best-practices/references/devcontainer.md#devc-027) | Set `"overrideCommand": false` when the image's `CMD` must run: image/Dockerfile configs default to `true` (CMD replaced by a sleep loop), Compose configs to `false`. |
 | [`COMPOSE-001`](skills/containers-best-practices/references/compose.md#compose-001) | Use `depends_on` with `condition: service_healthy`, not bare `depends_on`; add `restart: true` (≥2.17) to restart on dependency updates and `required: false` (≥2.20) for optional dependencies. |
 | [`COMPOSE-002`](skills/containers-best-practices/references/compose.md#compose-002) | Pick named volumes vs bind mounts deliberately; know when each is correct. |
 | [`COMPOSE-003`](skills/containers-best-practices/references/compose.md#compose-003) | Use `env_file` instead of inline `environment` for secrets-adjacent values. |
@@ -206,6 +213,7 @@ _Use when working with Dockerfiles, docker-compose/compose.yml, buildx, dev cont
 | [`COMPOSE-027`](skills/containers-best-practices/references/compose.md#compose-027) | Use `post_start` / `pre_stop` lifecycle hooks (Compose ≥2.30) for privileged setup/teardown without weakening the service. |
 | [`COMPOSE-028`](skills/containers-best-practices/references/compose.md#compose-028) | Require Compose ≥2.40.2 (or v5) before resolving any remote OCI compose artifact (`include: oci://`, `-f oci://`) — CVE-2025-62725 path-traversal via artifact layer annotations. _(requires compose>=2.40.2)_ |
 | [`COMPOSE-029`](skills/containers-best-practices/references/compose.md#compose-029) | Set `init: true` on services whose image runs the app as PID 1 without an init — signals get forwarded and zombies reaped; doesn't replace DOCKER-006 for images you build. |
+| [`COMPOSE-030`](skills/containers-best-practices/references/compose.md#compose-030) | Gate CI on `docker compose config --quiet` over the deploy's exact `-f` files and env — catches schema typos, undefined services and unset `${VAR:?}`, not bad values or host state. |
 | [`BUILDX-001`](skills/containers-best-practices/references/buildx.md#buildx-001) | Pick a cache backend per scenario: `gha` for GitHub Actions, `registry` for portable CI, `inline` for simplest-but-limited, `local` for single-machine. |
 | [`BUILDX-002`](skills/containers-best-practices/references/buildx.md#buildx-002) | Cache reuse requires **both** `--cache-from` and `--cache-to`. Specify `--cache-from` multiple times (branch + main fallback). Use `mode=max` for multi-stage builds where intermediate layers matter. |
 | [`BUILDX-003`](skills/containers-best-practices/references/buildx.md#buildx-003) | Choose `--load` (single-arch, into local daemon), `--push` (registry, multi-arch OK), or `--output type=...` (OCI archive, local dir). Without one of these, multi-arch builds run and **discard** the result. |
@@ -216,11 +224,12 @@ _Use when working with Dockerfiles, docker-compose/compose.yml, buildx, dev cont
 | [`BUILDX-008`](skills/containers-best-practices/references/buildx.md#buildx-008) | Min-mode provenance is attached by default and already makes the push an index; registries that can't store one need `--provenance=false` / `BUILDX_NO_DEFAULT_ATTESTATIONS=1`, not `mode=min`. `mode=max` records build-arg values. |
 | [`BUILDX-009`](skills/containers-best-practices/references/buildx.md#buildx-009) | Use `bake` matrix targets + composable HCL attributes for multi-variant builds. |
 | [`BUILDX-010`](skills/containers-best-practices/references/buildx.md#buildx-010) | Pin the Docker GitHub Actions (`setup-buildx-action@v4`, `build-push-action@v7`, `bake-action@v7`) by commit SHA. |
+| [`BUILDX-011`](skills/containers-best-practices/references/buildx.md#buildx-011) | Gate build inputs (digest-pinned images, approved sources) with a `Dockerfile.rego` build policy; in CI load it with `--policy reset=true,filename=Dockerfile.rego` so a missing policy fails (`strict=true` didn't, live). _(requires buildx>=0.31 (preview), buildkit>=0.27)_ |
 | [`SEC-001`](skills/containers-best-practices/references/security-build.md#sec-001) | Always have a `.dockerignore`. At minimum: `.git`, `node_modules`, `__pycache__`, `.venv`, `.env*`, `dist/`, build artifacts. |
 | [`SEC-002`](skills/containers-best-practices/references/security-build.md#sec-002) | Use BuildKit (the default builder since Docker Engine 23.0, or `docker buildx`). Many modern features depend on it. |
 | [`SEC-004`](skills/containers-best-practices/references/security-build.md#sec-004) | Build multi-platform with `buildx` only when needed; single-platform is cheaper. |
 | [`SEC-005`](skills/containers-best-practices/references/security-build.md#sec-005) | Never leak `.git`, lockfile-only artifacts, or `node_modules` into images. |
-| [`SEC-006`](skills/containers-best-practices/references/security-build.md#sec-006) | Use BuildKit secret mounts for build-time credentials (`env=` exposes one as a variable, Dockerfile ≥1.10); never `ARG` them — build args persist in image history and provenance. |
+| [`SEC-006`](skills/containers-best-practices/references/security-build.md#sec-006) | Use BuildKit secret mounts for build-time credentials (`env=` exposes one as a variable, Dockerfile ≥1.10; `required=true` fails the step when the secret is missing instead of running with it empty); never `ARG` them — build args persist in image history and provenance. |
 | [`SEC-008`](skills/containers-best-practices/references/security-build.md#sec-008) | Combine related `RUN` steps (install + cleanup in one layer), not unrelated ones; layer count itself isn't the goal. |
 | [`SEC-009`](skills/containers-best-practices/references/security-build.md#sec-009) | Use Compose's `secrets:` block (mounted as files under `/run/secrets/`) instead of `environment:` for any sensitive value — env vars leak via `docker inspect`, `/proc/<pid>/environ`, and logs. `file:` secrets are world-readable `0444` bind mounts; `uid`/`gid`/`mode` are ignored for them. |
 | [`SEC-010`](skills/containers-best-practices/references/security-build.md#sec-010) | Image references with `@sha256:` digest must be fully literal; don't templatize the digest in Jinja/copier (template drift makes the version+digest pair inconsistent) and don't split version + digest across separate variables. A template's version choices are each a complete literal `image:tag@sha256` string kept current by Renovate. |
@@ -234,9 +243,10 @@ _Use when working with Dockerfiles, docker-compose/compose.yml, buildx, dev cont
 | [`SEC-019`](skills/containers-best-practices/references/security-build.md#sec-019) | `.env` files must be in `.gitignore` (not only `.dockerignore`) *and* must not already be git-tracked — `git rm --cached` is required to actually untrack a previously-committed `.env`. |
 | [`SEC-020`](skills/containers-best-practices/references/security-build.md#sec-020) | Use `RUN --mount=type=ssh` (or `ADD git@...`) + `docker buildx build --ssh default` for SSH-authenticated git/dep access during builds, or a host-scoped `GIT_AUTH_TOKEN.<host>` secret for HTTPS; never `COPY id_rsa` or `ARG SSH_PRIVATE_KEY`. |
 | [`SEC-021`](skills/containers-best-practices/references/security-build.md#sec-021) | Pin third-party scanner/tool images by digest and CI Actions by commit SHA — floating tags get hijacked (Trivy supply-chain compromise, CVE-2026-33634). |
-| [`SEC-022`](skills/containers-best-practices/references/security-build.md#sec-022) | Sign images with keyless cosign and verify with explicit `--certificate-identity` + `--certificate-oidc-issuer` (Docker Content Trust was removed in Engine 29). |
+| [`SEC-022`](skills/containers-best-practices/references/security-build.md#sec-022) | Sign images with keyless cosign and verify with explicit `--certificate-identity` + `--certificate-oidc-issuer` (Docker Content Trust was removed in Engine 29); verify third-party bases against the publisher's identity before adopting a new digest pin. |
 | [`SEC-023`](skills/containers-best-practices/references/security-build.md#sec-023) | Prefer a hardened/minimal verified base (Docker Hardened Images — Apache-2.0, distroless runtime variants — Chainguard, distroless) for production runtimes. |
 | [`SEC-024`](skills/containers-best-practices/references/security-build.md#sec-024) | Run the daemon rootless (or with userns-remap) on hosts that run untrusted workloads; neither replaces DOCKER-005. |
+| [`SEC-027`](skills/containers-best-practices/references/security-build.md#sec-027) | Scan the built image in CI and fail on severity (`trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed <digest>`); Trivy exits 0 on findings by default. |
 | [`UV-001`](skills/containers-best-practices/references/uv-python.md#uv-001) | Install `uv` via `COPY --from=ghcr.io/astral-sh/uv:VERSION@sha256:DIGEST /uv /uvx /bin/`. Pin the literal version+digest pair (SEC-010) and verify it with `gh attestation verify`; the uv image is distroless, so the copy carries no extra weight. |
 | [`UV-002`](skills/containers-best-practices/references/uv-python.md#uv-002) | Two-pass sync: bind-mount manifests + `uv sync --locked --no-install-project` first; then copy source + `uv sync --locked`. Dependency layer caches independently from source edits. Declare `ARG TARGETARCH` in the stage before using it in a cache `id=`. |
 | [`UV-003`](skills/containers-best-practices/references/uv-python.md#uv-003) | Set `ENV UV_LINK_MODE=copy` whenever a BuildKit cache mount is used — silences the cross-filesystem hard-link warning that fires on every install otherwise. |
@@ -270,11 +280,16 @@ _Use when working with SQLite or PostgreSQL (Postgres) from Python — sqlite3 c
 | [`SQLITE-013`](skills/databases-best-practices/references/sqlite.md#sqlite-013) | Batch many writes into one transaction (`executemany`). |
 | [`SQLITE-014`](skills/databases-best-practices/references/sqlite.md#sqlite-014) | Know when not to use SQLite (network filesystems, many hosts or writers); leave `mmap_size` off unless measured. |
 | [`SQLITE-015`](skills/databases-best-practices/references/sqlite.md#sqlite-015) | Store timestamps as UTC ISO-8601 `TEXT` generated by SQLite (`strftime`). |
+| [`SQLITE-016`](skills/databases-best-practices/references/sqlite.md#sqlite-016) | Read back generated values with `RETURNING`; `fetchall()` before `COMMIT`, never with `executemany`, rows in arbitrary order. |
+| [`SQLITE-017`](skills/databases-best-practices/references/sqlite.md#sqlite-017) | Insert-or-update with UPSERT (`ON CONFLICT(col) DO UPDATE SET … = excluded.…`); `INSERT OR REPLACE` deletes the row (new id, FK cascades). |
+| [`SQLITE-018`](skills/databases-best-practices/references/sqlite.md#sqlite-018) | Check restored, copied or crashed databases with `PRAGMA quick_check` + `foreign_key_check`; pass only on exactly `[("ok",)]`, treat `DatabaseError` as failure. |
 | [`PG-001`](skills/databases-best-practices/references/postgres.md#pg-001) | Size the per-process pool against `max_connections`; pre-ping and recycle pooled connections. |
 | [`PG-003`](skills/databases-best-practices/references/postgres.md#pg-003) | Serialize concurrent migrators with `pg_advisory_xact_lock` inside Alembic's migration transaction. |
 | [`PG-004`](skills/databases-best-practices/references/postgres.md#pg-004) | Test that the models match the migrated schema (`compare_metadata`); review autogenerated migrations. |
 | [`PG-005`](skills/databases-best-practices/references/postgres.md#pg-005) | Test each migration's upgrade → downgrade → upgrade round trip against the real Postgres image. |
 | [`PG-013`](skills/databases-best-practices/references/postgres.md#pg-013) | Lock every row a transaction will change with `SELECT … FOR UPDATE`, in one consistent order (`ORDER BY id`). |
+| [`PG-014`](skills/databases-best-practices/references/postgres.md#pg-014) | Set `statement_timeout` + a shorter `lock_timeout` on every app connection (startup `options`); `SET LOCAL lock_timeout` before migration DDL so a waiting `ALTER` can't queue every query behind it. |
+| [`PG-015`](skills/databases-best-practices/references/postgres.md#pg-015) | Index live tables with `CREATE INDEX CONCURRENTLY` inside Alembic's `autocommit_block()` (it commits the migration transaction); drop a leftover INVALID index first, never `IF NOT EXISTS`. |
 
 ## fastapi-best-practices
 
@@ -288,6 +303,7 @@ _Use when working with FastAPI apps — APIRouter routes, Pydantic v2 models, De
 | [`FAPI-004`](skills/fastapi-best-practices/references/structure.md#fapi-004) | Use a `lifespan` context manager for startup/shutdown; never `@app.on_event`. |
 | [`FAPI-005`](skills/fastapi-best-practices/references/structure.md#fapi-005) | Share startup-created resources via `app.state`, not module-level globals. |
 | [`FAPI-006`](skills/fastapi-best-practices/references/structure.md#fapi-006) | Version the API by URL path prefix (`/v1`), not by header. |
+| [`FAPI-094`](skills/fastapi-best-practices/references/structure.md#fapi-094) | Type lifespan state: yield a `TypedDict` and read it through one dependency that casts to `Request[AppState]`; never annotate a route parameter as `Request[AppState]`. _(requires starlette>=0.52)_ |
 | [`FAPI-010`](skills/fastapi-best-practices/references/models-validation.md#fapi-010) | Configure Pydantic v2 models with `model_config = ConfigDict(...)`, not inner `class Config`. |
 | [`FAPI-011`](skills/fastapi-best-practices/references/models-validation.md#fapi-011) | Use separate input and output models so secrets never leak into responses. |
 | [`FAPI-012`](skills/fastapi-best-practices/references/models-validation.md#fapi-012) | Prefer a return-type annotation over `response_model=` when the shapes match. |
@@ -300,14 +316,17 @@ _Use when working with FastAPI apps — APIRouter routes, Pydantic v2 models, De
 | [`FAPI-030`](skills/fastapi-best-practices/references/dependencies.md#fapi-030) | Declare dependencies as `Annotated[T, Depends(fn)]` and reuse via type aliases. |
 | [`FAPI-031`](skills/fastapi-best-practices/references/dependencies.md#fapi-031) | Wrap `yield` dependencies in `try/finally` so cleanup runs on error. |
 | [`FAPI-032`](skills/fastapi-best-practices/references/dependencies.md#fapi-032) | Use `Security(fn, scopes=[...])` (not `Depends`) for OAuth2 scope-bearing auth. |
+| [`FAPI-095`](skills/fastapi-best-practices/references/dependencies.md#fapi-095) | Use `Depends(fn, scope="function")` when a `yield` dependency must close before the response is sent (the default closes after it). _(requires fastapi>=0.121)_ |
 | [`FAPI-040`](skills/fastapi-best-practices/references/path-operations.md#fapi-040) | Use `async def` for I/O-bound routes; reserve `def` for sync/CPU-bound work. |
 | [`FAPI-041`](skills/fastapi-best-practices/references/path-operations.md#fapi-041) | Use `status.HTTP_*` constants and semantic codes (`201` create, `204` delete). |
 | [`FAPI-042`](skills/fastapi-best-practices/references/path-operations.md#fapi-042) | Use cursor (keyset) pagination for large collections; offset only for small bounded sets. |
 | [`FAPI-043`](skills/fastapi-best-practices/references/path-operations.md#fapi-043) | Use `BackgroundTasks` only for fire-and-forget work; escalate durable jobs to a queue. |
+| [`API-004`](skills/fastapi-best-practices/references/path-operations.md#api-004) | Generate typed clients from a committed `openapi.json` with stable operation IDs (`generate_unique_id_function`); a test fails when the schema drifts. |
 | [`FAPI-050`](skills/fastapi-best-practices/references/errors.md#fapi-050) | Register handlers against `StarletteHTTPException` to also catch routing 404/405. |
 | [`FAPI-051`](skills/fastapi-best-practices/references/errors.md#fapi-051) | Override `RequestValidationError` to stabilize the 422 response shape. |
 | [`FAPI-052`](skills/fastapi-best-practices/references/errors.md#fapi-052) | Register a catch-all `Exception` handler for a uniform `500` body; don't log in it (the server already does). |
 | [`FAPI-053`](skills/fastapi-best-practices/references/errors.md#fapi-053) | Use a structured `detail` (dict with a code) for machine-readable errors. |
+| [`API-003`](skills/fastapi-best-practices/references/errors.md#api-003) | Return RFC 9457 `application/problem+json` bodies (`type`, `title`, `status`, string `detail`) for public HTTP API errors. |
 | [`FAPI-060`](skills/fastapi-best-practices/references/security.md#fapi-060) | Hash passwords with Argon2 via `pwdlib`; never plaintext, MD5, or SHA-1. |
 | [`FAPI-061`](skills/fastapi-best-practices/references/security.md#fapi-061) | Verify against a dummy hash when the user lookup misses (timing attack). |
 | [`FAPI-062`](skills/fastapi-best-practices/references/security.md#fapi-062) | Never put secrets, PII, or session state in a JWT payload. |
@@ -343,9 +362,11 @@ _Use when working with Go code — .go files, go.mod, go test / vet / staticchec
 | [`GO-007`](skills/go-best-practices/references/concurrency.md#go-007) | Pass `context.Context` as the first parameter of blocking/I-O functions; never store it in a struct field. |
 | [`GO-008`](skills/go-best-practices/references/concurrency.md#go-008) | Bound every goroutine's lifetime with a stop path (WaitGroup, errgroup, cancelable ctx) — a goroutine without one is a leak. |
 | [`GO-009`](skills/go-best-practices/references/concurrency.md#go-009) | Use `golang.org/x/sync/errgroup` for fan-out that cancels on first error. |
+| [`GO-022`](skills/go-best-practices/references/concurrency.md#go-022) | Expose iteration as `iter.Seq`/`iter.Seq2` (range-over-func), not channels or callbacks; return as soon as `yield` returns false. |
 | [`GO-010`](skills/go-best-practices/references/http.md#go-010) | Set `ReadHeaderTimeout`/`ReadTimeout`/`WriteTimeout`/`IdleTimeout` on `http.Server`; wrap slow handlers in `http.TimeoutHandler`. |
 | [`GO-011`](skills/go-best-practices/references/http.md#go-011) | Outbound HTTP: carry context and give the client a timeout; never lean on `http.DefaultClient`'s zero timeout. |
 | [`GO-020`](skills/go-best-practices/references/http.md#go-020) | Shut down `http.Server` gracefully on SIGINT/SIGTERM via `signal.NotifyContext` + `srv.Shutdown`; treat `http.ErrServerClosed` as the clean sentinel. |
+| [`GO-021`](skills/go-best-practices/references/http.md#go-021) | Route with `http.ServeMux` patterns (`"GET /items/{id}"`, `{path...}`, `{$}`) and `r.PathValue`; the module's `go` line must be 1.22+ or patterns silently 404. |
 | [`GO-012`](skills/go-best-practices/references/security.md#go-012) | Never build SQL by concatenation or `fmt.Sprintf` — use `database/sql` placeholders. |
 | [`GO-013`](skills/go-best-practices/references/security.md#go-013) | Escape untrusted HTML with `html/template`, never `text/template`. |
 | [`GO-014`](skills/go-best-practices/references/security.md#go-014) | Use `crypto/rand` for secrets, tokens, and password-material; `math/rand` is not a security RNG. |
@@ -354,6 +375,9 @@ _Use when working with Go code — .go files, go.mod, go test / vet / staticchec
 | [`GO-019`](skills/go-best-practices/references/quality.md#go-019) | Scan dependencies and stdlib for known vulnerabilities in CI with `govulncheck` over all packages; call-graph reachability keeps the findings actionable. |
 | [`GO-017`](skills/go-best-practices/references/testing.md#go-017) | Table-driven tests with subtests; `t.Helper()` in test helpers; `t.Parallel()` only for truly independent cases. |
 | [`GO-018`](skills/go-best-practices/references/testing.md#go-018) | Gate CI on `go test -race` over all packages; the race detector is the only tool that finds data races, and a green run is evidence, not proof. |
+| [`GO-023`](skills/go-best-practices/references/testing.md#go-023) | Test every custom `slog.Handler` with `testing/slogtest.Run`; the built-in handlers need nothing. |
+| [`GO-024`](skills/go-best-practices/references/testing.md#go-024) | Pass `t.Context()` to whatever a test starts that takes a context; it is canceled just before `t.Cleanup` runs. |
+| [`GO-025`](skills/go-best-practices/references/testing.md#go-025) | Fuzz parsers of untrusted input with `f.Fuzz`; run bounded `go test -fuzz` per target in CI and commit `testdata/fuzz/` findings. |
 
 ## grpc-best-practices
 
@@ -367,11 +391,14 @@ _Use when working with gRPC — .proto files and proto3 schema design, buf or pr
 | [`GRPC-019`](skills/grpc-best-practices/references/proto-design.md#grpc-019) | Reserve enum `0` for a `_UNSPECIFIED` sentinel; never put a real value there. |
 | [`GRPC-020`](skills/grpc-best-practices/references/proto-design.md#grpc-020) | Model time with `google.protobuf.Timestamp`/`Duration`, not raw `int64` or strings. |
 | [`GRPC-021`](skills/grpc-best-practices/references/proto-design.md#grpc-021) | Paginate unbounded `List` RPCs with `page_size`/`page_token`/`next_page_token`. |
+| [`GRPC-022`](skills/grpc-best-practices/references/proto-design.md#grpc-022) | Write new schemas in protobuf editions (`edition = "2024"`), pinned to the newest edition every plugin and runtime in the build supports; not 2026 yet. _(requires protoc>=32 or buf>=1.68)_ |
 | [`GRPC-004`](skills/grpc-best-practices/references/error-model.md#grpc-004) | Return canonical `google.rpc.Code` values mapped from your domain; never invent codes or leak HTTP/transport assumptions. |
 | [`GRPC-005`](skills/grpc-best-practices/references/error-model.md#grpc-005) | Add machine-readable detail (`google.rpc.ErrorInfo` via `status.WithDetails`) so clients branch on data, not message strings. |
 | [`GRPC-006`](skills/grpc-best-practices/references/error-model.md#grpc-006) | Translate internal errors to gRPC status only at the service boundary; log the cause, return generic `INTERNAL` for unknown failures. |
 | [`GRPC-007`](skills/grpc-best-practices/references/deadlines.md#grpc-007) | Clients set a deadline on every RPC (`context.WithTimeout`); a deadline-free call can hang a goroutine and cascade. |
 | [`GRPC-008`](skills/grpc-best-practices/references/deadlines.md#grpc-008) | Handlers honor the context: check `ctx.Err()`, propagate ctx downstream, return on the deadline budget instead of continuing zombie work. |
+| [`GRPC-023`](skills/grpc-best-practices/references/deadlines.md#grpc-023) | Retry through a per-method `retryPolicy` in the service config, not hand-written loops; list codes beyond `UNAVAILABLE` only for idempotent methods. |
+| [`GRPC-026`](skills/grpc-best-practices/references/deadlines.md#grpc-026) | Set wait-for-ready (`grpc.WaitForReady(true)`) on calls that should outlast a backend restart, always under a deadline. |
 | [`GRPC-009`](skills/grpc-best-practices/references/streaming.md#grpc-009) | Choose unary vs streaming honestly: a `repeated` field in one message beats a stream of thousands of tiny messages. |
 | [`GRPC-010`](skills/grpc-best-practices/references/streaming.md#grpc-010) | Server streams must stop on client cancel: bound work by `stream.Context()`, handle send errors, return on `Done`. |
 | [`GRPC-011`](skills/grpc-best-practices/references/interceptors.md#grpc-011) | Cross-cutting concerns (auth, logging, recovery, validation) live in interceptors, composed with deliberate ordering. |
@@ -380,6 +407,8 @@ _Use when working with gRPC — .proto files and proto3 schema design, buf or pr
 | [`GRPC-018`](skills/grpc-best-practices/references/security.md#grpc-018) | Run production gRPC over TLS; `insecure.NewCredentials()` is dev-only. |
 | [`GRPC-014`](skills/grpc-best-practices/references/tooling.md#grpc-014) | Manage schemas with `buf`; gate CI on `buf lint` + `buf breaking --against`; keep generated code in sync. |
 | [`GRPC-015`](skills/grpc-best-practices/references/tooling.md#grpc-015) | Enable server reflection in dev for grpcurl/grpcui; wire health checking (`grpc.health.v1`) for production probes. |
+| [`GRPC-024`](skills/grpc-best-practices/references/tooling.md#grpc-024) | Serve channelz on an internal admin port and inspect it with `grpcdebug`; never on the public port. _(requires grpc-go>=1.12 (preview: channelz))_ |
+| [`GRPC-025`](skills/grpc-best-practices/references/tooling.md#grpc-025) | Drain on shutdown: health `NOT_SERVING` first, then `GracefulStop` with a forced `Stop` after a budget; open streams block `GracefulStop`. |
 | [`GRPC-016`](skills/grpc-best-practices/references/performance.md#grpc-016) | Reuse one client connection per backend process (HTTP/2 multiplexes); never dial per call; set keepalive. |
 | [`GRPC-017`](skills/grpc-best-practices/references/performance.md#grpc-017) | Set `MaxRecvMsgSize`/`MaxSendMsgSize` deliberately; the 4 MiB default fails loudly — stream or batch instead of unbounded limits. |
 
@@ -413,6 +442,7 @@ _Use when working with Python projects — `.py` files, `pyproject.toml` (withou
 | [`PY-082`](skills/python-best-practices/references/typing.md#py-082) | Use `TypeForm[T]` (PEP 747) for functions that accept a type expression at runtime, instead of `type[T]` or `Any`. _(requires python>=3.15 or typing-extensions>=4.13)_ |
 | [`PY-092`](skills/python-best-practices/references/typing.md#py-092) | On basedpyright, start from `typeCheckingMode = "recommended"` (or `"all"`), not `"strict"` — strict leaves every basedpyright-only rule off; downgrade per rule for untyped deps. |
 | [`PY-093`](skills/python-best-practices/references/typing.md#py-093) | Under basedpyright, suppress with `# pyright: ignore[rule]`; pyright ignores the code in `# type: ignore[code]`, so it silences the whole line. |
+| [`PY-098`](skills/python-best-practices/references/typing.md#py-098) | Use `sentinel("NAME")` (PEP 661) instead of `_MISSING = object()` — readable repr, survives copy/pickle, narrows in type checkers. _(requires python>=3.15 or typing-extensions>=4.16)_ |
 | [`PY-020`](skills/python-best-practices/references/linting.md#py-020) | Use `ruff` for both linting and formatting; drop `black`, `isort`, `flake8`, `pyupgrade`. Keep `mypy` / `pyright` (ruff isn't a type checker). |
 | [`PY-021`](skills/python-best-practices/references/linting.md#py-021) | Recommended ruff rule selection: `E, W, F, B, I, UP, S, SIM, RUF`. Set `target-version` so `UP` rules respect your Python floor. |
 | [`PY-022`](skills/python-best-practices/references/linting.md#py-022) | Per-file ignores for tests (`S101` asserts OK) and `__init__.py` (`F401` re-exports OK) via `[tool.ruff.lint.per-file-ignores]`. |
@@ -456,7 +486,7 @@ _Use when working with Python projects — `.py` files, `pyproject.toml` (withou
 | [`PY-062`](skills/python-best-practices/references/packaging.md#py-062) | Publish from CI via **Trusted Publishing (OIDC)**, not API tokens. Use `pypa/gh-action-pypi-publish` with `id-token: write` permission. |
 | [`PY-063`](skills/python-best-practices/references/packaging.md#py-063) | Build with `uv build` or `python -m build` — both produce sdist + wheel together. Verify with `twine check dist/*` before upload. |
 | [`PY-064`](skills/python-best-practices/references/packaging.md#py-064) | Upload to TestPyPI first to catch metadata / README rendering issues. PyPI doesn't allow overwriting a release. |
-| [`PY-065`](skills/python-best-practices/references/packaging.md#py-065) | Dev dependencies go in `[project.optional-dependencies]` (or `[dependency-groups]` per UVP-001), never `[project.dependencies]`. End-users of your library shouldn't install pytest. |
+| [`PY-065`](skills/python-best-practices/references/packaging.md#py-065) | Dev dependencies go in `[project.optional-dependencies]` (or `[dependency-groups]` per UVP-001 — a PyPA standard, `pip install --group` on pip 25.1+), never `[project.dependencies]`. End-users of your library shouldn't install pytest. |
 | [`PY-066`](skills/python-best-practices/references/packaging.md#py-066) | `warnings.warn(..., DeprecationWarning, stacklevel=2)` for public API deprecations. `stacklevel=2` points the warning at the caller, not your library's internals. |
 | [`PY-070`](skills/python-best-practices/references/packaging.md#py-070) | `@warnings.deprecated` (PEP 702, 3.13+ / `typing_extensions`) for type-checker-visible deprecations — flags call sites inline at edit time, not just at runtime. _(requires python>=3.13 or typing-extensions>=4.5)_ |
 | [`PY-072`](skills/python-best-practices/references/packaging.md#py-072) | Use PEP 723 inline script metadata (`# /// script` block) for standalone scripts with deps; `uv run script.py` consumes it directly. |
@@ -466,6 +496,7 @@ _Use when working with Python projects — `.py` files, `pyproject.toml` (withou
 | [`PY-077`](skills/python-best-practices/references/packaging.md#py-077) | Audit dependencies for known CVEs in CI with `pip-audit` (PyPA, OSV-backed) or `uv audit`. Don't gate releases on it silently — fail the build. |
 | [`PY-090`](skills/python-best-practices/references/packaging.md#py-090) | Pin dependency hashes (`uv lock`, or `--generate-hashes` for pip) and verify them with `uv sync --locked` / `--require-hashes` in CI to blunt substitution attacks. |
 | [`PY-078`](skills/python-best-practices/references/packaging.md#py-078) | Profile with `scalene` (local, line-level CPU + memory + native time) or `py-spy` (production sampling, attach by PID) — or, on Python 3.15+, the stdlib `profiling.sampling` (Tachyon) — *before* reaching for `mypyc`, Cython, or Rust extensions. |
+| [`PY-095`](skills/python-best-practices/references/packaging.md#py-095) | Use `lazy import` / `lazy from ... import` (PEP 810) for heavy modules most runs don't use; module scope only, never around side-effect imports. _(requires python>=3.15)_ |
 
 ## repo-best-practices
 
@@ -477,9 +508,13 @@ _Use when editing repository hygiene and CI config — .pre-commit-config.yaml h
 | [`REPO-002`](skills/repo-best-practices/references/hooks-and-bots.md#repo-002) | One dependency bot (Dependabot) maintains every pin — lockfile, actions, pre-commit revs, dev container Features — with a cooldown and no auto-merge. |
 | [`REPO-004`](skills/repo-best-practices/references/hooks-and-bots.md#repo-004) | Secret-scan the repo itself (gitleaks, detect-secrets or trufflehog) on every commit. |
 | [`REPO-007`](skills/repo-best-practices/references/hooks-and-bots.md#repo-007) | Every CI step is a `just` recipe, `just check` runs them all, and a test enforces the parity and `just --list` help text. |
-| [`REPO-008`](skills/repo-best-practices/references/hooks-and-bots.md#repo-008) | Keep a `CODEOWNERS` file for review routing. |
+| [`REPO-008`](skills/repo-best-practices/references/hooks-and-bots.md#repo-008) | Keep a `CODEOWNERS` file for review routing, with an explicit owner for `.github/` and the file itself. |
+| [`REPO-012`](skills/repo-best-practices/references/hooks-and-bots.md#repo-012) | Turn on GitHub secret scanning push protection: a server-side block on pushes that contain secrets. |
+| [`REPO-015`](skills/repo-best-practices/references/hooks-and-bots.md#repo-015) | Add pre-commit's built-in `repo: meta` hooks (`check-hooks-apply`, `check-useless-excludes`) so dead hooks and excludes fail. |
 | [`REPO-009`](skills/repo-best-practices/references/github-actions.md#repo-009) | Statically audit workflows with zizmor (injection, over-broad permissions, persisted credentials, unpinned actions). |
 | [`REPO-010`](skills/repo-best-practices/references/github-actions.md#repo-010) | Start workflows from `permissions: {}` and grant each job only the `GITHUB_TOKEN` scopes it needs. |
+| [`REPO-011`](skills/repo-best-practices/references/github-actions.md#repo-011) | Commit a workflow dependency lockfile (`gh actions-lock`) and run `gh actions-lock --verify` in CI. _(requires gh-actions-lock>=0.2 (preview))_ |
+| [`REPO-013`](skills/repo-best-practices/references/github-actions.md#repo-013) | Turn on CodeQL code scanning with default setup. |
 
 ## uv-best-practices
 
@@ -495,7 +530,7 @@ _Use when working with uv, Astral's Python package and project manager — `uv s
 | [`UVP-006`](skills/uv-best-practices/references/project-shape.md#uvp-006) | Use a workspace only when members share lockfile resolution; conflicting deps or different Python floors mean you don't want one. |
 | [`UVP-007`](skills/uv-best-practices/references/project-shape.md#uvp-007) | Workspace inter-member deps need *both* `[project.dependencies]` and `[tool.uv.sources]` with `workspace = true`. |
 | [`UVP-008`](skills/uv-best-practices/references/project-shape.md#uvp-008) | Pin a minimum uv version with `[tool.uv] required-version` (≥0.5.14) so all contributors and CI agree on resolver behavior. |
-| [`UVP-016`](skills/uv-best-practices/references/project-shape.md#uvp-016) | Declare mutually-exclusive extras / groups (cpu vs gpu, redis vs memcached) with `[tool.uv] conflicts` (≥0.5.3) so uv forks resolution instead of producing a broken universal lock. |
+| [`UVP-016`](skills/uv-best-practices/references/project-shape.md#uvp-016) | Declare mutually-exclusive extras / groups (cpu vs gpu, redis vs memcached), including across workspace members with `package =`, in `[tool.uv] conflicts` (≥0.5.3) so uv forks resolution instead of producing a broken universal lock. |
 | [`UVP-063`](skills/uv-best-practices/references/project-shape.md#uvp-063) | Set `[tool.uv] add-bounds` (stable ≥0.10.0) to control how `uv add` writes version constraints. _(requires uv>=0.10.0)_ |
 | [`UVP-064`](skills/uv-best-practices/references/project-shape.md#uvp-064) | Bound lockfile platform scope with `environments` (restrict) or `required-environments` (guarantee wheels). |
 | [`UVP-010`](skills/uv-best-practices/references/lockfile.md#uvp-010) | Commit `uv.lock` for **both** apps and libraries. |
@@ -511,9 +546,10 @@ _Use when working with uv, Astral's Python package and project manager — `uv s
 | [`UVP-022`](skills/uv-best-practices/references/environments.md#uvp-022) | Set `UV_PROJECT_ENVIRONMENT` to an **absolute** path scoped to one project; relative paths resolve against the workspace root (not the CWD), and one absolute path shared across projects is overwritten by each. |
 | [`UVP-023`](skills/uv-best-practices/references/environments.md#uvp-023) | Configure `default-groups` deliberately; the default `["dev"]` means bare `uv sync` installs dev dependencies in production. |
 | [`UVP-024`](skills/uv-best-practices/references/environments.md#uvp-024) | PEP 723 inline scripts: manage deps via `uv add --script`, lock with `uv lock --script` — and remember `uv run --script` runs isolated from any surrounding project's lockfile. |
-| [`UVP-025`](skills/uv-best-practices/references/environments.md#uvp-025) | Configure additional indexes via `[[tool.uv.index]]` with `explicit = true` for private registries; never use `index-strategy = "unsafe-best-match"` (re-introduces dependency-confusion risk). |
+| [`UVP-025`](skills/uv-best-practices/references/environments.md#uvp-025) | Configure additional indexes via `[[tool.uv.index]]` with `explicit = true` for private registries; never use `index-strategy = "unsafe-best-match"` (re-introduces dependency-confusion risk). Credentials: `UV_INDEX_<NAME>_*` in CI, `uv auth login` locally. |
 | [`UVP-066`](skills/uv-best-practices/references/environments.md#uvp-066) | `uv run --with` builds an ephemeral overlay env (≥0.8.0); add `--no-project --isolated` (or use `uvx`) when project packages must not leak in. |
 | [`UVP-068`](skills/uv-best-practices/references/environments.md#uvp-068) | `uv run/sync --active` makes uv use the *activated* venv instead of silently creating `.venv`. |
+| [`UVP-077`](skills/uv-best-practices/references/environments.md#uvp-077) | At a workspace root, bare `uv sync` installs only the root and its deps (and removes other members); use `--all-packages` or `--package`. |
 | [`UVP-028`](skills/uv-best-practices/references/ci.md#uvp-028) | Run `uv audit` in CI to scan `uv.lock` against the OSV vulnerability database; exits non-zero on findings. _(requires uv>=0.10.10 (preview: audit-command))_ |
 | [`UVP-030`](skills/uv-best-practices/references/ci.md#uvp-030) | Pin `astral-sh/setup-uv` to a commit SHA with the version tag in a comment. |
 | [`UVP-031`](skills/uv-best-practices/references/ci.md#uvp-031) | Let `setup-uv` handle caching (`enable-cache: true`); never cache `.venv/` across runs — Python ABI / OS drift will silently break it. |
@@ -525,6 +561,8 @@ _Use when working with uv, Astral's Python package and project manager — `uv s
 | [`UVP-041`](skills/uv-best-practices/references/tools.md#uvp-041) | `uvx` (= `uv tool run`) for one-shot tool execution; pin the version when correctness matters (`uvx ruff@0.6.9`, not bare `uvx ruff`). |
 | [`UVP-042`](skills/uv-best-practices/references/tools.md#uvp-042) | `uv tool upgrade --all` is fine locally but unsafe in CI — silent version drift; declare tools in `[dependency-groups]` or pin via `uvx <tool>@<version>` instead. |
 | [`UVP-072`](skills/uv-best-practices/references/tools.md#uvp-072) | Audit global tools with `uv tool list --outdated` (≥0.10.10) and `--show-python` before a Python upgrade. _(requires uv>=0.10.10)_ |
+| [`UVP-076`](skills/uv-best-practices/references/tools.md#uvp-076) | If you adopt the preview `uv check` / `uv format`: check runs the locked ty, format ignores the locked ruff unless given `--version`. _(requires uv>=0.11.25 (preview: check-command), uv>=0.8.13 (preview: format-command))_ |
+| [`UVP-079`](skills/uv-best-practices/references/tools.md#uvp-079) | Scan installed tools with `uv tool audit --all`; it skips (exit 0) tools installed without `tool-install-locks`. _(requires uv>=0.12.2 (preview: audit), uv>=0.12.2 (preview: tool-install-locks))_ |
 | [`UVP-050`](skills/uv-best-practices/references/python-versions.md#uvp-050) | `.python-version` pins the runtime; `requires-python` declares the compat floor. They look similar and aren't interchangeable. |
 | [`UVP-051`](skills/uv-best-practices/references/python-versions.md#uvp-051) | Pin the *minor* version in `.python-version` (`3.12`), not the patch (`3.12.7`) — patch upgrades are transparent; minor changes affect resolution. |
 | [`UVP-052`](skills/uv-best-practices/references/python-versions.md#uvp-052) | `UV_PYTHON_DOWNLOADS=never` in network-restricted CI — surfaces "Python not found" instead of a cryptic network error. |

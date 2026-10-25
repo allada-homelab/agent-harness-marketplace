@@ -75,6 +75,7 @@ See [`references/dockerfile.md`](./references/dockerfile.md).
 - **DOCKER-031** — Use `COPY --parents` (Dockerfile ≥1.20) to preserve source directory structure instead of flattening or post-copy `mkdir`.
 - **DOCKER-032** — Cap heavy `RUN` steps with build-time resource limits (`--resource cpu=,memory=`) on shared builders. _(requires buildkit>=0.31, dockerfile>=1.25)_
 - **DOCKER-033** — Pin `RUN --network=none` on steps that must not touch the network, to enforce reproducibility.
+- **DOCKER-035** — Bind-mount build-only inputs (`RUN --mount=type=bind`, output written outside the read-only mount) instead of `COPY`ing them into a layer and the build cache.
 
 ## Rules — Dev containers
 
@@ -106,6 +107,7 @@ See [`references/devcontainer.md`](./references/devcontainer.md).
 - **DEVC-024** — Configs started headless (CLI, CI, agents) must do what VS Code does for you: agent forwarding, gitconfig, known_hosts, port forwarding, GPG.
 - **DEVC-025** — A Docker socket (docker-outside-of-docker) is root on the host — every credential boundary is moot with it, especially with auto-approve agents; make it an explicit, documented choice.
 - **DEVC-026** — Pin mcr dev container images to `<image-major>-<lang>-<os>` (e.g. `python:3-3.14-trixie`) or a digest; short tags float across image majors and OS releases, which breaks features.
+- **DEVC-027** — Set `"overrideCommand": false` when the image's `CMD` must run: image/Dockerfile configs default to `true` (CMD replaced by a sleep loop), Compose configs to `false`.
 
 ## Rules — docker-compose
 
@@ -136,6 +138,7 @@ See [`references/compose.md`](./references/compose.md).
 - **COMPOSE-027** — Use `post_start` / `pre_stop` lifecycle hooks (Compose ≥2.30) for privileged setup/teardown without weakening the service.
 - **COMPOSE-028** — Require Compose ≥2.40.2 (or v5) before resolving any remote OCI compose artifact (`include: oci://`, `-f oci://`) — CVE-2025-62725 path-traversal via artifact layer annotations. _(requires compose>=2.40.2)_
 - **COMPOSE-029** — Set `init: true` on services whose image runs the app as PID 1 without an init — signals get forwarded and zombies reaped; doesn't replace DOCKER-006 for images you build.
+- **COMPOSE-030** — Gate CI on `docker compose config --quiet` over the deploy's exact `-f` files and env — catches schema typos, undefined services and unset `${VAR:?}`, not bad values or host state.
 
 ## Rules — Buildx & cache backends
 
@@ -153,6 +156,7 @@ and "Security & build" (SEC-002, 004, 006).
 - **BUILDX-008** — Min-mode provenance is attached by default and already makes the push an index; registries that can't store one need `--provenance=false` / `BUILDX_NO_DEFAULT_ATTESTATIONS=1`, not `mode=min`. `mode=max` records build-arg values.
 - **BUILDX-009** — Use `bake` matrix targets + composable HCL attributes for multi-variant builds.
 - **BUILDX-010** — Pin the Docker GitHub Actions (`setup-buildx-action@v4`, `build-push-action@v7`, `bake-action@v7`) by commit SHA.
+- **BUILDX-011** — Gate build inputs (digest-pinned images, approved sources) with a `Dockerfile.rego` build policy; in CI load it with `--policy reset=true,filename=Dockerfile.rego` so a missing policy fails (`strict=true` didn't, live). _(requires buildx>=0.31 (preview), buildkit>=0.27)_
 
 ## Rules — Security & build
 
@@ -162,7 +166,7 @@ See [`references/security-build.md`](./references/security-build.md).
 - **SEC-002** — Use BuildKit (the default builder since Docker Engine 23.0, or `docker buildx`). Many modern features depend on it.
 - **SEC-004** — Build multi-platform with `buildx` only when needed; single-platform is cheaper.
 - **SEC-005** — Never leak `.git`, lockfile-only artifacts, or `node_modules` into images.
-- **SEC-006** — Use BuildKit secret mounts for build-time credentials (`env=` exposes one as a variable, Dockerfile ≥1.10); never `ARG` them — build args persist in image history and provenance.
+- **SEC-006** — Use BuildKit secret mounts for build-time credentials (`env=` exposes one as a variable, Dockerfile ≥1.10; `required=true` fails the step when the secret is missing instead of running with it empty); never `ARG` them — build args persist in image history and provenance.
 - **SEC-008** — Combine related `RUN` steps (install + cleanup in one layer), not unrelated ones; layer count itself isn't the goal.
 - **SEC-009** — Use Compose's `secrets:` block (mounted as files under `/run/secrets/`) instead of `environment:` for any sensitive value — env vars leak via `docker inspect`, `/proc/<pid>/environ`, and logs. `file:` secrets are world-readable `0444` bind mounts; `uid`/`gid`/`mode` are ignored for them.
 - **SEC-010** — Image references with `@sha256:` digest must be fully literal; don't templatize the digest in Jinja/copier (template drift makes the version+digest pair inconsistent) and don't split version + digest across separate variables. A template's version choices are each a complete literal `image:tag@sha256` string kept current by Renovate.
@@ -176,9 +180,10 @@ See [`references/security-build.md`](./references/security-build.md).
 - **SEC-019** — `.env` files must be in `.gitignore` (not only `.dockerignore`) *and* must not already be git-tracked — `git rm --cached` is required to actually untrack a previously-committed `.env`.
 - **SEC-020** — Use `RUN --mount=type=ssh` (or `ADD git@...`) + `docker buildx build --ssh default` for SSH-authenticated git/dep access during builds, or a host-scoped `GIT_AUTH_TOKEN.<host>` secret for HTTPS; never `COPY id_rsa` or `ARG SSH_PRIVATE_KEY`.
 - **SEC-021** — Pin third-party scanner/tool images by digest and CI Actions by commit SHA — floating tags get hijacked (Trivy supply-chain compromise, CVE-2026-33634).
-- **SEC-022** — Sign images with keyless cosign and verify with explicit `--certificate-identity` + `--certificate-oidc-issuer` (Docker Content Trust was removed in Engine 29).
+- **SEC-022** — Sign images with keyless cosign and verify with explicit `--certificate-identity` + `--certificate-oidc-issuer` (Docker Content Trust was removed in Engine 29); verify third-party bases against the publisher's identity before adopting a new digest pin.
 - **SEC-023** — Prefer a hardened/minimal verified base (Docker Hardened Images — Apache-2.0, distroless runtime variants — Chainguard, distroless) for production runtimes.
 - **SEC-024** — Run the daemon rootless (or with userns-remap) on hosts that run untrusted workloads; neither replaces DOCKER-005.
+- **SEC-027** — Scan the built image in CI and fail on severity (`trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed <digest>`); Trivy exits 0 on findings by default.
 
 ## Rules — Python + uv
 

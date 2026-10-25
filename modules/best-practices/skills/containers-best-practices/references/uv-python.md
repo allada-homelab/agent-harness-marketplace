@@ -60,7 +60,11 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.17@sha256:10787c682e4184e4f290de1171fd4703
 Pin the literal version (`0.12.17`) and digest as a single pair (SEC-010).
 Bumping `0.12.17` → `0.12.18` without updating the digest will silently
 pull `0.12.17` (the digest wins). Renovate's Dockerfile manager handles
-this lockstep if you configure it. (The pair above is the multi-arch index
+this lockstep if you configure it. It reads image references in
+`COPY --from` and `RUN --mount=from=` as well as `FROM` (its docs example
+for the latter is `ghcr.io/astral-sh/uv`), so this line is covered
+([Renovate Dockerfile manager](https://docs.renovatebot.com/modules/manager/dockerfile/)).
+(The pair above is the multi-arch index
 digest of `ghcr.io/astral-sh/uv:0.12.17`, checked with
 `docker buildx imagetools inspect`; resolve your own pin the same way.)
 
@@ -165,6 +169,13 @@ Why `--mount=type=bind` for `pyproject.toml` / `uv.lock` in pass 1: the
 files are needed for the install but should not be copied into the layer
 (pass 2 copies them properly). Bind mounts make them visible to that
 specific `RUN` and nothing else.
+
+Don't switch pass 2 to `uv sync --only-install-project`. It is a sync,
+and syncs are exact by default, so it removes what pass 1 installed.
+Checked live on uv 0.13.5: pass 2 printed `+ probe==0.1.0` and
+`- six==1.16.0`, and `import six` then failed. Plain `uv sync --locked`
+in pass 2 is already cheap, because the dependencies are installed and
+only the project is added.
 
 **When NOT to apply.** Projects with no dependencies (trivial scripts) —
 the split has no benefit. One-stage exploratory Dockerfiles where you

@@ -62,7 +62,7 @@ See [`references/project-shape.md`](./references/project-shape.md).
 - **UVP-006** — Use a workspace only when members share lockfile resolution; conflicting deps or different Python floors mean you don't want one.
 - **UVP-007** — Workspace inter-member deps need *both* `[project.dependencies]` and `[tool.uv.sources]` with `workspace = true`.
 - **UVP-008** — Pin a minimum uv version with `[tool.uv] required-version` (≥0.5.14) so all contributors and CI agree on resolver behavior.
-- **UVP-016** — Declare mutually-exclusive extras / groups (cpu vs gpu, redis vs memcached) with `[tool.uv] conflicts` (≥0.5.3) so uv forks resolution instead of producing a broken universal lock.
+- **UVP-016** — Declare mutually-exclusive extras / groups (cpu vs gpu, redis vs memcached), including across workspace members with `package =`, in `[tool.uv] conflicts` (≥0.5.3) so uv forks resolution instead of producing a broken universal lock.
 - **UVP-063** — Set `[tool.uv] add-bounds` (stable ≥0.10.0) to control how `uv add` writes version constraints. _(requires uv>=0.10.0)_
 - **UVP-064** — Bound lockfile platform scope with `environments` (restrict) or `required-environments` (guarantee wheels).
 
@@ -88,9 +88,10 @@ See [`references/environments.md`](./references/environments.md).
 - **UVP-022** — Set `UV_PROJECT_ENVIRONMENT` to an **absolute** path scoped to one project; relative paths resolve against the workspace root (not the CWD), and one absolute path shared across projects is overwritten by each.
 - **UVP-023** — Configure `default-groups` deliberately; the default `["dev"]` means bare `uv sync` installs dev dependencies in production.
 - **UVP-024** — PEP 723 inline scripts: manage deps via `uv add --script`, lock with `uv lock --script` — and remember `uv run --script` runs isolated from any surrounding project's lockfile.
-- **UVP-025** — Configure additional indexes via `[[tool.uv.index]]` with `explicit = true` for private registries; never use `index-strategy = "unsafe-best-match"` (re-introduces dependency-confusion risk).
+- **UVP-025** — Configure additional indexes via `[[tool.uv.index]]` with `explicit = true` for private registries; never use `index-strategy = "unsafe-best-match"` (re-introduces dependency-confusion risk). Credentials: `UV_INDEX_<NAME>_*` in CI, `uv auth login` locally.
 - **UVP-066** — `uv run --with` builds an ephemeral overlay env (≥0.8.0); add `--no-project --isolated` (or use `uvx`) when project packages must not leak in.
 - **UVP-068** — `uv run/sync --active` makes uv use the *activated* venv instead of silently creating `.venv`.
+- **UVP-077** — At a workspace root, bare `uv sync` installs only the root and its deps (and removes other members); use `--all-packages` or `--package`.
 
 ## Rules — CI integration
 
@@ -112,6 +113,8 @@ See [`references/tools.md`](./references/tools.md).
 - **UVP-041** — `uvx` (= `uv tool run`) for one-shot tool execution; pin the version when correctness matters (`uvx ruff@0.6.9`, not bare `uvx ruff`).
 - **UVP-042** — `uv tool upgrade --all` is fine locally but unsafe in CI — silent version drift; declare tools in `[dependency-groups]` or pin via `uvx <tool>@<version>` instead.
 - **UVP-072** — Audit global tools with `uv tool list --outdated` (≥0.10.10) and `--show-python` before a Python upgrade. _(requires uv>=0.10.10)_
+- **UVP-076** — If you adopt the preview `uv check` / `uv format`: check runs the locked ty, format ignores the locked ruff unless given `--version`. _(requires uv>=0.11.25 (preview: check-command), uv>=0.8.13 (preview: format-command))_
+- **UVP-079** — Scan installed tools with `uv tool audit --all`; it skips (exit 0) tools installed without `tool-install-locks`. _(requires uv>=0.12.2 (preview: audit), uv>=0.12.2 (preview: tool-install-locks))_
 
 ## Rules — Python versions
 

@@ -68,6 +68,8 @@ See [`references/claude-md.md`](./references/claude-md.md).
 - **CC-022** — Subdirectory CLAUDE.md loads when its directory is touched and is summarized away at compaction.
 - **CC-023** — Tell Claude what to preserve when the conversation compacts.
 - **CC-024** — A checked-in CLAUDE.md has an owner and is audited with `/doctor` and `/doctor prompt-audit`.
+- **CC-080** — Auto memory holds one developer's learned corrections; rules the team or CI must follow stay in CLAUDE.md. _(requires claude-code>=2.1.59)_
+- **CC-081** — `AGENTS.md` loads only when no project `CLAUDE.md` or `CLAUDE.local.md` exists; import it with `@AGENTS.md` to share one file. _(requires claude-code>=2.1.277)_
 
 ## Rules — Rule files
 
@@ -183,3 +185,6 @@ See [`references/prompts.md`](./references/prompts.md).
 - **PROMPT-018** — Keep long-horizon state in files and git.
 - **PROMPT-019** — A text-only `end_turn` is not completion; nudge on open items, at most two or three times.
 - **PROMPT-020** — Parallel tool calls for independent operations; never guess parameters.
+- **PROMPT-021** — Omit `temperature`, `top_p` and `top_k`: Claude 4.7 and later accept only the defaults, and API version `2026-10-21` rejects them on every model.
+- **PROMPT-022** — Cap a whole agentic loop with the advisory `output_config.task_budget` (beta); `max_tokens` stays the hard per-request limit.
+- **PROMPT-023** — Opus 5.5 multi-app agents: tell the model to explore the connected apps before acting.

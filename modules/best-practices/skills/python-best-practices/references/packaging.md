@@ -18,6 +18,7 @@
 - PY-078 — Profile with `scalene` or `py-spy` before reaching for C / mypyc / Rust
 - PY-089 — For uv-managed pure-Python projects, prefer the `uv_build` backend
 - PY-090 — Pin dependency hashes and verify them in CI
+- PY-095 — Use `lazy import` (PEP 810) for heavy modules that most runs don't use
 <!-- /toc -->
 
 Detailed entries for `PY-060..PY-066` plus newer
@@ -563,6 +564,18 @@ The distinction:
 
 - **`optional-dependencies`** is for runtime *extras* consumers might install (`my-package[async]`).
 - **`dependency-groups`** is for *your* dev workflow — never shipped to PyPI consumers.
+
+Dependency groups are a PyPA standard, not a uv feature, so they fit
+non-uv projects too. pip 25.1+ installs one with `pip install --group
+dev`, and a group can include another with `{include-group = "test"}`.
+The spec forbids shipping them: "Build backends MUST NOT include
+Dependency Group data in built distributions as package metadata".
+
+```toml
+[dependency-groups]
+test = ["pytest>=8", "pytest-cov"]
+dev = [{include-group = "test"}, "mypy>=1.10", "ruff"]
+```
 
 **When NOT to apply.** Pre-PEP-735 tooling that doesn't understand
 `[dependency-groups]` — but in 2026 nearly all current tooling
@@ -1355,5 +1368,54 @@ locally.
 
 **When NOT to apply.** Throwaway scripts and local experiments don't need
 it. For any deployed service or published artifact, pin and verify.
+
+---
+
+## PY-095 — Use `lazy import` (PEP 810) for heavy modules that most runs don't use
+
+**Requires.** python>=3.15
+
+**What.** On Python 3.15+, mark top-level imports of costly modules that
+only some code paths need as `lazy import x` or `lazy from x import y`.
+The name is bound to a proxy, and the module loads the first time the
+name is used. Measure with `python -X importtime` before and after.
+
+**Why.** Top-level imports run at startup whether or not this run needs
+them, so a CLI's `--help` pays for pandas. The old workaround, imports
+inside functions, scatters dependencies through the code and hides them
+from readers. `lazy` keeps them at the top of the file. In a run,
+`-X importtime` showed no `decimal` import at all for `lazy import
+decimal`, and a lazily imported module stayed out of `sys.modules` until
+first use. A failed import is raised at first use, and its traceback
+shows both the use site and the `lazy import` line.
+
+**How.**
+
+```python
+lazy import pandas as pd                 # loads the first time pd is used
+lazy from rich.console import Console
+
+
+def main(argv: list[str]) -> int:
+    if argv[1:] == ["--help"]:
+        print(USAGE)                     # pandas and rich never load
+        return 0
+    df = pd.read_csv(argv[1])
+    Console().print(df.head())
+    return 0
+```
+
+Code that must also run before 3.15 can set `__lazy_modules__ =
+["pandas"]` at module top. On 3.15+ plain `import pandas` is then lazy;
+older versions treat it as an ordinary variable.
+
+**When NOT to apply.** Imports whose side effects you depend on at
+startup (plugin registration, codec registration, monkeypatching):
+deferring them changes behavior. `lazy` is a `SyntaxError` inside
+functions, class bodies and `try`/`except` blocks, and `lazy from x
+import *` is not allowed. A missing optional dependency now fails at
+first use instead of at startup, so make sure tests reach that path. Turn
+on the process-wide `-X lazy_imports=all` / `PYTHON_LAZY_IMPORTS=all` only
+if the whole dependency tree is tested that way.
 
 ---
