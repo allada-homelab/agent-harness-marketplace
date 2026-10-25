@@ -125,7 +125,7 @@ See [`references/deployment.md`](./references/deployment.md).
 See [`references/observability.md`](./references/observability.md).
 
 - **OBS-001** — `/healthz` is liveness (no dependency checks); `/readyz` is readiness (checks the database, 503 problem+json).
-- **OBS-003** — Always instrument against the OTel API; start the SDK/exporters only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+- **OBS-003** — Always instrument against the OTel API (FastAPI 0.142+ does it natively); start the SDK/exporters only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 - **OBS-004** — Reuse a safe `X-Request-ID` (else generate one), echo it, and stamp it on every log line with `trace_id`/`span_id`.
-- **OBS-005** — Push HTTP metrics over OTLP on the stable `http.server.request.duration` (`OTEL_SEMCONV_STABILITY_OPT_IN=http`); `OTEL_METRICS_EXPORTER=none` turns them off.
+- **OBS-005** — Push HTTP metrics over OTLP on the stable `http.server.request.duration` (native on FastAPI 0.142+, else `OTEL_SEMCONV_STABILITY_OPT_IN=http`); `OTEL_METRICS_EXPORTER=none` turns them off.
 - **OBS-006** — Use pure ASGI middleware, not `BaseHTTPMiddleware`, for anything that sets a ContextVar.

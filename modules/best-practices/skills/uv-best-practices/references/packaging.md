@@ -6,7 +6,6 @@
 - UVP-026 — Pre-publish sanity check: `uv build --no-sources`
 - UVP-027 — Publish from GitHub Actions via OIDC trusted publishing
 - UVP-029 — `uv_build` backend for pure-Python packages
-- UVP-071 — `uv_build` supports PEP 794 `import-names` for divergent import/distribution names
 <!-- /toc -->
 
 Detailed entries for `UVP-026..UVP-029`. Covers building wheels with
@@ -242,10 +241,11 @@ Trade-offs:
 2. **Namespace / divergent import names need explicit configuration.**
    Implicit namespace packages (a `foo/bar/` directory without
    `foo/__init__.py`) require `[tool.uv.build-backend] namespace =
-   true`. As of uv 0.11.17, `uv_build` also supports PEP 794
-   `import-names` / `import-namespaces`, covering packages whose import
-   name differs from the distribution name (e.g. dist `my-lib`, import
-   `mylib`) — a case that previously forced hatchling (see UVP-071).
+   true`. A package whose import name differs from the distribution
+   name (e.g. dist `my-lib`, import `mylib`) needs
+   `[tool.uv.build-backend] module-name = "mylib"`; PEP 794
+   `import-names` (a `[project]` key) only emits `Import-Name` metadata
+   and does not change which module `uv_build` packages.
 
 For most libraries — which are pure Python — `uv_build` is the right
 default in 2026.
@@ -306,36 +306,5 @@ namespace = true                  # allow src/foo/bar/ without src/foo/__init__.
 `uv_build` is the right default for *new* pure-Python projects and
 for *existing* projects whose only build-backend usage is "produce a
 wheel." It's not a forced migration.
-
----
-
-## UVP-071 — `uv_build` supports PEP 794 `import-names` for divergent import/distribution names
-
-**What.** Since uv 0.11.17, `uv_build` supports PEP 794 `import-names` /
-`import-namespaces`, covering packages where the import name differs from
-the distribution name (dist `my-lib`, imported as `mylib`), packages that
-expose multiple modules, and some namespace-package shapes that
-previously forced hatchling.
-
-**Why.** Before 0.11.17, a package whose distribution and import names
-diverged (the classic `Pillow` → `PIL`) couldn't use `uv_build` and had
-to stay on setuptools/hatchling. It can migrate now — but failing to
-declare `import-names` when the names diverge makes `uv_build` look for a
-module named after the distribution, not find it, and emit a broken
-wheel.
-
-**How.**
-
-```toml
-[tool.uv.build-backend]
-module-name = "mylib"                    # single module after normalization
-# or, for divergent / multiple names (PEP 794):
-import-names = ["mylib", "mylib_extras"]
-```
-
-**When NOT to apply.** Pure-Python packages where the import name already
-matches the distribution name (the common case) need none of this. C/Rust
-extensions and hatch-plugin users stay on their backend regardless (see
-UVP-029).
 
 ---

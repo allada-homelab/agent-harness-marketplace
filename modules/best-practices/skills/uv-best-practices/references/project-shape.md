@@ -7,7 +7,7 @@
 - UVP-002 — Compose groups with `include-group`; never duplicate packages across groups
 - UVP-003 — `requires-python` is a floor (`">=3.X"`), never an upper-bounded range
 - UVP-004 — Git and path deps go in `[tool.uv.sources]`, not raw URLs in `[project.dependencies]`
-- UVP-005 — `uv init --lib` for libraries (src/ + build-system); bare `uv init` for apps (flat, `package = false`)
+- UVP-005 — `uv init --lib` for libraries, bare `uv init` for apps (packaged since 0.12.0); `--no-package` for a flat layout
 - UVP-006 — Use a workspace only when members share lockfile resolution
 - UVP-007 — Workspace inter-member deps need both `[project.dependencies]` and `[tool.uv.sources]` with `workspace = true`
 - UVP-008 — Pin a minimum uv version with `[tool.uv] required-version`
@@ -206,16 +206,17 @@ this in anything that ships.
 
 ---
 
-## UVP-005 — `uv init --lib` for libraries (src/ + build-system); bare `uv init` for apps (flat, `package = false`)
+## UVP-005 — `uv init --lib` for libraries, bare `uv init` for apps (packaged since 0.12.0); `--no-package` for a flat layout
 
 **What.** Pick the layout intentionally:
 
 | Command | Layout | Build system | Project install |
 |---|---|---|---|
-| `uv init` | flat | none | `package = false` (project is *not* installed into the venv) |
-| `uv init --app` | flat | none | `package = false` (same as bare `uv init`) |
-| `uv init --lib` | `src/` | `uv_build` | editable install of the project |
-| `uv init --package` | `src/` | `uv_build` | editable install (same as `--lib` for layout) |
+| `uv init` | `src/` | `uv_build` | editable install + `[project.scripts]` entry (since uv 0.12.0; flat and uninstalled before) |
+| `uv init --app` | `src/` | `uv_build` | same as bare `uv init` |
+| `uv init --no-package` | flat (`main.py`) | none | project is *not* installed into the venv |
+| `uv init --lib` | `src/` | `uv_build` | editable install of the project (adds `py.typed`) |
+| `uv init --package` | `src/` | `uv_build` | editable install (same as bare `uv init`) |
 
 The mode you want depends on whether your project is *consumed*
 (library: yes, app: no) and whether you need to `import myapp`
@@ -224,7 +225,7 @@ yes for apps too).
 
 **Why.** Three failure modes from picking wrong:
 
-1. **`import myapp` fails in tests.** If you ran bare `uv init` (which sets `package = false`), uv doesn't install the project. Tests that do `from myapp import x` fail with `ModuleNotFoundError`. The fix is either `--package` mode or adding `[build-system]` and `tool.uv.package = true` by hand.
+1. **`import myapp` fails in tests.** If you ran `uv init --no-package` (or bare `uv init` before uv 0.12.0), there's no build system and uv doesn't install the project. Tests that do `from myapp import x` fail with `ModuleNotFoundError`. The fix is either `--package` mode or adding `[build-system]` and `tool.uv.package = true` by hand.
 2. **`uv build` produces nothing.** Without `[build-system]`, you can't build a wheel. If you ever want to publish, you have to retrofit the build-system table, which means choosing a backend without thinking about it.
 3. **Accidental imports from project root.** A flat layout means `myapp/` is at the repo root next to `tests/`. When you run pytest from the repo root, Python finds the *source tree* `myapp/` ahead of any installed version — meaning `__init__.py`'s side effects and import order behave differently in dev vs. in production. The `src/` layout (`src/myapp/`) forces tests to import the *installed* version, matching production.
 
@@ -241,22 +242,21 @@ uv init --lib mylib
 #     README.md
 #     .python-version
 
-# app — services, CLIs you won't publish
+# app — services, CLIs you won't publish (uv >= 0.12.0)
 uv init myapp
 # creates:
 #   myapp/
-#     pyproject.toml      # no [build-system]; package = false
-#     main.py             # at repo root
+#     pyproject.toml      # [build-system] = uv_build; [project.scripts] myapp = "myapp:main"
+#     src/myapp/__init__.py
 #     README.md
 #     .python-version
 ```
 
-For an app that *also* wants `import myapp` to work in tests, use
-`--package` (which is the same shape as `--lib` but signals "app
-that's installable"):
+For an app that will never be imported or installed (no build
+system, project not installed into the venv), opt out explicitly:
 
 ```bash
-uv init --package myapp
+uv init --no-package myapp   # flat: main.py at repo root
 ```
 
 **When NOT to apply.** Single-file scripts that never grow into a

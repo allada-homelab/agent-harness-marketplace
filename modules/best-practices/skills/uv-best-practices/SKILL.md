@@ -58,7 +58,7 @@ See [`references/project-shape.md`](./references/project-shape.md).
 - **UVP-002** — Compose groups with `include-group`; never duplicate packages across groups.
 - **UVP-003** — `requires-python` is a *floor* (`">=3.X"`), never an upper-bounded range.
 - **UVP-004** — Git and path dependencies go in `[tool.uv.sources]`, not as raw URLs in `[project.dependencies]`.
-- **UVP-005** — `uv init --lib` for libraries (src/ + build-system); bare `uv init` for apps (flat, `package = false`).
+- **UVP-005** — `uv init --lib` for libraries (src/ + build-system); bare `uv init` for apps (packaged src/ layout since 0.12.0); `uv init --no-package` for a flat, uninstalled layout.
 - **UVP-006** — Use a workspace only when members share lockfile resolution; conflicting deps or different Python floors mean you don't want one.
 - **UVP-007** — Workspace inter-member deps need *both* `[project.dependencies]` and `[tool.uv.sources]` with `workspace = true`.
 - **UVP-008** — Pin a minimum uv version with `[tool.uv] required-version` (≥0.5.14) so all contributors and CI agree on resolver behavior.
@@ -71,7 +71,7 @@ See [`references/project-shape.md`](./references/project-shape.md).
 See [`references/lockfile.md`](./references/lockfile.md).
 
 - **UVP-010** — Commit `uv.lock` for **both** apps and libraries.
-- **UVP-011** — `--locked` validates lock vs `pyproject.toml`; `--frozen` skips validation **and** skips installing the project package — they're not interchangeable.
+- **UVP-011** — `--locked` validates lock vs `pyproject.toml`; `--frozen` skips validation (both still install the project — use `--no-install-project` to skip it) — they're not interchangeable.
 - **UVP-012** — Use targeted `uv lock --upgrade-package <name>` over blanket `uv lock --upgrade` in production pipelines.
 - **UVP-013** — Never manually edit `uv.lock` — it's fully generated and uv will silently regenerate or error on tampered files.
 - **UVP-014** — Don't commit `requirements.txt` alongside `uv.lock`; if downstream tooling needs it, generate as a build artifact via `uv export`.
@@ -85,12 +85,12 @@ See [`references/environments.md`](./references/environments.md).
 
 - **UVP-020** — Production sync incantation: `uv sync --locked --no-dev --no-editable`.
 - **UVP-021** — `uv run` over manual `.venv/bin/activate` — it re-checks the lockfile before executing.
-- **UVP-022** — Set `UV_PROJECT_ENVIRONMENT` only to **absolute** paths; relative paths in multi-project repos silently target shared/system environments.
+- **UVP-022** — Set `UV_PROJECT_ENVIRONMENT` to an **absolute** path scoped to one project; relative paths resolve against the workspace root (not the CWD), and one absolute path shared across projects is overwritten by each.
 - **UVP-023** — Configure `default-groups` deliberately; the default `["dev"]` means bare `uv sync` installs dev dependencies in production.
 - **UVP-024** — PEP 723 inline scripts: manage deps via `uv add --script`, lock with `uv lock --script` — and remember `uv run --script` runs isolated from any surrounding project's lockfile.
 - **UVP-025** — Configure additional indexes via `[[tool.uv.index]]` with `explicit = true` for private registries; never use `index-strategy = "unsafe-best-match"` (re-introduces dependency-confusion risk).
-- **UVP-066** — `uv run --with` builds an ephemeral overlay env (≥0.8.0); add `--isolated`/`uvx --isolated` when project packages must not leak in.
-- **UVP-068** — `uv run/sync --active` (or `UV_ACTIVE=1`) makes uv use the *activated* venv instead of silently creating `.venv`.
+- **UVP-066** — `uv run --with` builds an ephemeral overlay env (≥0.8.0); add `--no-project --isolated` (or use `uvx`) when project packages must not leak in.
+- **UVP-068** — `uv run/sync --active` makes uv use the *activated* venv instead of silently creating `.venv`.
 
 ## Rules — CI integration
 
@@ -123,7 +123,7 @@ See [`references/python-versions.md`](./references/python-versions.md).
 - **UVP-053** — `uv version` (≥0.7.0) manages the *project* version, not uv's own; outside a project it is a **hard error** since 0.8.0. Use `uv self version` for the binary.
 - **UVP-054** — For libraries, matrix CI on `--resolution lowest-direct` and `--resolution highest` to catch implicit floor violations and upper-bound rot.
 - **UVP-067** — Keep managed interpreters patched with `uv python upgrade` (stable ≥0.10.0); it auto-upgrades venvs on the old patch. _(requires uv>=0.10.0)_
-- **UVP-073** — uv's default managed Python is **3.14** since 0.9.0 — pin explicitly with `uv python pin` rather than relying on the default.
+- **UVP-073** — uv's default managed Python is **3.15** since 0.13.0 — pin explicitly with `uv python pin` rather than relying on the default.
 
 ## Rules — Building & publishing
 
@@ -132,7 +132,6 @@ See [`references/packaging.md`](./references/packaging.md).
 - **UVP-026** — Pre-publish sanity check: `uv build --no-sources` to verify the wheel doesn't accidentally depend on `[tool.uv.sources]` config that doesn't ship.
 - **UVP-027** — Publish from GitHub Actions via PyPI OIDC trusted publishing (stable since uv 0.6.0) — no `UV_PUBLISH_TOKEN`, auto-uploaded PEP 740 attestations.
 - **UVP-029** — Use the native `uv_build` PEP 517 backend (the **default** for `uv init --lib`/`--package` since uv 0.8.0) for pure-Python packages — 10–35x faster than hatchling / setuptools.
-- **UVP-071** — `uv_build` supports PEP 794 `import-names` (≥0.11.17) for packages whose import name differs from the distribution name.
 
 ## Rules — Migration
 
@@ -141,4 +140,4 @@ See [`references/migration.md`](./references/migration.md).
 - **UVP-060** — Use `astral-sh/migrate-to-uv` (or `uvx migrate-to-uv`) for poetry / pip-tools / PDM / Hatch projects; *manually verify* the resolved versions diff — resolver drift between Poetry and uv has shipped wrong packages to production.
 - **UVP-061** — `uv export --format requirements.txt --no-hashes --no-dev -o requirements.txt` for downstream consumers (Lambda layers, deploy targets that need it) — generate in CI, don't commit.
 - **UVP-062** — Prefer `uv export --format pylock.toml` (PEP 751, ≥0.6.15) over `requirements.txt` when the downstream tool supports it; never replace `uv.lock` with `pylock.toml` (the format can't represent uv's full graph).
-- **UVP-074** — Generate a CycloneDX SBOM with `uv export --format cyclonedx` (≥0.9.11) for supply-chain compliance, separate from the lockfile. _(requires uv>=0.9.11 (preview: sbom-export))_
+- **UVP-074** — Generate a CycloneDX SBOM with `uv export --format cyclonedx1.5` (≥0.9.11, experimental) for supply-chain compliance, separate from the lockfile. _(requires uv>=0.9.11 (preview: sbom-export))_

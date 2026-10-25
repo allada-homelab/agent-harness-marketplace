@@ -221,11 +221,11 @@ _Use when working with Dockerfiles, docker-compose/compose.yml, buildx, dev cont
 | [`SEC-004`](skills/containers-best-practices/references/security-build.md#sec-004) | Build multi-platform with `buildx` only when needed; single-platform is cheaper. |
 | [`SEC-005`](skills/containers-best-practices/references/security-build.md#sec-005) | Never leak `.git`, lockfile-only artifacts, or `node_modules` into images. |
 | [`SEC-006`](skills/containers-best-practices/references/security-build.md#sec-006) | Use BuildKit secret mounts for build-time credentials (`env=` exposes one as a variable, Dockerfile ≥1.10); never `ARG` them — build args persist in image history and provenance. |
-| [`SEC-008`](skills/containers-best-practices/references/security-build.md#sec-008) | Minimize `RUN` layers without sacrificing readability; combine related steps, not unrelated ones. |
+| [`SEC-008`](skills/containers-best-practices/references/security-build.md#sec-008) | Combine related `RUN` steps (install + cleanup in one layer), not unrelated ones; layer count itself isn't the goal. |
 | [`SEC-009`](skills/containers-best-practices/references/security-build.md#sec-009) | Use Compose's `secrets:` block (mounted as files under `/run/secrets/`) instead of `environment:` for any sensitive value — env vars leak via `docker inspect`, `/proc/<pid>/environ`, and logs. `file:` secrets are world-readable `0444` bind mounts; `uid`/`gid`/`mode` are ignored for them. |
 | [`SEC-010`](skills/containers-best-practices/references/security-build.md#sec-010) | Image references with `@sha256:` digest must be fully literal; don't templatize the digest in Jinja/copier (template drift makes the version+digest pair inconsistent) and don't split version + digest across separate variables. A template's version choices are each a complete literal `image:tag@sha256` string kept current by Renovate. |
 | [`SEC-011`](skills/containers-best-practices/references/security-build.md#sec-011) | Add `.venv`, `node_modules`, `target/`, `.gradle/`, tool caches and other platform-specific build dirs to `.dockerignore` — they're at best slow, at worst architecture-incompatible inside the image. |
-| [`SEC-012`](skills/containers-best-practices/references/security-build.md#sec-012) | Never `COPY .env` / `COPY *.env` into images; explicit `COPY` bypasses `.dockerignore` and bakes secrets into a layer permanently. |
+| [`SEC-012`](skills/containers-best-practices/references/security-build.md#sec-012) | Never `COPY .env` / `COPY *.env` into images; it picks up `.env` only when `.dockerignore` misses it, and then bakes secrets into a layer permanently. |
 | [`SEC-013`](skills/containers-best-practices/references/security-build.md#sec-013) | `.git/` must be in `.dockerignore` and never `COPY`'d into the final image — leaks full repo history, rotated secrets, internal codenames. |
 | [`SEC-014`](skills/containers-best-practices/references/security-build.md#sec-014) | Flag `ARG`/`ENV` names matching `*SECRET*` / `*TOKEN*` / `*PASSWORD*` / `*KEY*` / `*CREDENTIAL*` — values get baked into image metadata visible via `docker history` / `docker inspect`. |
 | [`SEC-015`](skills/containers-best-practices/references/security-build.md#sec-015) | `.dockerignore` must be *comprehensive*, not just present; check coverage against a baseline (VCS, secrets, per-ecosystem build dirs, tool caches, editor/OS, Docker meta). |
@@ -323,9 +323,9 @@ _Use when working with FastAPI apps — APIRouter routes, Pydantic v2 models, De
 | [`FAPI-091`](skills/fastapi-best-practices/references/deployment.md#fapi-091) | Set `--forwarded-allow-ips` and `root_path` when running behind a proxy. |
 | [`FAPI-092`](skills/fastapi-best-practices/references/deployment.md#fapi-092) | Never combine `allow_origins=["*"]` with `allow_credentials=True` in CORS. |
 | [`OBS-001`](skills/fastapi-best-practices/references/observability.md#obs-001) | `/healthz` is liveness (no dependency checks); `/readyz` is readiness (checks the database, 503 problem+json). |
-| [`OBS-003`](skills/fastapi-best-practices/references/observability.md#obs-003) | Always instrument against the OTel API; start the SDK/exporters only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. |
+| [`OBS-003`](skills/fastapi-best-practices/references/observability.md#obs-003) | Always instrument against the OTel API (FastAPI 0.142+ does it natively); start the SDK/exporters only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. |
 | [`OBS-004`](skills/fastapi-best-practices/references/observability.md#obs-004) | Reuse a safe `X-Request-ID` (else generate one), echo it, and stamp it on every log line with `trace_id`/`span_id`. |
-| [`OBS-005`](skills/fastapi-best-practices/references/observability.md#obs-005) | Push HTTP metrics over OTLP on the stable `http.server.request.duration` (`OTEL_SEMCONV_STABILITY_OPT_IN=http`); `OTEL_METRICS_EXPORTER=none` turns them off. |
+| [`OBS-005`](skills/fastapi-best-practices/references/observability.md#obs-005) | Push HTTP metrics over OTLP on the stable `http.server.request.duration` (native on FastAPI 0.142+, else `OTEL_SEMCONV_STABILITY_OPT_IN=http`); `OTEL_METRICS_EXPORTER=none` turns them off. |
 | [`OBS-006`](skills/fastapi-best-practices/references/observability.md#obs-006) | Use pure ASGI middleware, not `BaseHTTPMiddleware`, for anything that sets a ContextVar. |
 
 ## go-best-practices
@@ -338,7 +338,7 @@ _Use when working with Go code — .go files, go.mod, go test / vet / staticchec
 | [`GO-002`](skills/go-best-practices/references/layout.md#go-002) | Put private implementation under `internal/`; only public API lives above it. |
 | [`GO-003`](skills/go-best-practices/references/layout.md#go-003) | Name the package after its directory; no `util`/`common`/`helpers` grab-bags. |
 | [`GO-004`](skills/go-best-practices/references/errors.md#go-004) | Wrap errors with `%w` to preserve the cause for `errors.Is`/`errors.As`. |
-| [`GO-005`](skills/go-best-practices/references/errors.md#go-005) | Match with `errors.Is` / `errors.As`, never `==`. |
+| [`GO-005`](skills/go-best-practices/references/errors.md#go-005) | Match with `errors.Is` / `errors.AsType`, never `==`. |
 | [`GO-006`](skills/go-best-practices/references/errors.md#go-006) | Return errors, don't `panic`/`os.Exit` in reusable code; recover only at a process boundary. |
 | [`GO-007`](skills/go-best-practices/references/concurrency.md#go-007) | Pass `context.Context` as the first parameter of blocking/I-O functions; never store it in a struct field. |
 | [`GO-008`](skills/go-best-practices/references/concurrency.md#go-008) | Bound every goroutine's lifetime with a stop path (WaitGroup, errgroup, cancelable ctx) — a goroutine without one is a leak. |
@@ -400,7 +400,7 @@ _Use when working with Python projects — `.py` files, `pyproject.toml` (withou
 | [`PY-004`](skills/python-best-practices/references/project-layout.md#py-004) | Pick `[build-system]` deliberately — `hatchling` is the sensible default for pure Python; `uv_build` for uv-managed pure-Python projects (PY-089); `maturin` / `scikit-build-core` for native extensions. |
 | [`PY-006`](skills/python-best-practices/references/project-layout.md#py-006) | `__init__.py`: explicit `__all__` for re-exports; no side effects, no I/O, no global mutation at import time. |
 | [`PY-010`](skills/python-best-practices/references/typing.md#py-010) | Use modern syntax: `X \| Y` (PEP 604), `list[str]` / `dict[str, int]` (PEP 585), `Self` (PEP 673). No `Union[X, Y]`, no `typing.List`. |
-| [`PY-011`](skills/python-best-practices/references/typing.md#py-011) | Default to `basedpyright` (or `pyright`) for new projects; stay on `mypy` for established codebases unless conformance gaps block you. `pyrefly` (Meta, stable 1.0) is a fast new option worth evaluating when you don't need mypy plugins; `ty` (Astral) is still beta. |
+| [`PY-011`](skills/python-best-practices/references/typing.md#py-011) | Default to `pyright` (or `basedpyright`) for new projects; stay on `mypy` for established codebases unless conformance gaps block you. `pyrefly` (Meta, stable 1.0) is a fast new option worth evaluating when you don't need mypy plugins; `ty` (Astral) is still beta. |
 | [`PY-012`](skills/python-best-practices/references/typing.md#py-012) | Configure strict mode in `pyproject.toml` (`[tool.mypy] strict = true` or `[tool.pyright] typeCheckingMode = "strict"`). |
 | [`PY-013`](skills/python-best-practices/references/typing.md#py-013) | `Protocol` for structural interfaces (duck typing with type safety); `abc.ABC` only when enforced inheritance is required. |
 | [`PY-014`](skills/python-best-practices/references/typing.md#py-014) | Use `if TYPE_CHECKING:` for type-only imports + `from __future__ import annotations` at the top of files that need forward refs (on Python 3.14+ deferred evaluation is the default, so the future import is no longer needed for forward refs — see PY-080). |
@@ -465,7 +465,7 @@ _Use when working with Python projects — `.py` files, `pyproject.toml` (withou
 | [`PY-089`](skills/python-best-practices/references/packaging.md#py-089) | For uv-managed pure-Python projects, prefer the `uv_build` backend (zero-config, fast); see UVP-029 for the uv-side detail. Stay on hatchling for build hooks or non-uv workflows. |
 | [`PY-077`](skills/python-best-practices/references/packaging.md#py-077) | Audit dependencies for known CVEs in CI with `pip-audit` (PyPA, OSV-backed) or `uv audit`. Don't gate releases on it silently — fail the build. |
 | [`PY-090`](skills/python-best-practices/references/packaging.md#py-090) | Pin dependency hashes (`uv lock`, or `--generate-hashes` for pip) and verify them with `uv sync --locked` / `--require-hashes` in CI to blunt substitution attacks. |
-| [`PY-078`](skills/python-best-practices/references/packaging.md#py-078) | Profile with `scalene` (local, line-level CPU + memory + native time) or `py-spy` (production sampling, attach by PID) *before* reaching for `mypyc`, Cython, or Rust extensions. |
+| [`PY-078`](skills/python-best-practices/references/packaging.md#py-078) | Profile with `scalene` (local, line-level CPU + memory + native time) or `py-spy` (production sampling, attach by PID) — or, on Python 3.15+, the stdlib `profiling.sampling` (Tachyon) — *before* reaching for `mypyc`, Cython, or Rust extensions. |
 
 ## repo-best-practices
 
@@ -491,7 +491,7 @@ _Use when working with uv, Astral's Python package and project manager — `uv s
 | [`UVP-002`](skills/uv-best-practices/references/project-shape.md#uvp-002) | Compose groups with `include-group`; never duplicate packages across groups. |
 | [`UVP-003`](skills/uv-best-practices/references/project-shape.md#uvp-003) | `requires-python` is a *floor* (`">=3.X"`), never an upper-bounded range. |
 | [`UVP-004`](skills/uv-best-practices/references/project-shape.md#uvp-004) | Git and path dependencies go in `[tool.uv.sources]`, not as raw URLs in `[project.dependencies]`. |
-| [`UVP-005`](skills/uv-best-practices/references/project-shape.md#uvp-005) | `uv init --lib` for libraries (src/ + build-system); bare `uv init` for apps (flat, `package = false`). |
+| [`UVP-005`](skills/uv-best-practices/references/project-shape.md#uvp-005) | `uv init --lib` for libraries (src/ + build-system); bare `uv init` for apps (packaged src/ layout since 0.12.0); `uv init --no-package` for a flat, uninstalled layout. |
 | [`UVP-006`](skills/uv-best-practices/references/project-shape.md#uvp-006) | Use a workspace only when members share lockfile resolution; conflicting deps or different Python floors mean you don't want one. |
 | [`UVP-007`](skills/uv-best-practices/references/project-shape.md#uvp-007) | Workspace inter-member deps need *both* `[project.dependencies]` and `[tool.uv.sources]` with `workspace = true`. |
 | [`UVP-008`](skills/uv-best-practices/references/project-shape.md#uvp-008) | Pin a minimum uv version with `[tool.uv] required-version` (≥0.5.14) so all contributors and CI agree on resolver behavior. |
@@ -499,7 +499,7 @@ _Use when working with uv, Astral's Python package and project manager — `uv s
 | [`UVP-063`](skills/uv-best-practices/references/project-shape.md#uvp-063) | Set `[tool.uv] add-bounds` (stable ≥0.10.0) to control how `uv add` writes version constraints. _(requires uv>=0.10.0)_ |
 | [`UVP-064`](skills/uv-best-practices/references/project-shape.md#uvp-064) | Bound lockfile platform scope with `environments` (restrict) or `required-environments` (guarantee wheels). |
 | [`UVP-010`](skills/uv-best-practices/references/lockfile.md#uvp-010) | Commit `uv.lock` for **both** apps and libraries. |
-| [`UVP-011`](skills/uv-best-practices/references/lockfile.md#uvp-011) | `--locked` validates lock vs `pyproject.toml`; `--frozen` skips validation **and** skips installing the project package — they're not interchangeable. |
+| [`UVP-011`](skills/uv-best-practices/references/lockfile.md#uvp-011) | `--locked` validates lock vs `pyproject.toml`; `--frozen` skips validation (both still install the project — use `--no-install-project` to skip it) — they're not interchangeable. |
 | [`UVP-012`](skills/uv-best-practices/references/lockfile.md#uvp-012) | Use targeted `uv lock --upgrade-package <name>` over blanket `uv lock --upgrade` in production pipelines. |
 | [`UVP-013`](skills/uv-best-practices/references/lockfile.md#uvp-013) | Never manually edit `uv.lock` — it's fully generated and uv will silently regenerate or error on tampered files. |
 | [`UVP-014`](skills/uv-best-practices/references/lockfile.md#uvp-014) | Don't commit `requirements.txt` alongside `uv.lock`; if downstream tooling needs it, generate as a build artifact via `uv export`. |
@@ -508,12 +508,12 @@ _Use when working with uv, Astral's Python package and project manager — `uv s
 | [`UVP-075`](skills/uv-best-practices/references/lockfile.md#uvp-075) | Set a relative `exclude-newer` (`"7 days"`) as a resolver-side release cooldown; uv locks the span, not a date, so `uv lock --check` stays stable. _(requires uv>=0.9.17)_ |
 | [`UVP-020`](skills/uv-best-practices/references/environments.md#uvp-020) | Production sync incantation: `uv sync --locked --no-dev --no-editable`. |
 | [`UVP-021`](skills/uv-best-practices/references/environments.md#uvp-021) | `uv run` over manual `.venv/bin/activate` — it re-checks the lockfile before executing. |
-| [`UVP-022`](skills/uv-best-practices/references/environments.md#uvp-022) | Set `UV_PROJECT_ENVIRONMENT` only to **absolute** paths; relative paths in multi-project repos silently target shared/system environments. |
+| [`UVP-022`](skills/uv-best-practices/references/environments.md#uvp-022) | Set `UV_PROJECT_ENVIRONMENT` to an **absolute** path scoped to one project; relative paths resolve against the workspace root (not the CWD), and one absolute path shared across projects is overwritten by each. |
 | [`UVP-023`](skills/uv-best-practices/references/environments.md#uvp-023) | Configure `default-groups` deliberately; the default `["dev"]` means bare `uv sync` installs dev dependencies in production. |
 | [`UVP-024`](skills/uv-best-practices/references/environments.md#uvp-024) | PEP 723 inline scripts: manage deps via `uv add --script`, lock with `uv lock --script` — and remember `uv run --script` runs isolated from any surrounding project's lockfile. |
 | [`UVP-025`](skills/uv-best-practices/references/environments.md#uvp-025) | Configure additional indexes via `[[tool.uv.index]]` with `explicit = true` for private registries; never use `index-strategy = "unsafe-best-match"` (re-introduces dependency-confusion risk). |
-| [`UVP-066`](skills/uv-best-practices/references/environments.md#uvp-066) | `uv run --with` builds an ephemeral overlay env (≥0.8.0); add `--isolated`/`uvx --isolated` when project packages must not leak in. |
-| [`UVP-068`](skills/uv-best-practices/references/environments.md#uvp-068) | `uv run/sync --active` (or `UV_ACTIVE=1`) makes uv use the *activated* venv instead of silently creating `.venv`. |
+| [`UVP-066`](skills/uv-best-practices/references/environments.md#uvp-066) | `uv run --with` builds an ephemeral overlay env (≥0.8.0); add `--no-project --isolated` (or use `uvx`) when project packages must not leak in. |
+| [`UVP-068`](skills/uv-best-practices/references/environments.md#uvp-068) | `uv run/sync --active` makes uv use the *activated* venv instead of silently creating `.venv`. |
 | [`UVP-028`](skills/uv-best-practices/references/ci.md#uvp-028) | Run `uv audit` in CI to scan `uv.lock` against the OSV vulnerability database; exits non-zero on findings. _(requires uv>=0.10.10 (preview: audit-command))_ |
 | [`UVP-030`](skills/uv-best-practices/references/ci.md#uvp-030) | Pin `astral-sh/setup-uv` to a commit SHA with the version tag in a comment. |
 | [`UVP-031`](skills/uv-best-practices/references/ci.md#uvp-031) | Let `setup-uv` handle caching (`enable-cache: true`); never cache `.venv/` across runs — Python ABI / OS drift will silently break it. |
@@ -531,13 +531,12 @@ _Use when working with uv, Astral's Python package and project manager — `uv s
 | [`UVP-053`](skills/uv-best-practices/references/python-versions.md#uvp-053) | `uv version` (≥0.7.0) manages the *project* version, not uv's own; outside a project it is a **hard error** since 0.8.0. Use `uv self version` for the binary. |
 | [`UVP-054`](skills/uv-best-practices/references/python-versions.md#uvp-054) | For libraries, matrix CI on `--resolution lowest-direct` and `--resolution highest` to catch implicit floor violations and upper-bound rot. |
 | [`UVP-067`](skills/uv-best-practices/references/python-versions.md#uvp-067) | Keep managed interpreters patched with `uv python upgrade` (stable ≥0.10.0); it auto-upgrades venvs on the old patch. _(requires uv>=0.10.0)_ |
-| [`UVP-073`](skills/uv-best-practices/references/python-versions.md#uvp-073) | uv's default managed Python is **3.14** since 0.9.0 — pin explicitly with `uv python pin` rather than relying on the default. |
+| [`UVP-073`](skills/uv-best-practices/references/python-versions.md#uvp-073) | uv's default managed Python is **3.15** since 0.13.0 — pin explicitly with `uv python pin` rather than relying on the default. |
 | [`UVP-026`](skills/uv-best-practices/references/packaging.md#uvp-026) | Pre-publish sanity check: `uv build --no-sources` to verify the wheel doesn't accidentally depend on `[tool.uv.sources]` config that doesn't ship. |
 | [`UVP-027`](skills/uv-best-practices/references/packaging.md#uvp-027) | Publish from GitHub Actions via PyPI OIDC trusted publishing (stable since uv 0.6.0) — no `UV_PUBLISH_TOKEN`, auto-uploaded PEP 740 attestations. |
 | [`UVP-029`](skills/uv-best-practices/references/packaging.md#uvp-029) | Use the native `uv_build` PEP 517 backend (the **default** for `uv init --lib`/`--package` since uv 0.8.0) for pure-Python packages — 10–35x faster than hatchling / setuptools. |
-| [`UVP-071`](skills/uv-best-practices/references/packaging.md#uvp-071) | `uv_build` supports PEP 794 `import-names` (≥0.11.17) for packages whose import name differs from the distribution name. |
 | [`UVP-060`](skills/uv-best-practices/references/migration.md#uvp-060) | Use `astral-sh/migrate-to-uv` (or `uvx migrate-to-uv`) for poetry / pip-tools / PDM / Hatch projects; *manually verify* the resolved versions diff — resolver drift between Poetry and uv has shipped wrong packages to production. |
 | [`UVP-061`](skills/uv-best-practices/references/migration.md#uvp-061) | `uv export --format requirements.txt --no-hashes --no-dev -o requirements.txt` for downstream consumers (Lambda layers, deploy targets that need it) — generate in CI, don't commit. |
 | [`UVP-062`](skills/uv-best-practices/references/migration.md#uvp-062) | Prefer `uv export --format pylock.toml` (PEP 751, ≥0.6.15) over `requirements.txt` when the downstream tool supports it; never replace `uv.lock` with `pylock.toml` (the format can't represent uv's full graph). |
-| [`UVP-074`](skills/uv-best-practices/references/migration.md#uvp-074) | Generate a CycloneDX SBOM with `uv export --format cyclonedx` (≥0.9.11) for supply-chain compliance, separate from the lockfile. _(requires uv>=0.9.11 (preview: sbom-export))_ |
+| [`UVP-074`](skills/uv-best-practices/references/migration.md#uvp-074) | Generate a CycloneDX SBOM with `uv export --format cyclonedx1.5` (≥0.9.11, experimental) for supply-chain compliance, separate from the lockfile. _(requires uv>=0.9.11 (preview: sbom-export))_ |
 

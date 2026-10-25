@@ -272,13 +272,14 @@ unfamiliar with HCL and the CLI hasn't grown to "too many flags" yet.
 
 ## BUILDX-005 — Pick the right builder driver
 
-**What.** Buildx supports four drivers. The choice determines what
+**What.** Buildx supports five drivers. The choice determines what
 features are available:
 
 | Driver | Default? | Multi-arch | Full cache export | Notes |
 |---|---|---|---|---|
 | `docker` | Yes | Only with the containerd image store | With the containerd image store (`inline`/`local`/`registry`/`gha`) | Uses BuildKit baked into the Docker daemon. Simplest; least flexible. Auto-loads images. |
 | `docker-container` | No | ✅ | ✅ | Spawns a BuildKit container. The "normal upgrade" — full feature set. |
+| `cloud` | No | ✅ | ✅ | Connects to a managed builder in Docker Build Cloud. A `--tag`ged single-platform build auto-loads; otherwise the result stays in the cloud cache unless you set an output. |
 | `kubernetes` | No | ✅ | ✅ | Spawns BuildKit pods in a K8s cluster. For build farms / large orgs. |
 | `remote` | No | ✅ | ✅ | Connects to a pre-managed BuildKit daemon you run elsewhere. |
 

@@ -163,11 +163,11 @@ See [`references/security-build.md`](./references/security-build.md).
 - **SEC-004** — Build multi-platform with `buildx` only when needed; single-platform is cheaper.
 - **SEC-005** — Never leak `.git`, lockfile-only artifacts, or `node_modules` into images.
 - **SEC-006** — Use BuildKit secret mounts for build-time credentials (`env=` exposes one as a variable, Dockerfile ≥1.10); never `ARG` them — build args persist in image history and provenance.
-- **SEC-008** — Minimize `RUN` layers without sacrificing readability; combine related steps, not unrelated ones.
+- **SEC-008** — Combine related `RUN` steps (install + cleanup in one layer), not unrelated ones; layer count itself isn't the goal.
 - **SEC-009** — Use Compose's `secrets:` block (mounted as files under `/run/secrets/`) instead of `environment:` for any sensitive value — env vars leak via `docker inspect`, `/proc/<pid>/environ`, and logs. `file:` secrets are world-readable `0444` bind mounts; `uid`/`gid`/`mode` are ignored for them.
 - **SEC-010** — Image references with `@sha256:` digest must be fully literal; don't templatize the digest in Jinja/copier (template drift makes the version+digest pair inconsistent) and don't split version + digest across separate variables. A template's version choices are each a complete literal `image:tag@sha256` string kept current by Renovate.
 - **SEC-011** — Add `.venv`, `node_modules`, `target/`, `.gradle/`, tool caches and other platform-specific build dirs to `.dockerignore` — they're at best slow, at worst architecture-incompatible inside the image.
-- **SEC-012** — Never `COPY .env` / `COPY *.env` into images; explicit `COPY` bypasses `.dockerignore` and bakes secrets into a layer permanently.
+- **SEC-012** — Never `COPY .env` / `COPY *.env` into images; it picks up `.env` only when `.dockerignore` misses it, and then bakes secrets into a layer permanently.
 - **SEC-013** — `.git/` must be in `.dockerignore` and never `COPY`'d into the final image — leaks full repo history, rotated secrets, internal codenames.
 - **SEC-014** — Flag `ARG`/`ENV` names matching `*SECRET*` / `*TOKEN*` / `*PASSWORD*` / `*KEY*` / `*CREDENTIAL*` — values get baked into image metadata visible via `docker history` / `docker inspect`.
 - **SEC-015** — `.dockerignore` must be *comprehensive*, not just present; check coverage against a baseline (VCS, secrets, per-ecosystem build dirs, tool caches, editor/OS, Docker meta).

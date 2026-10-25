@@ -5,12 +5,12 @@
 
 - UVP-020 — Production sync incantation: `uv sync --locked --no-dev --no-editable`
 - UVP-021 — `uv run` over manual `.venv/bin/activate`
-- UVP-022 — Set `UV_PROJECT_ENVIRONMENT` only to absolute paths
+- UVP-022 — Set `UV_PROJECT_ENVIRONMENT` to an absolute path scoped to one project
 - UVP-023 — Configure `default-groups` deliberately
 - UVP-024 — PEP 723 inline scripts: manage deps with `uv add --script`, lock with `uv lock --script`
 - UVP-025 — Use `[[tool.uv.index]]` named indexes; mark private indexes `explicit = true`
-- UVP-066 — `uv run --with` builds an ephemeral overlay; add `--isolated` for true isolation
-- UVP-068 — Use `--active` (or `UV_ACTIVE=1`) to make uv respect an activated venv
+- UVP-066 — `uv run --with` builds an ephemeral overlay; add `--no-project --isolated` for true isolation
+- UVP-068 — Use `--active` to make uv respect an activated venv
 <!-- /toc -->
 
 Detailed entries for `UVP-020..UVP-025`. Covers production sync
@@ -150,7 +150,7 @@ For an *interactive* shell where you genuinely want activation
 
 ---
 
-## UVP-022 — Set `UV_PROJECT_ENVIRONMENT` only to absolute paths
+## UVP-022 — Set `UV_PROJECT_ENVIRONMENT` to an absolute path scoped to one project
 
 **What.** `UV_PROJECT_ENVIRONMENT` redirects where uv creates and
 syncs the project venv. When you need this — Docker, custom CI
@@ -165,19 +165,16 @@ export UV_PROJECT_ENVIRONMENT=/app/.venv
 export UV_PROJECT_ENVIRONMENT=.venv-special
 ```
 
-**Why.** Relative paths resolve relative to the *current working
-directory*, not the project root. In a multi-project repo or a
-script that `cd`s between directories, this is a silent disaster:
-
-- `uv sync` in `packages/a` creates `packages/a/.venv-special`
-- `uv sync` in `packages/b` creates `packages/b/.venv-special`
-- A third invocation from the repo root creates `.venv-special` at the root
-
-— and tools downstream that expect one path get whichever one ran
-last. Worse, if the relative path resolves to a *system* prefix
-(`/usr/local`), uv's "remove extraneous packages by default"
-behavior will start deleting from the system Python. The docs
-explicitly warn: "Using `uv sync` on system environments is risky,
+**Why.** A relative path resolves against the *workspace root* uv
+discovers, not the current directory. So where the venv lands depends
+on which `pyproject.toml` uv finds, which is easy to misread in a
+nested repo or a Docker build with a moving `WORKDIR`. An absolute path
+is unambiguous. The opposite trap: one absolute path shared across
+several projects is overwritten by each project's `uv sync` (the docs
+recommend the setting only for a single project in CI or Docker).
+Worse, if the path points at a *system* prefix (`/usr/local`), uv's
+"remove extraneous packages by default" behavior will start deleting
+from the system Python. The docs explicitly warn: "Using `uv sync` on system environments is risky,
 as it removes extraneous packages by default and may leave the
 system broken." ([config docs](https://docs.astral.sh/uv/concepts/projects/config/#project-environment-path))
 
@@ -421,27 +418,30 @@ This rule kicks in once you have a *second* index.
 ---
 
 
-## UVP-066 — `uv run --with` builds an ephemeral overlay; add `--isolated` for true isolation
+## UVP-066 — `uv run --with` builds an ephemeral overlay; add `--no-project --isolated` for true isolation
 
 **What.** Since uv 0.8.0, `uv run --with <pkg>` layers an *ephemeral*
 environment on top of the project venv rather than mutating it. The
-overlay still sees the project's packages; to run a tool with zero
-project bleed-through, use `uv run --isolated --with <pkg>` (or
-`uvx --isolated <pkg>`).
+overlay still sees the project's packages. `--isolated` alone does not
+change that: it builds a fresh env but still installs the project and
+its deps into it. To run a tool with zero project bleed-through, use
+`uv run --no-project --isolated --with <pkg>`, or `uvx <pkg>` (tool envs
+never include the project; `uvx --isolated` only ignores
+already-installed tools).
 
 **Why.** Before 0.8.0, `uv run --with black` installed into the shared
 project cache, so two concurrent CI jobs requesting different `black`
 versions could race and one would pick up the wrong one. The ephemeral
 layering removes that hazard. The flip side: users who expect `--with` to
 produce a *clean* environment are surprised when `import project_pkg`
-still works — that's what `--isolated` is for.
+still works — that's what `--no-project --isolated` is for.
 
 **How.**
 
 ```bash
 uv run --with black black .              # overlay; project still importable
-uv run --isolated --with black black .   # project packages NOT visible
-uvx --isolated cowsay hi                 # same, via uvx
+uv run --no-project --isolated --with black black .   # project packages NOT visible
+uvx black .                                          # tool env, no project packages
 ```
 
 **When NOT to apply.** When the tool legitimately needs to import the
@@ -450,15 +450,17 @@ project (a formatter that reads your project's config) — add it to
 
 ---
 
-## UVP-068 — Use `--active` (or `UV_ACTIVE=1`) to make uv respect an activated venv
+## UVP-068 — Use `--active` to make uv respect an activated venv
 
 **What.** By default uv ignores `VIRTUAL_ENV` and manages its own `.venv`
-at the project root. The `--active` flag (and `UV_ACTIVE=1`, since uv
-0.5.29) tells uv to use the currently-activated environment instead.
+at the project root. The `--active` flag tells uv to use the
+currently-activated environment instead. There is no environment-variable
+form: `UV_ACTIVE=1` is not a documented uv variable and has no effect.
 
 **Why.** This is the most common "uv is ignoring my venv" confusion:
-`source custom-venv/bin/activate && uv sync` silently creates a *second*
-`.venv` at the project root rather than syncing into the activated one.
+`source custom-venv/bin/activate && uv sync` creates a *second* `.venv`
+at the project root rather than syncing into the activated one, with only
+a warning that `VIRTUAL_ENV` "will be ignored".
 The right tool depends on intent — a fixed path wants
 `UV_PROJECT_ENVIRONMENT` (UVP-022); deferring to whatever's active wants
 `--active`.
@@ -471,8 +473,8 @@ uv sync --active        # sync into the activated venv, not ./.venv
 ```
 
 **When NOT to apply.** Projects with a fixed environment path — set
-`UV_PROJECT_ENVIRONMENT` (UVP-022) instead. Don't export `UV_ACTIVE=1`
-globally in CI, where the "active" venv may be an unrelated leftover from
+`UV_PROJECT_ENVIRONMENT` (UVP-022) instead. Don't bake `--active` into
+CI scripts, where the "active" venv may be an unrelated leftover from
 a previous step; pin the path explicitly there.
 
 ---

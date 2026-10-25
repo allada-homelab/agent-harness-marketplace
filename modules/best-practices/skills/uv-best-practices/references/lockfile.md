@@ -4,7 +4,7 @@
 **Contents:**
 
 - UVP-010 — Commit `uv.lock` for **both** apps and libraries
-- UVP-011 — `--locked` validates lock vs `pyproject.toml`; `--frozen` skips validation AND skips installing the project package
+- UVP-011 — `--locked` validates lock vs `pyproject.toml`; `--frozen` skips validation — they're not interchangeable
 - UVP-012 — Use targeted `uv lock --upgrade-package <name>` over blanket `uv lock --upgrade`
 - UVP-013 — Never manually edit `uv.lock` — it's fully generated
 - UVP-014 — Don't commit `requirements.txt` alongside `uv.lock`
@@ -72,25 +72,26 @@ is real reproducibility loss.
 
 ---
 
-## UVP-011 — `--locked` validates lock vs `pyproject.toml`; `--frozen` skips validation AND skips installing the project package
+## UVP-011 — `--locked` validates lock vs `pyproject.toml`; `--frozen` skips validation — they're not interchangeable
 
 **What.** Two superficially-similar flags with importantly different
 semantics:
 
 - **`uv sync --locked`** — Reads `uv.lock`. *Validates* that the lockfile is up-to-date with `pyproject.toml`. **Errors if not.** Builds and installs the project package along with deps.
-- **`uv sync --frozen`** — Reads `uv.lock`. *Skips* the lock-vs-pyproject check. Also **skips installing the project package itself** — only deps are installed.
+- **`uv sync --frozen`** — Reads `uv.lock` as-is. *Skips* the lock-vs-pyproject check. Still installs the project package; skipping it is a separate flag, `--no-install-project`.
 
 They aren't interchangeable. Pick by intent.
 
 **Why.** Three real-world failure modes from confusing them:
 
 1. **Using `--frozen` in CI hides stale lockfiles.** A PR that modifies `pyproject.toml` (adds a dep, tightens a constraint) but forgets to run `uv lock` produces an out-of-date `uv.lock`. With `--frozen`, CI happily proceeds with the *old* lockfile — tests pass, the PR merges, and production silently installs different versions than what was reviewed.
-2. **Switching from `--frozen` to `--locked` in Docker triggers project install.** A Dockerfile that used `--frozen` (installing only deps in a layer, copying source after) suddenly tries to build the project when switched to `--locked`. If the project has a non-trivial build (maturin, hatch-fancy-pypi-readme, etc.), the build can fail or pull in toolchain you didn't include in that layer ([uv#9379](https://github.com/astral-sh/uv/issues/9379)).
+2. **Switching from `--frozen` to `--locked` in Docker can trigger a project build.** A deps-only layer (`--no-install-project`, source copied later) that switches to `--locked` must now read the project's metadata to validate the lock. With dynamic metadata (`dynamic = ["version"]`) that means building the project, even with `--no-install-project`. If the build is non-trivial (maturin, hatch-fancy-pypi-readme, etc.), it can fail or pull in toolchain you didn't include in that layer ([uv#9379](https://github.com/astral-sh/uv/issues/9379)).
 3. **`--frozen --group <name>` used to swallow typos silently.** Before uv 0.6.0, `uv sync --frozen --group does-not-exist` succeeded with no warning — the group name was silently ignored against the frozen lockfile. uv 0.6.0 changed this so that `--frozen` still validates that requested groups exist in the lockfile, surfacing the typo. If you're on a pre-0.6.0 uv, a misspelled group is invisible; pin a newer uv via `[tool.uv] required-version` (UVP-008) to get the loud failure.
 
-The asymmetry is critical: `--locked` does *more* than `--frozen`
-(check + install project); `--frozen` is not "`--locked` minus the
-check."
+Both install the same set: deps plus the project, unless
+`--no-install-project` is passed. The difference is the check, and that
+the check needs project metadata. A deps-only layer wants
+`--no-install-project` explicitly with either flag.
 
 **How.**
 

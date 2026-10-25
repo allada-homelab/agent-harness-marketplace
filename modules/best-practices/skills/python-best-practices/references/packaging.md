@@ -374,9 +374,10 @@ packages with native extensions, wheel + sdist is still the right
 shape — publish pre-built wheels for the platforms you support,
 and the sdist as a fallback.
 
-`python setup.py bdist_wheel` is **removed** in Python 3.12+ and
-should never be used in new code. Use `python -m build` or
-`uv build`.
+`python setup.py bdist_wheel` should never be used in new code.
+Python 3.12 removed `distutils` (PEP 632) and stopped pre-installing
+setuptools in new venvs, so it fails in a fresh 3.12+ venv unless
+setuptools is installed. Use `python -m build` or `uv build`.
 
 **How.**
 
@@ -1244,6 +1245,7 @@ What each profiler is for:
 
 - **scalene** — line-by-line Python *and* native-time attribution, plus memory profiling. The native-time column is the differentiator: it tells you which lines are spent in pure Python vs. in C extensions, so you can tell whether the slow part is even something you *could* speed up by rewriting Python.
 - **py-spy** — sampling profiler that attaches to a running process via `ptrace`/equivalent. ~1-2% overhead. Useful for "the prod service is slow right now, what is it doing?" — no instrumentation, no restart, no code changes.
+- **`profiling.sampling` (Tachyon, PEP 799)** — on Python 3.15+, the stdlib ships its own sampling profiler: `python -m profiling.sampling run script.py`, or `python -m profiling.sampling attach <PID>` for a live process. The docs describe virtually zero overhead and sampling rates up to 1,000,000 Hz. A no-install option on 3.15+; scalene and py-spy still work on every version.
 
 For pure-Python hot paths that the profile genuinely points at,
 [`mypyc`](https://mypyc.readthedocs.io/) is the lowest-effort

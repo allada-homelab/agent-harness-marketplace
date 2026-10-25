@@ -43,7 +43,7 @@ See [`references/layout.md`](./references/layout.md).
 See [`references/errors.md`](./references/errors.md).
 
 - **GO-004** — Wrap errors with `%w` to preserve the cause for `errors.Is`/`errors.As`.
-- **GO-005** — Match with `errors.Is` / `errors.As`, never `==`.
+- **GO-005** — Match with `errors.Is` / `errors.AsType`, never `==`.
 - **GO-006** — Return errors, don't `panic`/`os.Exit` in reusable code; recover only at a process boundary.
 
 ## Rules — Concurrency & context
