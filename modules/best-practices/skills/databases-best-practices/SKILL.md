@@ -45,7 +45,7 @@ See [`references/sqlite.md`](./references/sqlite.md).
 - **SQLITE-004** — Turn `foreign_keys` on for every connection; it's off by default.
 - **SQLITE-005** — Start writes with `BEGIN IMMEDIATE`; roll back a failed `COMMIT` only if `in_transaction`.
 - **SQLITE-006** — One writer connection and a pool of `mode=ro` readers, each read in one explicit transaction.
-- **SQLITE-007** — Run `PRAGMA optimize = 0x10002` at open (after migrations), periodically, and at close.
+- **SQLITE-007** — Run `PRAGMA optimize = 0x10002` at open (after migrations), periodically, and at close. _(requires sqlite>=3.46)_
 - **SQLITE-008** — Key migrations on `PRAGMA user_version`, each step and its bump in one `BEGIN IMMEDIATE` transaction.
 - **SQLITE-009** — Pass every value as a bound parameter.
 - **SQLITE-010** — Use `STRICT` tables, `CHECK` constraints, and money as integer cents.

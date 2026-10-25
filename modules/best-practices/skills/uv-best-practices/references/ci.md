@@ -279,6 +279,8 @@ won't fire.
 
 ## UVP-028 — Run `uv audit` in CI to scan the lockfile for known vulnerabilities
 
+**Requires.** uv>=0.10.10 (preview: audit-command)
+
 **What.** `uv audit` queries the
 [OSV vulnerability database](https://osv.dev/) (default) for every
 package version in `uv.lock` and reports known CVEs / advisories.
@@ -367,6 +369,8 @@ code scanning (UVP-065) or `--output-format json` for custom dashboards.
 
 ## UVP-065 — Run `uv audit` with SARIF output and centralize ignores in `[tool.uv.audit]`
 
+**Requires.** uv>=0.11.22 (preview: audit-command)
+
 **What.** `uv audit` (extends UVP-028) scans `uv.lock` against the OSV
 database without syncing the environment. As of uv 0.11.22 it can emit
 SARIF for GitHub code scanning. Put accepted-risk ignores in
@@ -406,6 +410,8 @@ gate.
 ---
 
 ## UVP-069 — Enumerate workspace members with `uv workspace list` in monorepo CI
+
+**Requires.** uv>=0.10.0
 
 **What.** `uv workspace list` (stable since uv 0.10.0; `--output-format
 json` for scripting) lists every member of a uv workspace with name and

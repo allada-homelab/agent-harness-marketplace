@@ -528,6 +528,8 @@ involved are genuinely mutually exclusive.
 
 ## UVP-063 — Set `[tool.uv] add-bounds` to control how `uv add` writes constraints
 
+**Requires.** uv>=0.10.0
+
 **What.** The `add-bounds` setting (stable since uv 0.10.0) controls the
 default version constraint `uv add <pkg>` writes: `"lower"` (default —
 `>=1.2.3`), `"major"` (`>=1.2.3,<2`), `"minor"` (`>=1.2.3,<1.3`), or

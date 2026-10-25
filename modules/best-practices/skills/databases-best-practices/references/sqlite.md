@@ -352,6 +352,8 @@ their own writer connection. They then serialize on the file lock through
 
 ## SQLITE-007 — `PRAGMA optimize = 0x10002` at open (after migrations), periodically, and at close
 
+**Requires.** sqlite>=3.46
+
 **What.** Once migrations have run, the writer runs
 `PRAGMA optimize = 0x10002`. A periodic `optimize()` call, which the
 application schedules (hourly or daily) and which `close()` also calls,

@@ -270,6 +270,8 @@ target catches up.
 
 ## UVP-074 — Generate a CycloneDX SBOM with `uv export --format cyclonedx`
 
+**Requires.** uv>=0.9.11 (preview: sbom-export)
+
 **What.** Since uv 0.9.11, `uv export --format cyclonedx` emits a
 CycloneDX Software Bill of Materials from the resolved lockfile. This is
 distinct from `pylock.toml` (UVP-062): a lockfile is for *reproducible

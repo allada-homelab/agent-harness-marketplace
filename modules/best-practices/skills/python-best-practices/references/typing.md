@@ -524,6 +524,8 @@ least pick the most specific error code and document with a comment.
 
 ## PY-069 — Prefer `TypeIs` over `TypeGuard` for narrowing predicates
 
+**Requires.** python>=3.13 or typing-extensions>=4.10
+
 **What.** For user-defined type-narrowing predicates, return
 [`TypeIs[T]`](https://peps.python.org/pep-0742/) (PEP 742, Python
 3.13+ — or `typing_extensions ≥ 4.10` on older interpreters) rather
@@ -605,6 +607,8 @@ intentional.
 ---
 
 ## PY-071 — Use PEP 695 generic syntax (3.12+)
+
+**Requires.** python>=3.12
 
 **What.** On Python 3.12+, use the inline generic syntax introduced
 by [PEP 695](https://peps.python.org/pep-0695/) — `def foo[T]() -> T`, `class Box[T]:`, `type Alias = list[int]` — instead of the older
@@ -691,6 +695,8 @@ and don't need it.
 
 ## PY-080 — On Python 3.14+, drop `from __future__ import annotations`
 
+**Requires.** python>=3.14
+
 **What.** Python 3.14 makes deferred annotation evaluation (PEP 649 +
 PEP 749) the default, so `from __future__ import annotations` is no
 longer needed for forward references or type-only annotations. Once a
@@ -729,6 +735,8 @@ references, not the runtime import cycle.
 
 ## PY-081 — Use `TypedDict(closed=True)` / `extra_items=` for strict JSON shapes
 
+**Requires.** python>=3.15 or typing-extensions>=4.13
+
 **What.** PEP 728 (finalized, targeting Python 3.15; available earlier
 via `typing_extensions`) adds `closed=True` to a `TypedDict` to reject
 untyped extra keys, and `extra_items=SomeType` to type additional keys.
@@ -754,11 +762,14 @@ class Headers(TypedDict, extra_items=str):    # arbitrary string-valued keys
 
 **When NOT to apply.** Dictionaries that legitimately carry arbitrary
 keys you don't model — leave them open. And on pre-3.15 without
-`typing_extensions ≥ 4.12`, the syntax isn't available.
+`typing_extensions ≥ 4.13` (the release that moved `extra_items` to a
+class argument), the syntax isn't available.
 
 ---
 
 ## PY-082 — Use `TypeForm[T]` for functions that accept a type expression at runtime
+
+**Requires.** python>=3.15 or typing-extensions>=4.13
 
 **What.** PEP 747 (finalized, targeting Python 3.15; `typing_extensions`
 earlier) introduces `TypeForm[T]` — the correct annotation for a

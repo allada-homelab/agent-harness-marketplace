@@ -235,6 +235,8 @@ one line per tool; the benefit is non-zero.
 
 ## UVP-072 — Audit global tools with `uv tool list --outdated` / `--show-python`
 
+**Requires.** uv>=0.10.10
+
 **What.** Two flags make `uv tool list` useful for maintenance:
 `--outdated` (uv 0.10.10) shows which globally-installed tools have newer
 releases on PyPI, and `--show-python` (uv 0.9.2) shows which interpreter

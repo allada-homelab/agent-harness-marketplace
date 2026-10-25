@@ -127,6 +127,58 @@ Strict requirements:
   whole-file level are fine while scaffolding a new skill; half-
   written rule entries are not.
 
+## Version floors (`Requires.`)
+
+A rule whose **How** only works from some version on carries one
+extra line, directly under the heading and before **What.**:
+
+```markdown
+## PY-081 — Use `TypedDict(closed=True)` for strict JSON shapes
+
+**Requires.** python>=3.15
+
+**What.** ...
+```
+
+The same text is repeated at the end of the rule's `SKILL.md` index
+line, so a reader scanning the index sees the floor without opening
+the reference:
+
+```markdown
+- **PY-081** — Use `TypedDict(closed=True)` / `extra_items=` for strict JSON shapes. _(requires python>=3.15)_
+```
+
+Syntax: one or more terms, each `<component>>=<version>`, optionally
+followed by ` (preview)` or ` (preview: <feature>)` when the feature
+is behind a preview or experimental flag. `, ` joins terms that are
+all required; ` or ` joins alternatives (a stdlib floor or its
+backport: `python>=3.13 or typing-extensions>=4.10`). Components are lowercase names (`python`, `go`,
+`sqlite`, `postgres`, `uv`, `ruff`, `pytest`, `fastapi`, `starlette`,
+`compose`, `buildkit`, `dockerfile`). Example:
+`uv>=0.13 (preview: check-command), python>=3.12`.
+
+When to add one:
+
+- **Runtimes** (`python`, `go`, `postgres`): when the floor is newer
+  than the oldest release upstream still supports. A project may
+  legitimately run that oldest release, and the rule would break it.
+  `sqlite` has no support window, so compare with the system library
+  the oldest still-supported Ubuntu LTS and Debian stable ship.
+- **Tools and libraries**: when the rule depends on a feature added
+  in the last 12 months or in the current major line. Skip floors
+  every supported install already meets (BuildKit secret mounts,
+  `go.sum`).
+- **Preview or experimental features**: always, with the
+  `(preview…)` suffix. They can change or vanish in any release.
+- **Not** when a rule only mentions a version in passing ("on 3.14+
+  this is no longer needed") but its advice holds below it.
+
+An agent applying a tagged rule compares the floor with the
+project's own (`requires-python`, the `go` directive in `go.mod`, the
+pinned tool version). Below the floor, the rule does not apply; say
+so instead of applying it. Keep the version-specific caveats in
+**When NOT to apply**, too.
+
 ## SKILL.md shape
 
 ```markdown
@@ -267,6 +319,8 @@ hyphen-normalized in GitHub-flavored markdown).
 4. **Missing rule** — entry in SKILL.md index without a `## RULE-NNN` header in references.
 5. **Dead link** — local markdown link to a non-existent path.
 6. **Frontmatter format** — missing `name:` / `description:`, or description starting with first/second person.
+7. **`Requires.` syntax** — a `**Requires.**` line that doesn't match the grammar above, or one that isn't directly under its rule heading.
+8. **`Requires.` agreement** — a rule's index suffix `_(requires …)_` and its reference `**Requires.**` line differ, or only one of them exists.
 
 Cross-skill prefix collisions emit a warning (not a failure) — same
 prefix in two skills is suspicious but allowed if intentional.

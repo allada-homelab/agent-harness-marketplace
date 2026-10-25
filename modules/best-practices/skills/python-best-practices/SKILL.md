@@ -71,11 +71,11 @@ See [`references/typing.md`](./references/typing.md).
 - **PY-014** — Use `if TYPE_CHECKING:` for type-only imports + `from __future__ import annotations` at the top of files that need forward refs (on Python 3.14+ deferred evaluation is the default, so the future import is no longer needed for forward refs — see PY-080).
 - **PY-015** — `TypedDict` for JSON / API shapes (no runtime cost); `@dataclass` for internal records; `pydantic.BaseModel` only at system boundaries that need runtime validation.
 - **PY-016** — `# type: ignore[code]` and `# noqa: CODE` always with the explicit code — never bare. Bare ignores swallow future errors silently.
-- **PY-069** — Prefer `TypeIs` (PEP 742) over `TypeGuard` for narrowing predicates — `TypeIs` narrows in both branches so `assert_never` exhaustiveness works.
-- **PY-071** — Use PEP 695 inline generic syntax (`def foo[T]`, `class Foo[T]`, `type Alias = ...`) on Python 3.12+; PEP 696 defaults require 3.13.
-- **PY-080** — On Python 3.14+, drop `from __future__ import annotations` — deferred annotation evaluation (PEP 649/749) is the default.
-- **PY-081** — Use `TypedDict(closed=True)` / `extra_items=` for strict JSON shapes (PEP 728, Python 3.15+).
-- **PY-082** — Use `TypeForm[T]` (PEP 747) for functions that accept a type expression at runtime, instead of `type[T]` or `Any`.
+- **PY-069** — Prefer `TypeIs` (PEP 742) over `TypeGuard` for narrowing predicates — `TypeIs` narrows in both branches so `assert_never` exhaustiveness works. _(requires python>=3.13 or typing-extensions>=4.10)_
+- **PY-071** — Use PEP 695 inline generic syntax (`def foo[T]`, `class Foo[T]`, `type Alias = ...`) on Python 3.12+; PEP 696 defaults require 3.13. _(requires python>=3.12)_
+- **PY-080** — On Python 3.14+, drop `from __future__ import annotations` — deferred annotation evaluation (PEP 649/749) is the default. _(requires python>=3.14)_
+- **PY-081** — Use `TypedDict(closed=True)` / `extra_items=` for strict JSON shapes (PEP 728, Python 3.15+). _(requires python>=3.15 or typing-extensions>=4.13)_
+- **PY-082** — Use `TypeForm[T]` (PEP 747) for functions that accept a type expression at runtime, instead of `type[T]` or `Any`. _(requires python>=3.15 or typing-extensions>=4.13)_
 - **PY-092** — On basedpyright, start from `typeCheckingMode = "recommended"` (or `"all"`), not `"strict"` — strict leaves every basedpyright-only rule off; downgrade per rule for untyped deps.
 - **PY-093** — Under basedpyright, suppress with `# pyright: ignore[rule]`; pyright ignores the code in `# type: ignore[code]`, so it silences the whole line.
 
@@ -89,7 +89,7 @@ See [`references/linting.md`](./references/linting.md).
 - **PY-023** — Line length: 88 (ruff/black default). Don't fight the default unless your team already has a different standard.
 - **PY-024** — pre-commit hook order: `ruff` (with `--fix`) **before** `ruff-format`. Lint fixes can produce output that needs reformatting.
 - **PY-025** — Enable `RUF100` to flag unused `noqa` directives so suppression comments don't accumulate as dead weight.
-- **PY-088** — Use ruff range suppression (`# ruff: disable[CODE]` / `# ruff: enable[CODE]`, ≥0.15) for multi-line blocks; always name the code.
+- **PY-088** — Use ruff range suppression (`# ruff: disable[CODE]` / `# ruff: enable[CODE]`, ≥0.15) for multi-line blocks; always name the code. _(requires ruff>=0.15)_
 - **PY-091** — Never `return` / `break` / `continue` out of a `finally` block (ruff `B012`; PEP 765 makes it a `SyntaxWarning` on 3.14).
 - **PY-094** — Curate ruff `select` (measure each family with `--statistics` first); never `ALL` or `preview = true` in long-lived projects — new rules land on every upgrade.
 
@@ -120,9 +120,9 @@ See [`references/async.md`](./references/async.md).
 - **PY-067** — Keep a strong reference to fire-and-forget `asyncio.create_task` results; tasks held only weakly can be GC'd mid-execution.
 - **PY-068** — Prefer `async with asyncio.timeout(N):` (3.11+) over `asyncio.wait_for` for block-level timeouts; reserve `wait_for` for wrapping a single coroutine.
 - **PY-079** — Free-threaded Python (PEP 703 / PEP 779) — informational guard-rail: not production-ready until your entire dep graph declares free-threading support. (3.14 reduced single-thread overhead to ~5–10%.)
-- **PY-083** — On Python 3.14+, use `concurrent.interpreters.InterpreterPoolExecutor` for CPU-bound work needing process-like isolation at thread-like cost.
+- **PY-083** — On Python 3.14+, use `concurrent.interpreters.InterpreterPoolExecutor` for CPU-bound work needing process-like isolation at thread-like cost. _(requires python>=3.14)_
 - **PY-084** — Use `asyncio.get_running_loop()`, never `asyncio.get_event_loop()` — the latter raises `RuntimeError` on 3.14+ with no running loop.
-- **PY-085** — Introspect stuck async apps with `python -m asyncio ps <pid>` / `pstree <pid>` (3.14+) instead of adding instrumentation.
+- **PY-085** — Introspect stuck async apps with `python -m asyncio ps <pid>` / `pstree <pid>` (3.14+) instead of adding instrumentation. _(requires python>=3.14)_
 
 ## Rules — Logging
 
@@ -148,7 +148,7 @@ See [`references/packaging.md`](./references/packaging.md).
 - **PY-064** — Upload to TestPyPI first to catch metadata / README rendering issues. PyPI doesn't allow overwriting a release.
 - **PY-065** — Dev dependencies go in `[project.optional-dependencies]` (or `[dependency-groups]` per UVP-001), never `[project.dependencies]`. End-users of your library shouldn't install pytest.
 - **PY-066** — `warnings.warn(..., DeprecationWarning, stacklevel=2)` for public API deprecations. `stacklevel=2` points the warning at the caller, not your library's internals.
-- **PY-070** — `@warnings.deprecated` (PEP 702, 3.13+ / `typing_extensions`) for type-checker-visible deprecations — flags call sites inline at edit time, not just at runtime.
+- **PY-070** — `@warnings.deprecated` (PEP 702, 3.13+ / `typing_extensions`) for type-checker-visible deprecations — flags call sites inline at edit time, not just at runtime. _(requires python>=3.13 or typing-extensions>=4.5)_
 - **PY-072** — Use PEP 723 inline script metadata (`# /// script` block) for standalone scripts with deps; `uv run script.py` consumes it directly.
 - **PY-073** — `datetime.now(UTC)` / always-aware datetimes; `datetime.utcnow()` and `datetime.utcfromtimestamp()` are deprecated as of 3.12. Pair with ruff `DTZ` (opt-in per PY-021).
 - **PY-075** — Enable PEP 740 build provenance attestations — automatic in `pypa/gh-action-pypi-publish` v1.11+ with `permissions: attestations: write`. Extends PY-062.

@@ -811,6 +811,8 @@ static PyModuleDef_Slot module_slots[] = {
 
 ## PY-083 — Use `InterpreterPoolExecutor` for CPU-bound work on Python 3.14+
 
+**Requires.** python>=3.14
+
 **What.** `concurrent.interpreters.InterpreterPoolExecutor` (Python 3.14,
 PEP 734) runs each worker in its own subinterpreter on a background
 thread — process-like isolation (each interpreter has independent state)
@@ -873,6 +875,8 @@ wrong call. The only legacy context is *inside* a running loop, where
 ---
 
 ## PY-085 — Introspect stuck async apps with `python -m asyncio ps` / `pstree`
+
+**Requires.** python>=3.14
 
 **What.** Python 3.14 ships `python -m asyncio ps <pid>` and
 `python -m asyncio pstree <pid>` — CLI tools that attach to a running

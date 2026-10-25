@@ -1658,6 +1658,8 @@ Cite: [Dockerfile reference — COPY --parents](https://docs.docker.com/referenc
 
 ## DOCKER-032 — Cap heavy `RUN` steps with build-time resource limits
 
+**Requires.** buildkit>=0.31, dockerfile>=1.25
+
 **What.** `docker buildx build --resource cpu=2,memory=4g` (BuildKit
 ≥0.31 + frontend ≥1.25), or the `resource` attribute in a bake target,
 caps CPU and memory for build steps.

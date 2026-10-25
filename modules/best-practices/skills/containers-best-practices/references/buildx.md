@@ -409,6 +409,8 @@ at all (SEC-004).
 
 ## BUILDX-007 — Use `docker buildx debug build` for interactive step-through of failing builds
 
+**Requires.** buildx>=0.12 (preview)
+
 **What.** `docker buildx debug build` runs the build under an
 interactive debugger; it is still an **experimental** command (enable
 with `BUILDX_EXPERIMENTAL=1`). For editor-integrated debugging,
