@@ -6,6 +6,7 @@ tags: [modules, skills]
 generated: {by: okf-wiki/haiku, at: 2026-10-10T03:06:49Z}
 verified:
   - {by: okf-wiki/haiku, at: 2026-10-10T03:06:49Z, commit: 8d8078a913ef}
+  - {by: okf-wiki/deepseek, at: 2026-10-25T07:05:14Z, commit: 2596aa106bc7}
 sources:
   - {resource: https://code.claude.com/docs/en/sub-agents, id: s1}
   - {resource: modules/okf-wiki/skills/wiki/SKILL.md, id: s2}
