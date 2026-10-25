@@ -88,6 +88,14 @@ pairing; they ride the next pin bump. `bin/check.sh` runs
 machine and **warns** (never fails) on cases 1–4. Every handoff that touches
 `modules/` or a contract names the paired dotfiles change it needs, or says none.
 
+## The weekly best-practices research automation
+
+`docs/best-practices-research/` is the automation's home: `TASK.md` is what the
+weekly run executes (a dotfiles-hosted systemd timer drives `dsh --profile acp`
+over it; the session validates the rule library, writes `reports/<date>.md` and
+opens the PR). A docs-only change here needs no pairing — the timer/driver live
+in the dotfiles layer.
+
 ## Repo-scoped agent resources
 
 Project skills live in `.agents/skills/<name>/SKILL.md` so all three harnesses
