@@ -9,6 +9,7 @@
 - FAPI-004 — Use a `lifespan` context manager for startup/shutdown; never `@app.on_event`
 - FAPI-005 — Share startup-created resources via `app.state`, not module-level globals
 - FAPI-006 — Version the API by URL path prefix (`/v1`), not by header
+- FAPI-094 — Type lifespan state: yield a `TypedDict`, read it through one typed dependency
 <!-- /toc -->
 
 Detailed entries for `FAPI-001..FAPI-006`. Each follows the four-part
@@ -238,3 +239,68 @@ Finer-grained versions *within* a path major version can ride a header or
 query parameter: Google's interface-based versioning keeps `v1` in the
 path and sends a date version in `X-Goog-Api-Version` or `$apiVersion`
 (https://google.aip.dev/185).
+
+---
+
+## FAPI-094 — Type lifespan state: yield a `TypedDict`, read it through one typed dependency
+
+**Requires.** starlette>=0.52
+
+**What.** Instead of setting attributes on `app.state` (FAPI-005), let
+`lifespan` yield a `TypedDict` of the resources it created. Starlette
+gives every request a shallow copy of it as `request.state`. Read it in
+one dependency that casts the request to `Request[AppState]` and returns
+the typed resource. Never annotate a route or dependency parameter as
+`Request[AppState]` itself.
+
+**Why.** `app.state.pool` is an untyped attribute bag: a typo or a renamed
+key fails at request time, not in the type checker. Starlette 0.52.0 made
+`Request` generic over its state and added dictionary-style access, so
+`request.state["http"]` has the `TypedDict`'s value type, and a lifespan
+that yields a wrong key is a type error (pyright: `"htp" is an undefined
+item in type "AppState"`). The FastAPI trap: FastAPI does not recognize a
+parameterized `Request[AppState]` parameter as the request object. It
+treats it as a Pydantic field, and the app fails at import (FastAPI
+0.162.0: `FastAPIError: Invalid args for response field!`). The `cast`
+in one dependency keeps the typing and avoids that failure.
+
+**How.**
+
+```python
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Annotated, TypedDict, cast
+
+import httpx
+from fastapi import Depends, FastAPI, Request
+
+
+class AppState(TypedDict):
+    http: httpx.AsyncClient
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[AppState]:
+    async with httpx.AsyncClient() as http:
+        yield {"http": http}
+
+
+def get_http(request: Request) -> httpx.AsyncClient:
+    return cast("Request[AppState]", request).state["http"]
+
+
+Http = Annotated[httpx.AsyncClient, Depends(get_http)]
+app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/")
+async def root(http: Http) -> dict[str, str]:
+    r = await http.get("https://example.com")
+    return {"status": str(r.status_code)}
+```
+
+**When NOT to apply.** Below Starlette 0.52 there is no dictionary-style
+access; keep FAPI-005's `app.state`. The per-request copy is shallow, so
+it suits handles (pools, clients), not values a request reassigns, and
+FAPI-005's per-worker caveat applies unchanged. An app with one resource
+and no type checker gains little.

@@ -6,6 +6,7 @@
 - FAPI-030 — Declare dependencies as `Annotated[T, Depends(fn)]` and reuse via type aliases
 - FAPI-031 — Wrap `yield` dependencies in `try/finally` so cleanup runs on error
 - FAPI-032 — Use `Security(fn, scopes=[...])` (not `Depends`) for OAuth2 scope-bearing auth
+- FAPI-095 — Use `Depends(scope="function")` when a `yield` dependency must close before the response is sent
 <!-- /toc -->
 
 Detailed entries for `FAPI-030..FAPI-032`. Each follows the four-part
@@ -114,3 +115,62 @@ declared scopes.
 **When NOT to apply.** Auth dependencies that don't use OAuth2 scopes (a
 plain API-key check, a boolean "is logged in" gate) — plain `Depends` is
 correct there; `Security` only earns its place when scopes are involved.
+
+---
+
+## FAPI-095 — Use `Depends(scope="function")` when a `yield` dependency must close before the response is sent
+
+**Requires.** fastapi>=0.121
+
+**What.** Since FastAPI 0.118.0, the code after `yield` in a dependency
+runs *after* the response is sent; that is the default
+`scope="request"`. When the path operation is the only user of the
+resource (a pooled connection, a lock), declare the dependency with
+`Depends(fn, scope="function")`. FastAPI then runs the exit code when the
+path operation function returns, before the response is sent.
+
+**Why.** With the default scope, the dependency holds its resource for
+the whole response, including a slow client reading a `StreamingResponse`
+or a large body. A pooled connection held through the send is
+unavailable to other requests, so slow clients can drain the pool. The
+order, measured on FastAPI 0.162.0 with a `StreamingResponse`: default
+scope runs `open, stream, close`; `scope="function"` runs
+`open, close, stream`.
+
+**How.**
+
+```python
+import sqlite3
+from collections.abc import Iterator
+from typing import Annotated
+
+from fastapi import Depends, FastAPI
+from fastapi.responses import StreamingResponse
+
+app = FastAPI()
+
+
+def get_db() -> Iterator[sqlite3.Connection]:
+    conn = sqlite3.connect("app.db")
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+Db = Annotated[sqlite3.Connection, Depends(get_db, scope="function")]
+
+
+@app.get("/report")
+def report(db: Db) -> StreamingResponse:
+    rows = db.execute("SELECT name FROM items").fetchall()  # read before the return
+    return StreamingResponse(f"{name}\n" for (name,) in rows)
+```
+
+**When NOT to apply.** Keep the default when the response itself reads
+from the resource (a stream that pulls rows from the session). That is
+the case 0.118.0 changed the default for, and closing early breaks it.
+Sub-dependencies of a default-scoped dependency must also be
+request-scoped. A function-scoped dependency can depend on either.
+For top-level (parameterless) dependencies, use 0.121.1 or later: that
+release fixed `scope="function"` for them.

@@ -5,9 +5,11 @@
 
 - REPO-009 — Statically audit GitHub Actions workflows (zizmor) for injection, over-broad permissions, persisted credentials and unpinned actions
 - REPO-010 — Workflows start from `permissions: {}` and each job requests only the `GITHUB_TOKEN` scopes it needs
+- REPO-011 — Lock workflow dependencies in `.github/workflows/actions.lock` and verify it in CI
+- REPO-013 — Turn on CodeQL code scanning with default setup
 <!-- /toc -->
 
-Detailed entries for `REPO-009..REPO-010`. Each follows the four-part
+Detailed entries for `REPO-009..REPO-011` and `REPO-013`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 Citations point at the [zizmor docs](https://docs.zizmor.sh/)
@@ -107,3 +109,95 @@ jobs:
 
 **When NOT to apply.** Never skip it; a job that genuinely needs write
 access (a release, a PR comment) declares that one scope on that one job.
+
+---
+
+## REPO-011 — Lock workflow dependencies in `.github/workflows/actions.lock` and verify it in CI
+
+**Requires.** gh-actions-lock>=0.2 (preview)
+
+**What.** Generate a workflow dependency lockfile with the
+`gh actions-lock` CLI extension and commit it. It pins every action your
+workflows use, transitive actions included, to a commit SHA and records
+the source repository's numeric identity. A CI job runs
+`gh actions-lock --verify` on every pull request, and CODEOWNERS
+(REPO-008) owns the lockfile. The feature is in public preview.
+
+**Why.** A tag such as `@v3` resolves to whatever commit it points at
+when the job runs; if a maintainer account is compromised and the tag is
+repointed, your CI runs the new code. Full-SHA pins (REPO-009) fix that
+only for direct references and only where someone wrote them. The
+lockfile also covers actions your actions call, and the runner checks
+the locked commit and repository identity at job start.
+Source: https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles.md
+
+> A workflow dependency lockfile pins a commit SHA to every action (including transitive dependencies) and reusable workflow your workflows depend on.
+
+**How.**
+
+```bash
+gh extension install github/gh-actions-lock
+gh actions-lock      # pin every resolvable action; rerun after changing any `uses:`
+git add .github/workflows/
+```
+
+```yaml
+# .github/workflows/verify-lockfile.yml: fails when actions.lock is stale or a pin no longer verifies
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: gh extension install github/gh-actions-lock --pin v0.4.0
+      - run: gh actions-lock --verify
+```
+
+Dependabot (REPO-002) regenerates the matching lockfile entry in its own
+action bumps. Never edit `actions.lock` by hand. For a commit-time check,
+`gh actions-lock --verify-local --no-fix` is offline but checks coverage
+only, not provenance. Once every workflow is onboarded, the **Require
+lockfile** policy blocks runs of targeted workflows that aren't.
+
+**When NOT to apply.** GitHub Enterprise Server, which the extension
+doesn't support. While the feature is in preview, keep REPO-009's
+full-SHA pins as well. The lockfile doesn't lock reusable workflows
+called from another repository (that repository's own lockfile covers
+them) or container images.
+
+---
+
+## REPO-013 — Turn on CodeQL code scanning with default setup
+
+**What.** Enable CodeQL **default setup** (Settings → Advanced Security →
+CodeQL analysis → Set up → Default). With no workflow file to maintain,
+it scans the default branch and protected branches on push, pull
+requests against them, and runs a weekly scan. It picks up new CodeQL
+languages, GitHub Actions workflows included, automatically.
+
+**Why.** Secret scanning (REPO-004, REPO-012) finds credentials, not
+vulnerable code; zizmor (REPO-009) audits only workflows. Without code
+scanning, an injection or path-traversal bug in the code itself has no
+gate before merge. Default setup is free for public repositories; private
+and internal ones need GitHub Code Security.
+Source: https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/configure-code-scanning/configure-code-scanning.md
+
+> We recommend that you start using code scanning with default setup.
+
+**How.**
+
+```bash
+gh api repos/OWNER/REPO/code-scanning/default-setup              # "state": "not-configured" | "configured"
+gh api -X PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=configured
+```
+
+**When NOT to apply.** Repositories that need a custom build for a
+compiled language, a matrix or a different schedule use advanced setup (a
+CodeQL workflow) instead; switching to default setup disables that
+workflow. Repositories with no CodeQL-supported language gain nothing,
+though enabling it there costs no Actions minutes.

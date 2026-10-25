@@ -41,6 +41,7 @@ See [`references/proto-design.md`](./references/proto-design.md).
 - **GRPC-019** — Reserve enum `0` for a `_UNSPECIFIED` sentinel; never put a real value there.
 - **GRPC-020** — Model time with `google.protobuf.Timestamp`/`Duration`, not raw `int64` or strings.
 - **GRPC-021** — Paginate unbounded `List` RPCs with `page_size`/`page_token`/`next_page_token`.
+- **GRPC-022** — Write new schemas in protobuf editions (`edition = "2024"`), pinned to the newest edition every plugin and runtime in the build supports; not 2026 yet. _(requires protoc>=32 or buf>=1.68)_
 
 ## Rules — Error model
 
@@ -56,6 +57,8 @@ See [`references/deadlines.md`](./references/deadlines.md).
 
 - **GRPC-007** — Clients set a deadline on every RPC (`context.WithTimeout`); a deadline-free call can hang a goroutine and cascade.
 - **GRPC-008** — Handlers honor the context: check `ctx.Err()`, propagate ctx downstream, return on the deadline budget instead of continuing zombie work.
+- **GRPC-023** — Retry through a per-method `retryPolicy` in the service config, not hand-written loops; list codes beyond `UNAVAILABLE` only for idempotent methods.
+- **GRPC-026** — Set wait-for-ready (`grpc.WaitForReady(true)`) on calls that should outlast a backend restart, always under a deadline.
 
 ## Rules — Streaming
 
@@ -84,6 +87,8 @@ See [`references/tooling.md`](./references/tooling.md).
 
 - **GRPC-014** — Manage schemas with `buf`; gate CI on `buf lint` + `buf breaking --against`; keep generated code in sync.
 - **GRPC-015** — Enable server reflection in dev for grpcurl/grpcui; wire health checking (`grpc.health.v1`) for production probes.
+- **GRPC-024** — Serve channelz on an internal admin port and inspect it with `grpcdebug`; never on the public port. _(requires grpc-go>=1.12 (preview: channelz))_
+- **GRPC-025** — Drain on shutdown: health `NOT_SERVING` first, then `GracefulStop` with a forced `Stop` after a budget; open streams block `GracefulStop`.
 
 ## Rules — Performance
 

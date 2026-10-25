@@ -20,7 +20,7 @@ example [`python-best-practices`](../python-best-practices/SKILL.md) and
 Activate when any of these are true:
 
 - You're editing or reviewing `.pre-commit-config.yaml`, `.github/dependabot.yml`, `.github/CODEOWNERS`, a `justfile`, or any `.github/workflows/*.yml`.
-- The user asks about pre-commit hooks, Dependabot (cooldowns, ecosystems, auto-merge), secret scanning (gitleaks), keeping local checks and CI in sync, code-owner review, zizmor, or `permissions:` / `GITHUB_TOKEN` scopes.
+- The user asks about pre-commit hooks, Dependabot (cooldowns, ecosystems, auto-merge), secret scanning (gitleaks, push protection), CodeQL code scanning, workflow dependency lockfiles (`actions.lock`), keeping local checks and CI in sync, code-owner review, zizmor, or `permissions:` / `GITHUB_TOKEN` scopes.
 - The user references a `REPO-` rule ID.
 
 ## How to use the rule index
@@ -37,7 +37,9 @@ See [`references/hooks-and-bots.md`](./references/hooks-and-bots.md).
 - **REPO-002** — One dependency bot (Dependabot) maintains every pin — lockfile, actions, pre-commit revs, dev container Features — with a cooldown and no auto-merge.
 - **REPO-004** — Secret-scan the repo itself (gitleaks, detect-secrets or trufflehog) on every commit.
 - **REPO-007** — Every CI step is a `just` recipe, `just check` runs them all, and a test enforces the parity and `just --list` help text.
-- **REPO-008** — Keep a `CODEOWNERS` file for review routing.
+- **REPO-008** — Keep a `CODEOWNERS` file for review routing, with an explicit owner for `.github/` and the file itself.
+- **REPO-012** — Turn on GitHub secret scanning push protection: a server-side block on pushes that contain secrets.
+- **REPO-015** — Add pre-commit's built-in `repo: meta` hooks (`check-hooks-apply`, `check-useless-excludes`) so dead hooks and excludes fail.
 
 ## Rules — GitHub Actions
 
@@ -45,3 +47,5 @@ See [`references/github-actions.md`](./references/github-actions.md).
 
 - **REPO-009** — Statically audit workflows with zizmor (injection, over-broad permissions, persisted credentials, unpinned actions).
 - **REPO-010** — Start workflows from `permissions: {}` and grant each job only the `GITHUB_TOKEN` scopes it needs.
+- **REPO-011** — Commit a workflow dependency lockfile (`gh actions-lock`) and run `gh actions-lock --verify` in CI. _(requires gh-actions-lock>=0.2 (preview))_
+- **REPO-013** — Turn on CodeQL code scanning with default setup.

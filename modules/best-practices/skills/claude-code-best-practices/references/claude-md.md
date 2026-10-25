@@ -10,11 +10,14 @@
 - CC-022 — Know how nested CLAUDE.md files load
 - CC-023 — Say what to preserve through compaction
 - CC-024 — Own and audit checked-in CLAUDE.md
+- CC-080 — Auto memory holds learned corrections; team rules stay in CLAUDE.md
+- CC-081 — Know when Claude Code reads AGENTS.md
 <!-- /toc -->
 
-Detailed entries for `CC-019..CC-024` — memory files (`CLAUDE.md`,
-`CLAUDE.local.md`, nested and user-level CLAUDE.md). Each follows the
-four-part **What / Why / How / When NOT to apply** shape.
+Detailed entries for `CC-019..CC-024` and `CC-080..CC-081` — memory
+files (`CLAUDE.md`, `CLAUDE.local.md`, nested and user-level CLAUDE.md,
+auto memory, `AGENTS.md`). Each follows the four-part
+**What / Why / How / When NOT to apply** shape.
 
 ## Contents
 
@@ -24,6 +27,8 @@ four-part **What / Why / How / When NOT to apply** shape.
 - CC-022 — Know how nested CLAUDE.md files load
 - CC-023 — Say what to preserve through compaction
 - CC-024 — Own and audit checked-in CLAUDE.md
+- CC-080 — Auto memory holds learned corrections; team rules stay in CLAUDE.md
+- CC-081 — Know when Claude Code reads AGENTS.md
 
 ---
 
@@ -150,3 +155,89 @@ reviewing changes to it.
 
 **When NOT to apply.** A personal, uncommitted `CLAUDE.local.md` needs no
 owner beyond its author.
+
+---
+
+## CC-080 — Auto memory holds learned corrections; team rules stay in CLAUDE.md
+
+**Requires.** claude-code>=2.1.59
+
+**What.** Auto memory is on by default in local sessions: Claude writes
+its own notes (`user`, `feedback`, `project`, `reference`) to
+`~/.claude/projects/<project>/memory/`, and the first 200 lines or 25KB
+of the `MEMORY.md` index load into every session. Let it hold one
+developer's corrections and preferences. Put anything the team or CI must
+follow in CLAUDE.md, and review the notes with `/memory`.
+
+**Why.** Auto memory is machine-local: worktrees of one repository share
+it, other machines and cloud environments don't, so a convention that
+lives only there never reaches a teammate. It also loads every session
+like CLAUDE.md, so a stale note steers Claude the same way a stale line
+does (CC-024), and index entries past the 200-line or 25KB limit are
+dropped on the next load.
+
+**How.** "Remember that the API tests need a local Redis" saves to auto
+memory; "add this to CLAUDE.md" writes the shared file. To keep a project
+out of auto memory, put this in its settings:
+
+```json
+{ "autoMemoryEnabled": false }
+```
+
+or set `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` for one run.
+
+**When NOT to apply.** Sessions where auto memory is already off
+(self-hosted environments by default, `claude --bare`) have nothing to
+manage. Unattended runs that need the same context every time should
+turn it off rather than curate it.
+
+---
+
+## CC-081 — Know when Claude Code reads AGENTS.md
+
+**Requires.** claude-code>=2.1.277
+
+**What.** By default (Project instructions `claude-md-or-agents-md`),
+Claude Code reads `AGENTS.md` and `.claude/AGENTS.md` only when there is
+no `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` in the working
+directory or any directory above it. `~/.claude/CLAUDE.md`, the managed
+CLAUDE.md and `.claude/rules/` files don't count, and load alongside
+`AGENTS.md`. A repository shared with other agents keeps `AGENTS.md` as
+the one file, with either no project CLAUDE.md or a CLAUDE.md that
+imports it.
+
+**Why.** One `CLAUDE.local.md` added for personal notes silently stops
+Claude reading `AGENTS.md` for that developer. A CLAUDE.md that says
+"read AGENTS.md" in words leaves it to Claude to open the file. A
+`SessionStart` hook that prints `AGENTS.md`, an old workaround, now adds a
+second copy. And some sessions can't read `AGENTS.md` directly (the
+built-in plugin disabled, sometimes the first session after upgrading
+from 2.1.276 or earlier).
+
+**How.** Import it; Claude reads the imported file first and never loads
+it twice:
+
+```markdown
+@AGENTS.md
+
+Claude-only: run `just check` before reporting done.
+```
+
+To read both files, set Project instructions to `claude-md-and-agents-md`
+in `/config`, or in user or managed settings (project settings ignore it):
+
+```json
+{
+  "pluginConfigs": {
+    "cc-plugin-agents-md@builtin": {
+      "options": { "instructionFiles": "claude-md-and-agents-md" }
+    }
+  }
+}
+```
+
+Before 2.1.285 the plugin ID was `agents-md@builtin`.
+
+**When NOT to apply.** A repository used only with Claude Code needs no
+`AGENTS.md`. `InstructionsLoaded` hooks don't fire for an `AGENTS.md`
+read through the setting; import it if a hook must see it.

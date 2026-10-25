@@ -7,6 +7,8 @@
 - UVP-041 — `uvx` for one-shot tool execution; pin the version when correctness matters
 - UVP-042 — `uv tool upgrade --all` is unsafe in CI; pin or declare tools instead
 - UVP-072 — Audit global tools with `uv tool list --outdated` / `--show-python`
+- UVP-076 — `uv check` runs the locked ty; `uv format` ignores the locked ruff
+- UVP-079 — Vulnerability-scan installed tools with `uv tool audit`
 <!-- /toc -->
 
 Detailed entries for `UVP-040..UVP-042`. Covers `uv tool install` vs
@@ -260,5 +262,73 @@ uv tool install --reinstall pre-commit   # rebuild against current Python
 **When NOT to apply.** CI environments that install tools per-run (via
 `uv tool install` in a step or `uvx`) — this is a local-developer
 maintenance rule, not a CI one.
+
+---
+
+## UVP-076 — `uv check` runs the locked ty; `uv format` ignores the locked ruff
+
+**Requires.** uv>=0.11.25 (preview: check-command), uv>=0.8.13 (preview: format-command)
+
+**What.** `uv check` (type-check with ty) and `uv format` (format with
+Ruff) are experimental in uv 0.13.5; each prints a warning naming its
+preview feature. If you adopt them, know they pick tool versions
+differently. `uv check` syncs the project and uses the `ty` from the
+locked dev group (UVP-040). `uv format` picks its own Ruff from a
+built-in version range and ignores the `ruff` pin in `uv.lock`, so pass
+`--version` to match the lock.
+
+**Why.** With `ruff==0.14.14` locked, `uv format` in uv 0.13.5 resolved
+and ran Ruff 0.15.22 (`` DEBUG Resolved `ruff@>=0.15, <0.16` to `ruff==0.15.22` ``),
+while `uv run ruff format` and pre-commit (REPO-001) run 0.14.14. A Ruff
+minor release can change formatting, so the two commands fight over the
+same files. Both commands are preview and can change in any release.
+
+**How.**
+
+```bash
+uv --preview-features check-command check            # uses the locked ty
+uv --preview-features format-command format --check --version 0.14.14   # match ruff in uv.lock
+```
+
+A live run without the flag prints, for example:
+`` warning: `uv format` is experimental and may change without warning. Pass `--preview-features format-command` to disable this warning. ``
+
+**When NOT to apply.** Projects whose hooks and CI already call
+`uv run ruff format` and `uv run ty check` from the locked dev group gain
+nothing from switching; keep one way of running each tool.
+
+---
+
+## UVP-079 — Vulnerability-scan installed tools with `uv tool audit`
+
+**Requires.** uv>=0.12.2 (preview: audit), uv>=0.12.2 (preview: tool-install-locks)
+
+**What.** `uv tool audit <name>` or `uv tool audit --all` checks the
+environments of tools installed with `uv tool install` against OSV, the
+same database as `uv audit` (UVP-028), with the same `--ignore`,
+`--ignore-until-fixed` and `--output-format sarif` options. It audits
+only tools that have a lockfile, which `uv tool install` writes only with
+the `tool-install-locks` preview feature, so reinstall tools with it
+first.
+
+**Why.** `uv audit` covers `uv.lock`, not the global CLIs on a
+developer's `PATH`, which UVP-072 only checks for staleness. And a tool
+installed without a lockfile is skipped with exit 0, which looks like a
+clean audit: in uv 0.13.5, `uv tool audit --all` printed
+`` Skipping tool `httpie` because it does not have a lockfile `` and
+`No auditable tools installed`, then exited 0. Reinstalled with
+`tool-install-locks`, the same `httpie==3.2.1` reported
+`Found 2 known vulnerabilities` and exited 1.
+
+**How.**
+
+```bash
+uv tool install --reinstall --preview-features tool-install-locks httpie
+uv tool audit --all --preview-features audit,tool-install-locks
+```
+
+**When NOT to apply.** Tools that are project dependencies belong in
+`[dependency-groups]` (UVP-040) and are audited by `uv audit` with the
+lockfile. Both commands are preview and can change in any release.
 
 ---

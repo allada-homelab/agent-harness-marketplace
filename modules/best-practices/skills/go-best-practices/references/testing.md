@@ -5,6 +5,9 @@
 
 - GO-017 — Table-driven tests with subtests; `t.Helper()` in helpers; `t.Parallel()` only for independent cases
 - GO-018 — Run the race detector in CI: `go test -race ./...`
+- GO-023 — Test every custom `slog.Handler` with `testing/slogtest`
+- GO-024 — Pass `t.Context()` to whatever a test starts that takes a context
+- GO-025 — Fuzz parsers of untrusted input with `f.Fuzz`; commit the inputs the fuzzer finds
 <!-- /toc -->
 
 Detailed entries for `GO-017..GO-018`. Each follows the four-part
@@ -106,3 +109,136 @@ netbsd/amd64, darwin/amd64, darwin/arm64, windows/amd64 — a runner on any othe
 target simply can't run it. Most important: the detector only finds races on
 code paths that *execute*, so a green `-race` run is evidence, never proof of
 race-freedom; your coverage bounds what it can possibly see.
+
+---
+
+## GO-023 — Test every custom `slog.Handler` with `testing/slogtest`
+
+**What.** A hand-written `log/slog` `Handler` (redaction, context
+attributes, a custom output format) gets a test that calls
+`slogtest.Run`. It runs the handler through the same cases as
+`slogtest.TestHandler`, one subtest per case, and fails the cases where
+the handler breaks the `slog.Handler` contract.
+
+**Why.** The contract covers more than `Handle`: attributes, groups,
+`WithAttrs`, `WithGroup` and the standard keys all have rules. A handler
+that gets one wrong still compiles and still writes logs, only wrong
+ones. A wrapper whose `WithGroup` returned itself printed normal JSON
+but failed slogtest with `unexpected key "a": a Handler should handle the
+WithGroup method` and `missing group "G"` (Go 1.27.3).
+
+**How.**
+
+```go
+func TestRedactingHandler(t *testing.T) {
+    var buf bytes.Buffer
+    slogtest.Run(t,
+        func(t *testing.T) slog.Handler {
+            buf.Reset()
+            return NewRedactingHandler(slog.NewJSONHandler(&buf, nil))
+        },
+        func(t *testing.T) map[string]any { // one record per case
+            m := map[string]any{}
+            if err := json.Unmarshal(buf.Bytes(), &m); err != nil {
+                t.Fatal(err)
+            }
+            return m
+        })
+}
+```
+
+**When NOT to apply.** Code that only uses the built-in `TextHandler` or
+`JSONHandler` has nothing to test. A handler that drops a checked
+attribute on purpose (a redactor) must add it back in the result function,
+as the docs require: "the results function should check for its absence
+and add it to the map it returns". Output that is not JSON needs a parser
+in the result function, which is the cost of the test.
+
+---
+
+## GO-024 — Pass `t.Context()` to whatever a test starts that takes a context
+
+**What.** In tests, pass `t.Context()` instead of `context.Background()`
+or a hand-written `context.WithCancel` plus `defer cancel()`. In a
+`t.Cleanup` function, wait for the goroutines that use it to exit.
+
+**Why.** A goroutine that a test starts with `context.Background()` gets no
+stop signal, so it keeps running after the test returns and can interfere
+with later tests. `t.Context()` "returns a context that is canceled just
+before Cleanup-registered functions are called". A cleanup can therefore
+wait on a worker that has already been told to stop (in a run,
+`ctx.Err()` inside the cleanup was `context canceled`). This also removes
+the cancel boilerplate from every test.
+
+**How.**
+
+```go
+func TestWorker(t *testing.T) {
+    ctx := t.Context()
+    var wg sync.WaitGroup
+    wg.Add(1)
+    go worker(ctx, &wg) // returns when ctx is done
+    t.Cleanup(wg.Wait)  // ctx is already canceled here
+    // ... exercise the worker ...
+}
+```
+
+**When NOT to apply.** Work that runs *inside* a cleanup function must not
+use it, because it is already canceled there. Use `context.Background()`
+with a timeout. For a shorter deadline, derive one from it
+(`context.WithTimeout(t.Context(), time.Second)`). Benchmarks and fuzz
+tests have the same method: `b.Context()`, `f.Context()`.
+
+---
+
+## GO-025 — Fuzz parsers of untrusted input with `f.Fuzz`; commit the inputs the fuzzer finds
+
+**What.** A function that parses bytes or strings from outside the
+process (a wire protocol, a file format, a query string) gets a fuzz
+test. Seed it with `f.Add`, check a property in `f.Fuzz` (no panic, a
+round trip, an invariant), and run `go test -fuzz` for a bounded time in
+CI or on a schedule. Commit the files the fuzzer writes to
+`testdata/fuzz/<FuzzName>/`.
+
+**Why.** Table tests check the inputs someone thought of. The
+coverage-guided fuzzer generates inputs that reach new code paths, and
+that is where panics on malformed input hide (a crash on input is a DoS
+for a server). A planted bug (keys longer than 3 bytes lost their last
+byte) passed both seeds, and a 20-second `-fuzztime` run found it with
+the minimized input `"00000="`. The fuzzer writes the failing input to
+`testdata/fuzz/FuzzParseKV/<hash>`, and a plain `go test` then runs it as
+a regression test, but only when the file is committed.
+
+**How.**
+
+```go
+func FuzzParseKV(f *testing.F) {
+    f.Add("a=1")
+    f.Add("key=")
+    f.Fuzz(func(t *testing.T, s string) {
+        k, v, err := ParseKV(s)
+        if err != nil {
+            return // rejecting input is fine; panicking is not
+        }
+        if k2, v2, err := ParseKV(k + "=" + v); err != nil || k2 != k || v2 != v {
+            t.Fatalf("round trip %q: got (%q, %q, %v), want (%q, %q)", s, k2, v2, err, k, v)
+        }
+    })
+}
+```
+
+```bash
+go test -run='^$' -fuzz='^FuzzParseKV$' -fuzztime=60s ./internal/kv
+```
+
+`-fuzz` takes one package ("cannot use -fuzz flag with multiple
+packages") and must match exactly one fuzz test ("-fuzz matches more than
+one fuzz test"), so CI runs one command per target.
+
+**When NOT to apply.** Code that never sees untrusted or unstructured
+input gains little. Fuzz arguments are limited to basic types (`string`,
+`[]byte`, the integer and float types, `bool`), so build structured
+values from them inside the target. Run fuzzing on amd64 or arm64; the
+docs say coverage instrumentation is "currently AMD64 and ARM64". Without
+`-fuzztime`, a run that finds nothing can go on indefinitely, so always
+set it in CI.

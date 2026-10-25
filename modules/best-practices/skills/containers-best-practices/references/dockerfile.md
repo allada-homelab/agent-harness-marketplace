@@ -35,6 +35,7 @@
 - DOCKER-031 — Use `COPY --parents` to preserve source directory structure
 - DOCKER-032 — Cap heavy `RUN` steps with build-time resource limits
 - DOCKER-033 — Pin `RUN --network=none` on steps that must not touch the network
+- DOCKER-035 — Bind-mount build-only inputs with `RUN --mount=type=bind` instead of `COPY`
 <!-- /toc -->
 
 Detailed explanation for each `DOCKER-NNN` rule. Each entry follows the same
@@ -1709,5 +1710,54 @@ RUN --network=none python -m compileall -q /app
 **When NOT to apply.** Steps that legitimately need the network (the
 actual `apt-get`/`uv sync`/`npm ci`). Use it on the *post-fetch* steps
 (compile, test, assemble), not the fetch itself.
+
+---
+
+## DOCKER-035 — Bind-mount build-only inputs with `RUN --mount=type=bind` instead of `COPY`
+
+**What.** When a builder stage needs source only to produce an artifact
+(a compiled binary, a wheel, a bundle), mount it into the one `RUN` that
+uses it with `--mount=type=bind` and write the output *outside* the mount
+target, instead of `COPY`ing the source into a layer first.
+
+**Why.** A `COPY` puts every file into a layer and into the build cache,
+even files the compile never reads. A bind mount exposes the context to
+that step only. Docker's cache guide: "When the instruction is done
+executing, the mounted files are not persisted in the final image, or in
+the build cache. Only the output of the go build command remains." The
+mount is read-only by default, so a build that writes its output into the
+source tree fails, or (with `rw`) loses it: writes "will be discarded after
+the `RUN` instruction completes". A change to a mounted file still
+invalidates the step, the same as a `COPY` would.
+
+**How.**
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM golang:1.25 AS build
+WORKDIR /build
+# source visible to this step only; output goes outside the read-only mount
+RUN --mount=type=bind,target=. \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -o /out/app ./cmd/app
+
+FROM gcr.io/distroless/static-debian12
+COPY --from=build /out/app /app
+ENTRYPOINT ["/app"]
+```
+
+Mount individual files the same way (`source=go.mod,target=go.mod`) for a
+dependency-only step; UV-002 applies this to `pyproject.toml` / `uv.lock`.
+The mount reads the filtered build context, so `.dockerignore` still
+applies (SEC-001).
+
+Cite: [optimize cache — use bind mounts](https://docs.docker.com/build/cache/optimize/#use-bind-mounts),
+[Dockerfile reference — RUN --mount=type=bind](https://docs.docker.com/reference/dockerfile/#run---mounttypebind).
+
+**When NOT to apply.** Files the final image needs at runtime (templates,
+static assets, an interpreted app's source) — `COPY` them. Build tools that
+insist on writing next to their inputs (in-tree `target/`, `node_modules`)
+need `rw` plus an explicit copy-out, or a plain `COPY`; the rule only pays
+off when the input is large and the output is small.
 
 ---

@@ -8,11 +8,13 @@
 - REPO-004 — Secret-scan the repo itself (detect-secrets with a baseline, gitleaks, or trufflehog)
 - REPO-007 — justfile/task-runner recipes track CI 1:1, each with generated `--list` help text enforced by a test
 - REPO-008 — A `CODEOWNERS` file for review routing
+- REPO-012 — Turn on GitHub secret scanning push protection
+- REPO-015 — Check the hook config itself with pre-commit's `meta` hooks
 <!-- /toc -->
 
-Detailed entries for `REPO-001`, `REPO-002`, `REPO-004`, `REPO-007` and
-`REPO-008`. Each follows the four-part **What / Why / How / When NOT to
-apply** shape. (`REPO-003`, `REPO-005` and `REPO-006` are reserved.)
+Detailed entries for `REPO-001`, `REPO-002`, `REPO-004`, `REPO-007`,
+`REPO-008`, `REPO-012` and `REPO-015`. Each follows the four-part
+**What / Why / How / When NOT to apply** shape. (`REPO-003`, `REPO-005` and `REPO-006` are reserved.)
 
 Citations point at the [Ruff integrations docs](https://github.com/astral-sh/ruff/blob/0.16.8/docs/integrations.md),
 the [Dependabot options reference](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference.md),
@@ -341,7 +343,8 @@ the recipe's comment.
 ## REPO-008 — A `CODEOWNERS` file for review routing
 
 **What.** A `CODEOWNERS` file (for example `.github/CODEOWNERS`) names
-who is requested for review when a pull request touches a given path.
+who is requested for review when a pull request touches a given path,
+and gives `.github/`, the CODEOWNERS file included, an explicit owner.
 
 **Why.** Without it, review routing depends on someone remembering to
 add a reviewer by hand, so reviews either go to whoever happens to be
@@ -356,9 +359,97 @@ Source: https://docs.github.com/en/repositories/managing-your-repositorys-settin
 ```text
 # Review routing: every path needs an owner's review once branch protection requires code-owner review.
 * @myorg/maintainers
+# The last matching pattern wins, so this line comes after `*`: workflows, Dependabot config,
+# actions.lock (REPO-011) and this file itself need the release owners' review.
+/.github/ @myorg/release-owners
 ```
+
+Give `.github/` (or at least `/.github/CODEOWNERS`) an explicit owner.
+A workflow change runs with the repository's token and secrets, and a
+CODEOWNERS change rewrites who reviews everything else; with only a `*`
+line, both are routed like any other file.
+Sources: https://docs.github.com/en/actions/reference/security/secure-use.md
+and https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners.md
+
+> if all your workflow files are stored  `.github/workflows`, you can add this directory to the code owners list, so that any proposed changes to these files will first require approval from a designated reviewer.
+
+> To protect a repository fully against unauthorized changes, you also need to define an owner for the CODEOWNERS file itself. The most secure method is to define a CODEOWNERS file in the `.github` directory of the repository and define the repository owner as the owner of either the CODEOWNERS file (`/.github/CODEOWNERS @owner_username`) or the whole directory (`/.github/ @owner_username`).
 
 **When NOT to apply.** A solo repo with no other reviewers, or one where
 every path already has the same single owner by convention, gets little
 from a file that would just say `* @same-person` — though such a file is
 a cheap placeholder for when a second owner joins.
+
+---
+
+## REPO-012 — Turn on GitHub secret scanning push protection
+
+**What.** On a GitHub-hosted repository, enable secret scanning and
+**push protection** for the repository. GitHub then rejects a push,
+web-UI commit, file upload or REST API write that contains a detected
+secret, and records an alert whenever a contributor bypasses the block.
+
+**Why.** REPO-004's commit-time hook runs only where someone installed
+it, and `git commit --no-verify` skips it; the CI history scan finds the
+secret after it is already on the server. Push protection is the
+server-side gate between those two: nothing on a developer's machine can
+skip it, and a bypass needs a stated reason and leaves an alert.
+Repository push protection is off by default. It is free for public
+repositories; private and internal ones need GitHub Secret Protection.
+Source: https://docs.github.com/en/code-security/concepts/secret-security/push-protection.md
+
+> Rather than alerting you to credential leaks after the fact, push protection blocks pushes that contain secrets *before* they reach your repository.
+
+**How.** Settings → Advanced Security → Secret Protection → Push
+protection → Enable, or:
+
+```bash
+gh api repos/OWNER/REPO --jq .security_and_analysis    # check the current status
+gh api -X PATCH repos/OWNER/REPO \
+  -f 'security_and_analysis[secret_scanning][status]=enabled' \
+  -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'
+```
+
+**When NOT to apply.** Repositories not hosted on GitHub. It adds to
+REPO-004 and does not replace it: push protection matches only the
+secret types GitHub detects, and the commit-time hook still catches a
+secret before it enters local history.
+
+---
+
+## REPO-015 — Check the hook config itself with pre-commit's `meta` hooks
+
+**What.** Add pre-commit's built-in `meta` hooks to
+`.pre-commit-config.yaml`. `check-hooks-apply` fails when a configured
+hook matches no file in the repository; `check-useless-excludes` fails
+when an `exclude` pattern matches no file. They ship with pre-commit
+itself (`repo: meta`, no `rev:`), not with the `pre-commit-hooks`
+repository.
+
+**Why.** A hook whose `files`/`types` filter matches nothing reports
+"(no files to check) Skipped" on every run, which reads like a pass. A
+renamed directory or a dropped language leaves such a hook in place, and
+the check it was added for (REPO-001) silently stops running. A dead
+`exclude` is the same drift in the other direction.
+Source: https://pre-commit.com/#meta-hooks
+
+> pre-commit provides several hooks which are useful for checking the pre-commit configuration itself. These can be enabled using `repo: meta`.
+
+**How.**
+
+```yaml
+  # Config drift: fail when a hook or an exclude no longer matches any file.
+  - repo: meta
+    hooks:
+      - id: check-hooks-apply
+      - id: check-useless-excludes
+```
+
+With a hook limited to `types: [rust]` in a Python-only repository,
+`pre-commit run --all-files` exits 1 with
+`rust-only does not apply to this repository`.
+
+**When NOT to apply.** A config whose hooks are meant to wait for files
+that don't exist yet; there `check-hooks-apply` fails until they do.
+Hooks with `always_run: true` are exempt, but `stages: [manual]` hooks
+are checked like any other.

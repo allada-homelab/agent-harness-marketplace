@@ -8,9 +8,11 @@
 - PG-004 — Test that the models match the migrated schema (Alembic compare_metadata); migrations are reviewed, not trusted from autogenerate
 - PG-005 — Test each migration's upgrade → downgrade → upgrade round trip against the real Postgres image
 - PG-013 — Lock every row a transaction will change with SELECT … FOR UPDATE, in one consistent order (ORDER BY id)
+- PG-014 — Give app connections a statement_timeout and lock_timeout; give migrations a short lock_timeout
+- PG-015 — Build indexes on live tables with CREATE INDEX CONCURRENTLY in an Alembic autocommit block, and rebuild an INVALID one
 <!-- /toc -->
 
-Detailed entries for `PG-001`, `PG-003..PG-005` and `PG-013`. Each follows
+Detailed entries for `PG-001`, `PG-003..PG-005` and `PG-013..PG-015`. Each follows
 the four-part **What / Why / How / When NOT to apply** shape. Numbers
 missing from the sequence are reserved; don't reuse them.
 
@@ -371,3 +373,147 @@ concurrently, rows can come back out of order (ids never change here).
 Hot rows serialize every transaction that touches them. For queues use
 `SKIP LOCKED`, and for invariants that span many rows consider
 `SERIALIZABLE` with retries.
+
+---
+
+## PG-014 — Give app connections a statement_timeout and lock_timeout; give migrations a short lock_timeout
+
+**What.** Every application connection starts with a `statement_timeout`
+and a shorter `lock_timeout`, set from settings through the driver's
+startup `options`. A migration sets `SET LOCAL lock_timeout` before DDL.
+A transaction that is known to run long raises its own limit with
+`SET LOCAL`, which ends with the transaction.
+
+**Why.** Both default to zero, meaning no limit. A runaway query then holds
+its pool connection (PG-001) and its locks until someone kills it. A
+statement stuck waiting on a lock holds its connection the whole time, too.
+DDL is the sharp case. Checked live on PostgreSQL 18.6: while one
+transaction had read `item`, an `ALTER TABLE item ADD COLUMN` waited for
+its lock. A plain `SELECT … WHERE id = 1` from a third session then queued
+behind the `ALTER` and was cancelled by its 1 s `statement_timeout`. With
+`SET LOCAL lock_timeout = '500ms'` the `ALTER` gave up instead
+(`LockNotAvailable: canceling statement due to lock timeout`), and the
+deploy can retry.
+
+Source: <https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-STATEMENT-TIMEOUT>
+
+> Abort any statement that takes more than the specified amount of time. … A value of zero (the default) disables the timeout.
+> — PostgreSQL 18.6 docs
+
+> Abort any statement that waits longer than the specified amount of time while attempting to acquire a lock on a table, index, row, or other database object.
+> — PostgreSQL 18.6 docs
+
+> Note that if statement_timeout is nonzero, it is rather pointless to set lock_timeout to the same or larger value, since the statement timeout would always trigger first.
+> — PostgreSQL 18.6 docs
+
+**How.** Extend PG-001's engine:
+
+```python
+def make_engine(settings: Settings) -> AsyncEngine:
+    return create_async_engine(
+        settings.database_url,
+        pool_size=settings.pool_size,
+        max_overflow=settings.max_overflow,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+        # libpq startup options: applied to every new connection, before any query
+        connect_args={"options": "-c statement_timeout=30s -c lock_timeout=5s"},
+    )
+```
+
+In a migration, before DDL on a busy table:
+
+```python
+op.execute("SET LOCAL lock_timeout = '3s'")
+op.add_column("item", sa.Column("note", sa.Text()))
+```
+
+Checked live: `current_setting()` showed both values on a new connection;
+`pg_sleep(3)` under a 1 s limit raised `QueryCanceled: canceling statement
+due to statement timeout`; and a `SET LOCAL` override was back to the
+connection value after `ROLLBACK`. `ALTER ROLE app SET statement_timeout =
+'30s'` is the server-side alternative (new sessions picked it up).
+
+**When NOT to apply.** Not in `postgresql.conf`: the docs say a global value
+"is not recommended because it would affect all sessions". That includes
+migrations, backups and admin work. Batch jobs and reports that
+legitimately run long set their own higher limit rather than going
+without one. A pooler between the app and Postgres may not pass startup
+`options` through; check the setting on a live connection
+(`SHOW statement_timeout`), or use `ALTER ROLE … SET` instead.
+
+---
+
+## PG-015 — Build indexes on live tables with CREATE INDEX CONCURRENTLY in an Alembic autocommit block, and rebuild an INVALID one
+
+**What.** A migration that indexes a table the app is writing uses
+`op.create_index(..., postgresql_concurrently=True)` inside
+`op.get_context().autocommit_block()`. Before creating, it drops any
+leftover index of the same name (`if_exists=True`, also concurrently).
+It never uses `IF NOT EXISTS`.
+
+**Why.** A plain `CREATE INDEX` "locks out writes (but not reads) on the
+table until it's done", and on a large table that is an outage.
+`CONCURRENTLY` avoids that, at a cost. It can't run in a transaction
+(`CREATE INDEX CONCURRENTLY cannot run inside a transaction block`), which
+is why the autocommit block is needed. And a failure doesn't roll back
+cleanly: it "will fail but leave behind an 'invalid' index", which queries
+ignore but writes still maintain. Checked live on PostgreSQL 18.6 with
+Alembic 1.20.1:
+
+- A unique build over duplicate data failed and left `ix_item_sku` with
+  `indisvalid = f`. `alembic_version` stayed at the previous revision.
+- A retry with `CREATE … CONCURRENTLY IF NOT EXISTS` printed
+  `relation "ix_item_sku" already exists, skipping` and reported success,
+  but the index was still invalid.
+- The drop-then-create migration below rebuilt it valid on retry.
+
+The autocommit block also commits the migration transaction. With PG-003's
+`env.py`, the advisory lock count read 1 before the block and 0 inside it,
+so the migration lock no longer covers the rest of the run.
+
+Sources: <https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY>,
+<https://alembic.sqlalchemy.org/en/latest/api/runtime.html#alembic.runtime.migration.MigrationContext.autocommit_block>
+
+> Another difference is that a regular CREATE INDEX command can be performed within a transaction block, but CREATE INDEX CONCURRENTLY cannot.
+> — PostgreSQL 18.6 docs
+
+> The recommended recovery method in such cases is to drop the index and try again to perform CREATE INDEX CONCURRENTLY.
+> — PostgreSQL 18.6 docs
+
+> As is necessary, the database transaction preceding the block is unconditionally committed.
+> — Alembic 1.20.1 docs
+
+**How.**
+
+```python
+from alembic import op
+
+revision = "0002"
+down_revision = "0001"
+
+
+def upgrade() -> None:
+    # CONCURRENTLY can't run in a transaction; this commits everything before it.
+    with op.get_context().autocommit_block():
+        # A failed earlier attempt leaves an INVALID index; IF NOT EXISTS would keep it.
+        op.drop_index("ix_item_sku", table_name="item", postgresql_concurrently=True, if_exists=True)
+        op.create_index("ix_item_sku", "item", ["sku"], unique=True, postgresql_concurrently=True)
+
+
+def downgrade() -> None:
+    with op.get_context().autocommit_block():
+        op.drop_index("ix_item_sku", table_name="item", postgresql_concurrently=True)
+```
+
+Keep each concurrent index in its own migration file. Alembic recommends
+`transaction_per_migration` for apps with autocommit blocks; PG-003 says
+how that interacts with its lock. Find leftovers with
+`SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid`.
+
+**When NOT to apply.** Tables created in the same migration, or small
+tables the app isn't writing yet: a plain `CREATE INDEX` inside the
+migration transaction is simpler and rolls back cleanly. The concurrent
+build "takes significantly longer to complete" and waits for every
+transaction that might use the table, so one long-open transaction stalls
+it. Partitioned tables don't support it directly; build per partition.

@@ -7,6 +7,7 @@
 - FAPI-051 — Override `RequestValidationError` to stabilize the 422 response shape
 - FAPI-052 — Register a catch-all `Exception` handler for a uniform `500` body; don't log in it
 - FAPI-053 — Use a structured `detail` (dict with a code) for machine-readable errors
+- API-003 — Return RFC 9457 `application/problem+json` bodies for public HTTP API errors
 <!-- /toc -->
 
 Detailed entries for `FAPI-050..FAPI-053`. Each follows the four-part
@@ -171,4 +172,76 @@ stay consistent.
 
 **When NOT to apply.** Small internal or human-facing endpoints where no
 programmatic client branches on error type — a clear string is simpler
-and fine.
+and fine. For a public HTTP API, prefer the standard problem details
+shape (API-003), which carries the code in `type`.
+
+---
+
+## API-003 — Return RFC 9457 `application/problem+json` bodies for public HTTP API errors
+
+**What.** Send every error as an RFC 9457 problem details object with
+media type `application/problem+json`. It has `type` (a URI that
+identifies the problem type), `title` (a short summary, fixed per type),
+`status` (the HTTP status code), `detail` (a human-readable *string* about
+this occurrence), an optional `instance`, and extension members for
+machine-readable data. Produce it from the exception handlers (FAPI-050,
+FAPI-051, FAPI-052), so routing 404/405 and validation errors get the
+same shape as your own errors.
+
+**Why.** A private envelope (FAPI-053's `{"detail": {"code": ...}}`) makes
+every client and gateway learn this API's own error format. RFC 9457
+(which obsoletes RFC 7807) is the standard format, and it says where each
+part goes: "Consumers MUST use the "type" URI ... as the problem type's
+primary identifier", and "Consumers SHOULD NOT parse the "detail" member
+for information; extensions are more suitable". So the stable code goes
+in `type` or an extension member. A dict in `detail` breaks the format:
+"If a member's value type does not match the specified type, the member
+MUST be ignored". OBS-001's readiness 503 already uses this media type,
+so one format then covers the whole API.
+
+**How.**
+
+```python
+from http import HTTPStatus
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+PROBLEM = "application/problem+json"
+app = FastAPI()
+
+
+class Problem(Exception):
+    def __init__(self, status: int, type_: str, title: str, detail: str, **ext: object) -> None:
+        self.status = status
+        self.body = {"type": type_, "title": title, "status": status, "detail": detail, **ext}
+
+
+@app.exception_handler(Problem)
+async def on_problem(request: Request, exc: Problem) -> JSONResponse:
+    return JSONResponse(exc.body, status_code=exc.status, media_type=PROBLEM)
+
+
+@app.exception_handler(StarletteHTTPException)  # also routing 404/405 (FAPI-050)
+async def on_http(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    body = {"type": "about:blank", "title": HTTPStatus(exc.status_code).phrase,
+            "status": exc.status_code, "detail": str(exc.detail)}
+    return JSONResponse(body, status_code=exc.status_code, headers=exc.headers, media_type=PROBLEM)
+
+
+@app.get("/items/{item_id}")
+async def get_item(item_id: int) -> dict[str, int]:
+    raise Problem(404, "https://api.example.com/problems/item-not-found",
+                  "Item not found", f"No item with id {item_id}.", item_id=item_id)
+```
+
+`about:blank` is the RFC's type for "nothing beyond the status code"; its
+`title` should be the status phrase. For your own types, use absolute
+URIs (the RFC recommends them), ideally ones that resolve to
+documentation.
+
+**When NOT to apply.** Internal endpoints with one client you control,
+where FAPI-053's structured `detail` is enough. Don't change the error
+shape of an API that is already published without a new version
+(FAPI-006): clients that parse `{"detail": ...}` break.
