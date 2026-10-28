@@ -1,5 +1,7 @@
 import json
+import os
 import shutil
+import time
 
 import pytest
 from conftest import git, run
@@ -62,6 +64,24 @@ def test_teardown_continues_when_devc_down_fails(repo, tmp_path):
     assert "devc down" in r.stderr and "rc 1" in r.stderr and "devc: boom" in r.stderr
     assert not wt.exists()
     assert last(r) == "pr-flow: teardown ok feat/w"
+
+
+def test_teardown_kills_a_hung_devc_and_its_children(repo, tmp_path):
+    # A wedged docker daemon: devc's docker child never returns and holds devc's stdout.
+    root, wt = merged_branch(repo)
+    pidfile = tmp_path / "child.pid"
+    devc = tmp_path / "devc"
+    devc.write_text(f"#!/bin/sh\nsleep 600 &\necho $! > '{pidfile}'\nwait\n")
+    devc.chmod(0o755)
+    start = time.monotonic()
+    r = run("teardown", "feat/w", cwd=root, env={"PR_FLOW_DEVC": str(devc), "PR_FLOW_DEVC_TIMEOUT": "1"})
+    assert time.monotonic() - start < 30, "teardown waited on the hung devc"
+    assert r.returncode == 0, r.stderr
+    assert "timed out after 1s" in r.stderr
+    assert not wt.exists()
+    child = int(pidfile.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(child, 0)
 
 
 def test_teardown_without_devc_is_silent_about_it(repo):
