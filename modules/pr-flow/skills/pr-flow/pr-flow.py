@@ -11,6 +11,7 @@ import json
 import os
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -20,6 +21,7 @@ from pathlib import Path
 GH = os.environ.get("PR_FLOW_GH", "gh")
 GIT = os.environ.get("PR_FLOW_GIT", "git")
 DEVC = os.environ.get("PR_FLOW_DEVC", "devc")
+DEVC_DOWN_TIMEOUT = float(os.environ.get("PR_FLOW_DEVC_TIMEOUT", "300"))
 PROTECTED = {"main", "master", "dev", "develop", "production", "release"}
 EXIT = {"ok": 0, "green": 0, "merged": 0, "checks-failed": 10, "conflict": 11, "review": 12,
         "closed": 13, "timeout": 14, "attempts-exhausted": 15}
@@ -537,15 +539,26 @@ def devc_down(wt):
     devc = shutil.which(DEVC)
     if devc is None:
         return
+    # Its own session, so a timeout kills devc's docker children too: killing devc alone
+    # leaves them running, and their open stdout keeps communicate() waiting on the pipe.
     try:
-        p = subprocess.run([devc, "down", str(wt)], text=True, capture_output=True, timeout=300)
-    except (OSError, subprocess.TimeoutExpired) as e:
+        p = subprocess.Popen([devc, "down", str(wt)], text=True, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, start_new_session=True)
+    except OSError as e:
         warn(f"devc down {wt} failed ({e}); continuing")
         return
-    if p.stdout.strip():
-        print(p.stdout.strip())
+    try:
+        out, err = p.communicate(timeout=DEVC_DOWN_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.communicate()
+        warn(f"devc down {wt} timed out after {DEVC_DOWN_TIMEOUT:g}s (is the docker daemon wedged?); "
+             "killed it and its docker calls; continuing")
+        return
+    if out.strip():
+        print(out.strip())
     if p.returncode:
-        warn(f"devc down {wt} failed (rc {p.returncode}): {p.stderr.strip()}; continuing")
+        warn(f"devc down {wt} failed (rc {p.returncode}): {err.strip()}; continuing")
 
 
 def teardown(ctx, branch, dry_run=False):
