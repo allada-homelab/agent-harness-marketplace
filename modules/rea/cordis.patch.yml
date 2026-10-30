@@ -1,0 +1,4 @@
+# Empty on purpose. This module is a dsh BUNDLE (package.json `dsh.bundle`)
+# so the harness lists it in the profile's dsh.profile.bundles. Its content is
+# a portable skill; the skills bridge is foundation, nothing to insert.
+[]

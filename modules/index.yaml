@@ -521,6 +521,30 @@ modules:
     - workflow
     command: true
     summary: Use whenever a task will change files in a git repository.
+- name: rea
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - pi
+  - dsh
+  description: 'Containerized REA (Reverse Engineer Anything): drive Ghidra-based decompilation and native-binary
+    analysis through the published rea-agents image.'
+  skills:
+  - name: rea
+    path: modules/rea/skills/rea/SKILL.md
+    harness:
+    - dsh
+    - pi
+    tags:
+    - decompile
+    - ghidra
+    - go
+    - native-binary
+    - reverse-engineering
+    command: false
+    summary: Reverse-engineer a binary with REA (Reverse Engineer Anything).
 - name: sleep-guard
   version: 0.1.0
   kinds:
