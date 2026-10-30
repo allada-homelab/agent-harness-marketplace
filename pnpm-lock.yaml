@@ -36,6 +36,8 @@ importers:
 
   modules/pr-flow: {}
 
+  modules/rea: {}
+
   modules/sleep-guard: {}
 
   modules/ste-writing: {}

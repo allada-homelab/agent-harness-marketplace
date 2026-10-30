@@ -1,0 +1,13 @@
+{
+  "name": "@allada-homelab/rea",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Containerized REA (Reverse Engineer Anything): drive Ghidra-based decompilation and native-binary analysis through the published rea-agents image.",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
