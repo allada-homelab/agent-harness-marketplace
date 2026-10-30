@@ -7,6 +7,7 @@ generated: {by: okf-wiki/haiku, at: 2026-10-13T23:16:26Z}
 verified:
   - {by: okf-wiki/haiku, at: 2026-10-09T17:24:51Z, commit: 08add093dd31}
   - {by: okf-wiki/haiku, at: 2026-10-13T23:16:26Z, commit: d5ec0074c310}
+  - {by: okf-wiki/deepseek, at: 2026-10-25T07:09:55Z, commit: 2596aa106bc7}
 sources:
   - {resource: https://code.claude.com/docs/en/permission-modes, id: s1}
   - {resource: https://code.claude.com/docs/en/permissions, id: s2}

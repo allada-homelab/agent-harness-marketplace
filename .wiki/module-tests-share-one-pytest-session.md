@@ -3,10 +3,11 @@ type: gotcha
 title: Multiple modules' pytest tests run in one session—conftest imports collide
 description: pytest collects modules/*/test/ in one session, so from conftest import X resolves to the first conftest.py on sys.path; load shared data by path or put it in a sibling module instead.
 tags: [testing, pytest, check-sh, modules]
-generated: {by: okf-wiki/haiku, at: 2026-10-07T17:04:39Z}
+generated: {by: okf-wiki/deepseek, at: 2026-10-25T07:05:14Z}
 verified:
   - {by: okf-wiki/haiku, at: 2026-10-07T17:04:39Z, commit: b4b436d878a1}
   - {by: okf-wiki/sonnet, at: 2026-10-08T17:17:08Z, commit: d81a0ab6df3d}
+  - {by: okf-wiki/deepseek, at: 2026-10-25T07:05:14Z, commit: 2596aa106bc7}
 sources:
   - {resource: bin/check.sh, id: s1}
   - {resource: modules/artifacts/test/test_artifactctl.py, id: s2}
@@ -47,7 +48,8 @@ GOOD_PAGE = _conf.GOOD_PAGE
 
 `bin/check.sh` invokes pytest once, collecting all module tests in one session [^s1]:
 ```bash
-uv run --with pytest … pytest -q modules/*/test
+suites+=(modules/*/test)
+uv run --with pytest --with pyyaml --with zstandard --python 3.12 pytest -q "${suites[@]}"
 ```
 
 pytest loads each `conftest.py` file it finds as a plugin (to register fixtures), adding each directory to sys.path. A **plain `import conftest`** then resolves via sys.path's standard name-resolution—first match wins. Fixture discovery is by name binding within pytest's own plugin machinery, not by Python's import system, so the collision goes undetected until runtime when the test code tries to import.
