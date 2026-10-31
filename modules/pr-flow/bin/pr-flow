@@ -1,3 +1,4 @@
 #!/bin/sh
-# Claude Code puts a plugin's bin/ on the Bash PATH; pi and dsh use the skill's python3 fallback.
+# Claude Code, pi and dsh all put an enabled module's bin/ on the bash tool's PATH (pi and dsh
+# via the dotfiles harness layer); where that layer is absent, the skill calls pr-flow.py directly.
 exec python3 "$(dirname "$(readlink -f "$0")")/../skills/pr-flow/pr-flow.py" "$@"
