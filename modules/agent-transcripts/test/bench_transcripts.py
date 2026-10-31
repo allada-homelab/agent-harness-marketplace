@@ -223,17 +223,13 @@ def cmd_golden(a) -> int:
 # ----------------------------------------------------------------- evidence
 
 
-def _load_review(code_root: Path):
-    """review.py from the code root, so the check is the one `record` applies there."""
-    path = code_root / "skills" / "transcript-review" / "review.py"
-    spec = importlib.util.spec_from_file_location("bench_review", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def cmd_evidence(a) -> int:
-    review = _load_review(a.code_root)
+    # review.py from the code root, so the check is the one `record` applies there
+    spec = importlib.util.spec_from_file_location(
+        "bench_review", a.code_root / "skills" / "transcript-review" / "review.py"
+    )
+    review = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(review)
     conn = read_only(a.dest / "transcripts.db")
     fconn = read_only(a.findings)
     checked = ok = failed = missing = ambiguous = 0
