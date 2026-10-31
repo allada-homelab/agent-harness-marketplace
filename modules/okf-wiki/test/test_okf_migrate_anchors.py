@@ -6,6 +6,8 @@ LEGACY_LINES = [
     ("- `grep -c \"def resolve_peers\" src/app.py`", "- `src/app.py` :: `def resolve_peers`"),
     ("- `src/app.py:resolve_peers` — the function exists.", "- `src/app.py` :: `resolve_peers`"),
     ("- see `src/app.py:return 1` in the body", "- `src/app.py` :: `return 1`"),
+    # an absolute path from another checkout of the same repo maps to its repo-relative suffix
+    ("- `grep -q 'resolve_peers' /srv/other-clone/src/app.py`", "- `src/app.py` :: `resolve_peers`"),
 ]
 KEPT = [
     "- `grep -n 'resolve_peers' src/gone.py`",      # path not in the repo
