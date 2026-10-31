@@ -57,6 +57,12 @@ skills.
   response's usage, so ingest stores that usage once — each field's maximum across the
   response's rows, on its last row — and leaves the other rows' counts `NULL`. A `sum()`
   over `messages` therefore counts each API call once.
+  A Claude `system` row is a SessionStart hook's injected context: only the
+  `additionalContext` string (from a `hook_success` record's JSON stdout, or a
+  `hook_additional_context` record), one row per distinct text per session, `injected = 1`
+  from ingest on. The allowlist is strict — every other attachment (including PostToolUse
+  hooks, which repeat the tool output) and any non-JSON hook stdout is skipped, and its
+  `raw` is a reduced record without the hook's stdout, stderr or command.
   `injected` is `1` for a message
   that is standing-instruction boilerplate — a `system` message, or any non-`tool_result`
   message whose normalized text appears in several distinct sessions (a standing instruction
