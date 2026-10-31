@@ -1484,6 +1484,64 @@ def test_ingest_is_incremental_and_rebuildable(cache, capsys):
     assert after == before == [(5, 18, 3, 6)]
 
 
+def _content(root: Path) -> dict[str, list[tuple]]:
+    """Every row of the index with its ids replaced by (session native_id, ord) keys."""
+    conn = tr.open_db(root)
+    key = "(SELECT s.native_id || '/' || m.ord FROM messages m JOIN sessions s" \
+          " ON s.id = m.session_id WHERE m.id = {})"
+    out = {
+        "files": _rows(conn, "SELECT harness, relpath, status FROM files ORDER BY relpath"),
+        "sessions": _rows(
+            conn,
+            "SELECT s.harness, s.native_id, f.relpath, cwd, project_key, kind,"
+            " parent_native_id, started_at, ended_at, model, title, fingerprint"
+            " FROM sessions s JOIN files f ON f.id = s.file_id ORDER BY 1, 2, 3",
+        ),
+        "messages": _rows(
+            conn,
+            f"SELECT {key.format('x.id')}, native_id, parent_native_id, on_main_path,"
+            " role, ts, text, model, stop_reason, input_tokens, output_tokens, injected,"
+            " norm_key, harness, cache_read_tokens, cache_write_tokens"
+            " FROM messages x ORDER BY 1",
+        ),
+        "tool_calls": _rows(
+            conn,
+            f"SELECT {key.format('t.message_id')}, call_id, name, arguments,"
+            f" {key.format('t.result_message_id')}, is_error, harness"
+            " FROM tool_calls t ORDER BY 1, 2",
+        ),
+    }
+    conn.close()
+    return out
+
+
+def test_a_full_build_and_an_incremental_ingest_store_identical_rows(tmp_path):
+    full = build_cache(tmp_path / "full")
+    tr.ingest(full, rebuild=True)
+    incremental = tmp_path / "incremental"
+    incremental.mkdir()
+    tr.ingest(incremental, rebuild=False)  # an empty first generation
+    shutil.copytree(full / "raw", incremental / "raw")
+    assert tr.ingest(incremental, rebuild=False).parsed == 5  # the incremental path
+    assert _content(full)["tool_calls"]  # the comparison covers result links
+    assert _content(incremental) == _content(full)
+
+
+def test_a_second_annotate_with_no_new_data_changes_no_rows(cache):
+    tr.ingest(cache, rebuild=False)
+    conn = tr.open_db(cache)
+    conn.executescript(
+        "CREATE TABLE updates (n INTEGER); INSERT INTO updates VALUES (0);"
+        "CREATE TRIGGER count_updates AFTER UPDATE ON messages"
+        " BEGIN UPDATE updates SET n = n + 1; END;"
+    )
+    conn.close()
+    tr.annotate(cache)
+    conn = tr.open_db(cache)
+    assert _rows(conn, "SELECT n FROM updates") == [(0,)]
+    conn.close()
+
+
 def test_fts_finds_a_message_by_a_word_in_its_text(cache):
     _, conn = _ingested(cache)
     hits = _rows(
