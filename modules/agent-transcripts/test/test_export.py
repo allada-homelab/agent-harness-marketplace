@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -276,3 +277,66 @@ def test_manifest_merge_keeps_other_harnesses(tmp_path):
     assert second["harnesses"]["claude"]["sources"][0]["files"] == 1
     assert second["harnesses"]["dsh"]["sources"][0]["files"] == 1
     assert (dest / "raw/dsh/host/sessions/key/sid/session.jsonl.zstd").exists()
+
+
+# ------------------------------------------------------------ atomic copies
+
+
+def _assert_complete_when_renamed(monkeypatch, expected: bytes) -> list:
+    """Patch os.replace so each rename first checks the temp file is already whole."""
+    renames = []
+    real_replace = os.replace
+
+    def checked_replace(src, dst):
+        assert Path(src).read_bytes() == expected
+        assert not Path(dst).exists()  # the final name appears only through the rename
+        renames.append((Path(src).name, Path(dst).name))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(tr.os, "replace", checked_replace)
+    return renames
+
+
+def test_host_export_renames_a_complete_temp_file_into_place(tmp_path, monkeypatch):
+    origin = tmp_path / "projects"
+    origin.mkdir()
+    (origin / "a.jsonl").write_text('{"a": 1}\n')
+    renames = _assert_complete_when_renamed(monkeypatch, b'{"a": 1}\n')
+
+    tr.export_sources(tmp_path / "cache", [_host_source("claude", origin, "projects")], dry_run=False)
+
+    assert renames == [(f"a.jsonl.{os.getpid()}.tmp", "a.jsonl")]
+
+
+def test_volume_member_is_renamed_into_place_with_the_source_mtime(tmp_path, monkeypatch):
+    dest = tmp_path / "raw/claude/vol/projects/a.jsonl"
+    renames = _assert_complete_when_renamed(monkeypatch, b"payload")
+
+    tr._write_member(dest, b"payload", 1700000000)
+
+    assert renames == [(f"a.jsonl.{os.getpid()}.tmp", "a.jsonl")]
+    assert int(dest.stat().st_mtime) == 1700000000
+
+
+def test_host_export_preserves_the_source_mtime(tmp_path):
+    origin = tmp_path / "projects"
+    origin.mkdir()
+    (origin / "a.jsonl").write_text("{}\n")
+    os.utime(origin / "a.jsonl", (1700000000, 1700000000))
+    dest = tmp_path / "cache"
+
+    tr.export_sources(dest, [_host_source("claude", origin, "projects")], dry_run=False)
+
+    assert int((dest / "raw/claude/host/projects/a.jsonl").stat().st_mtime) == 1700000000
+
+
+def test_a_stale_export_temp_file_is_not_ingested(tmp_path):
+    root = tmp_path / "cache"
+    claude = root / "raw/claude/host/projects/-tmp-proj"
+    claude.mkdir(parents=True)
+    (claude / "s1.jsonl.4242.tmp").write_text("{}\n")
+    dsh = root / "raw/dsh/host/sessions/--tmp-proj--/sid"
+    dsh.mkdir(parents=True)
+    (dsh / "session.v3.jsonl.zstd.4242.tmp").write_bytes(b"\x28\xb5\x2f\xfd")
+
+    assert tr.iter_raw_files(root) == []
