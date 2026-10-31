@@ -1315,20 +1315,26 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool
     # SQLite would reuse the ids of a re-parsed file's deleted rows, which sit at the
     # top; ids at or below fts_max_id must never be reused, or the next FTS batch
     # (`id > fts_max_id`) misses the new rows.
-    next_id = max(
+    first_id = max(
         conn.execute("SELECT coalesce(max(id), 0) FROM messages").fetchone()[0],
         _fts_max_id(conn) or 0,
     ) + 1
-    inserted: list[tuple[int, Message]] = []
-    for m in parsed.messages:
-        mcur = conn.execute(
-            "INSERT INTO messages (id, session_id, ord, native_id, parent_native_id,"
-            " on_main_path, role, ts, text, model, stop_reason, input_tokens,"
-            " output_tokens, injected, norm_key, harness, cache_read_tokens,"
-            " cache_write_tokens)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    # Ids are assigned here, so each result's message id is known before any insert
+    # and a tool call goes in already linked. As the per-result UPDATE did, a call
+    # takes the last result naming its call id, anywhere in the session.
+    results: dict[str, tuple[int, int]] = {}
+    for i, m in enumerate(parsed.messages):
+        for call_id, is_error in m.results:
+            results[call_id] = (first_id + i, int(is_error))
+    conn.executemany(
+        "INSERT INTO messages (id, session_id, ord, native_id, parent_native_id,"
+        " on_main_path, role, ts, text, model, stop_reason, input_tokens,"
+        " output_tokens, injected, norm_key, harness, cache_read_tokens,"
+        " cache_write_tokens)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
             (
-                next_id,
+                first_id + i,
                 session_id,
                 m.ord,
                 m.native_id,
@@ -1346,26 +1352,20 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool
                 harness,
                 m.cache_read_tokens,
                 m.cache_write_tokens,
-            ),
-        )
-        message_id = mcur.lastrowid
-        next_id += 1
-        inserted.append((message_id, m))
-        for c in m.tool_calls:
-            conn.execute(
-                "INSERT INTO tool_calls (message_id, call_id, name, arguments, harness)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (message_id, c.call_id, c.name, c.arguments, harness),
             )
-    # Link results to their calls once every message of the file exists.
-    for message_id, m in inserted:
-        for call_id, is_error in m.results:
-            conn.execute(
-                "UPDATE tool_calls SET result_message_id = ?, is_error = ?"
-                " WHERE call_id = ? AND message_id IN"
-                " (SELECT id FROM messages WHERE session_id = ?)",
-                (message_id, int(is_error), call_id, session_id),
-            )
+            for i, m in enumerate(parsed.messages)
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO tool_calls (message_id, call_id, name, arguments, harness,"
+        " result_message_id, is_error) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            (first_id + i, c.call_id, c.name, c.arguments, harness,
+             *results.get(c.call_id, (None, None)))
+            for i, m in enumerate(parsed.messages)
+            for c in m.tool_calls
+        ],
+    )
     return True
 
 
@@ -1442,7 +1442,20 @@ def full_build(dest_root: Path) -> IngestResult:
         n += 1
         name = f"transcripts-{stamp}-{n}.db"
     conn = _connect(gens / name)
-    result = _ingest_files(conn, dest_root)
+    # The big tables load without their secondary indexes, which are built once at the
+    # end; the sessions indexes stay, the duplicate check looks sessions up by them.
+    secondary = conn.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL"
+        " AND tbl_name IN ('messages', 'tool_calls')"
+    ).fetchall()
+    for index_name, _ in secondary:
+        conn.execute(f"DROP INDEX {index_name}")
+    result = _ingest_files(conn, dest_root, files_per_commit=200)
+    t0 = time.monotonic()
+    for _, sql in secondary:
+        conn.execute(sql)
+    conn.commit()
+    print(f"timing: indexes={time.monotonic() - t0:.1f}s", file=sys.stderr)
     conn.close()
     # Finish the generation before it goes live, so no reader sees it un-annotated.
     _post_ingest(dest_root, gens / name, result)
@@ -1485,7 +1498,7 @@ def ingest(dest_root: Path, rebuild: bool) -> IngestResult:
         if rebuild or needs_full_build(dest_root):
             return full_build(dest_root)
         conn = open_db(dest_root)
-        result = _ingest_files(conn, dest_root)
+        result = _ingest_files(conn, dest_root, files_per_commit=1)
         _fts_add_new(conn)
         conn.close()
         _post_ingest(dest_root, dest_root / "transcripts.db", result)
@@ -1587,8 +1600,11 @@ def _post_ingest(dest_root: Path, db_path: Path, result: IngestResult) -> None:
     )
 
 
-def _ingest_files(conn: sqlite3.Connection, dest_root: Path) -> IngestResult:
-    """Parse every new or changed raw file into `conn`'s database."""
+def _ingest_files(
+    conn: sqlite3.Connection, dest_root: Path, *, files_per_commit: int
+) -> IngestResult:
+    """Parse every new or changed raw file into `conn`'s database, committing after
+    every `files_per_commit` files (an uncommitted batch is lost if the run fails)."""
     known = {
         row[0]: (row[1], row[2], row[3])
         for row in conn.execute(
@@ -1607,7 +1623,11 @@ def _ingest_files(conn: sqlite3.Connection, dest_root: Path) -> IngestResult:
         conn.executemany("DELETE FROM files WHERE relpath = ?", [(r,) for r in stale])
     start = last_progress = time.monotonic()
     parse_s = insert_s = 0.0
+    pending = 0  # files written since the last commit
     for done, (harness, path) in enumerate(raw_files, 1):
+        if pending >= files_per_commit:
+            conn.commit()
+            pending = 0
         now = time.monotonic()
         if now - last_progress >= PROGRESS_EVERY_S:
             last_progress = now
@@ -1627,16 +1647,16 @@ def _ingest_files(conn: sqlite3.Connection, dest_root: Path) -> IngestResult:
         try:
             parsed = PARSERS[harness](path, relpath)
         except Exception as e:  # one bad file is recorded, never stops the run
-            with conn:
-                _record_file(conn, harness, relpath, st, "error", repr(e))
+            _record_file(conn, harness, relpath, st, "error", repr(e))
+            pending += 1
             errors += 1
             print(f"error: {relpath}: {e!r}", file=sys.stderr)
             continue
         t1 = time.monotonic()
-        with conn:
-            file_id = _record_file(conn, harness, relpath, st, "ok", None)
-            if not _insert_parsed(conn, file_id, harness, parsed):
-                duplicates += 1
+        file_id = _record_file(conn, harness, relpath, st, "ok", None)
+        pending += 1
+        if not _insert_parsed(conn, file_id, harness, parsed):
+            duplicates += 1
         t2 = time.monotonic()
         parse_s += t1 - t0
         insert_s += t2 - t1
@@ -1648,6 +1668,7 @@ def _ingest_files(conn: sqlite3.Connection, dest_root: Path) -> IngestResult:
                 file=sys.stderr,
             )
         parsed_count += 1
+    conn.commit()
     print(
         f"ingest: parsed={parsed_count} unchanged={unchanged} errors={errors}"
         f" duplicates={duplicates} removed={len(stale)}"
@@ -1694,8 +1715,8 @@ def annotate(
     excluded by default so a recurring *error* (identical text across sessions) is
     not mistaken for boilerplate and hidden from issue hunts.
 
-    Idempotent: it resets the column and recomputes from the index, so it can be
-    re-run after any ingest. Returns the number of messages flagged. `db_path`
+    Idempotent: it recomputes from the index and writes only rows whose flag changed,
+    so it can be re-run after any ingest. Returns the number of messages flagged. `db_path`
     defaults to the live index; a full build passes its new generation.
     """
     conn = _connect(db_path or dest_root / "transcripts.db")
@@ -1715,22 +1736,26 @@ def annotate(
         # Placeholder order: inner group roles, HAVING min_sessions, outer roles.
         params = (*exclude_roles, min_sessions, *exclude_roles)
     # The norm_key / role / injected covering indexes keep every statement off
-    # the big text column.
-    conn.execute("UPDATE messages SET injected = 0 WHERE injected = 1")
-    conn.execute("UPDATE messages SET injected = 1 WHERE role = 'system'")
-    flagged = conn.execute(
-        f"SELECT count(*) FROM messages WHERE norm_key IN ("
-        f" SELECT norm_key FROM messages WHERE norm_key != ''{role_clause}"
-        f" GROUP BY norm_key HAVING COUNT(DISTINCT session_id) >= ?)"
-        f"{role_clause}",
-        params,
-    ).fetchone()[0]
+    # the big text column. Only rows whose flag changes are written.
+    conn.execute("CREATE TEMP TABLE annotate_target (id INTEGER PRIMARY KEY)")
     conn.execute(
-        f"UPDATE messages SET injected = 1 WHERE norm_key IN ("
+        f"INSERT INTO annotate_target SELECT id FROM messages WHERE norm_key IN ("
         f" SELECT norm_key FROM messages WHERE norm_key != ''{role_clause}"
         f" GROUP BY norm_key HAVING COUNT(DISTINCT session_id) >= ?)"
         f"{role_clause}",
         params,
+    )
+    flagged = conn.execute("SELECT count(*) FROM annotate_target").fetchone()[0]
+    conn.execute(
+        "INSERT OR IGNORE INTO annotate_target SELECT id FROM messages WHERE role = 'system'"
+    )
+    conn.execute(
+        "UPDATE messages SET injected = 0 WHERE injected = 1"
+        " AND id NOT IN (SELECT id FROM annotate_target)"
+    )
+    conn.execute(
+        "UPDATE messages SET injected = 1 WHERE injected = 0"
+        " AND id IN (SELECT id FROM annotate_target)"
     )
     conn.commit()
     conn.close()
