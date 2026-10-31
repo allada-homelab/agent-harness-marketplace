@@ -1436,3 +1436,147 @@ def test_json_lines_splits_on_newline_only_and_drops_a_torn_tail(tmp_path):
     path.write_text(good + "\n" + good + "\n" + "\x00" * 16, encoding="utf-8")
     lines = tr._json_lines(path)
     assert lines == [good, good]
+
+
+# ------------------------------------------------- claude SessionStart context
+
+
+def _hook_attachment(uuid: str, parent: str | None, attachment: dict) -> dict:
+    return {
+        "type": "attachment",
+        "uuid": uuid,
+        "parentUuid": parent,
+        "timestamp": "2026-01-01T00:00:00.500Z",
+        "attachment": attachment,
+    }
+
+
+def _session_start_success(uuid: str, parent: str | None, stdout: str) -> dict:
+    return _hook_attachment(
+        uuid,
+        parent,
+        {
+            "type": "hook_success",
+            "hookEvent": "SessionStart",
+            "hookName": "SessionStart:startup",
+            "content": "",
+            "stdout": stdout,
+            "stderr": "stderr-must-not-be-indexed",
+            "exitCode": 0,
+            "command": "command-must-not-be-indexed",
+        },
+    )
+
+
+def _digest_stdout(text: str) -> str:
+    return json.dumps(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": text,
+            }
+        }
+    )
+
+
+def _parse_lines(tmp_path, records):
+    path = _write_lines(tmp_path / "ss.jsonl", records)
+    return tr.parse_claude(path, "raw/claude/host/projects/-tmp-proj/ss.jsonl")
+
+
+def test_session_start_hook_success_is_one_injected_system_row(tmp_path):
+    parsed = _parse_lines(
+        tmp_path,
+        [
+            _session_start_success("h1", None, _digest_stdout("widget digest alpha")),
+            {**_claude_user("u1", "count the widgets"), "parentUuid": "h1"},
+        ],
+    )
+    system = [m for m in parsed.messages if m.role == "system"]
+    assert [(m.text, m.injected, m.native_id) for m in system] == [
+        ("widget digest alpha", True, "h1")
+    ]
+    # only the additionalContext is kept, never the hook's raw stdout/stderr/command
+    for needle in ("stderr-must-not-be-indexed", "command-must-not-be-indexed", "hookSpecificOutput"):
+        assert needle not in system[0].raw
+
+
+def test_session_start_context_is_injected_in_the_index(tmp_path):
+    root = tmp_path / "cache"
+    _write_lines(
+        root / "raw/claude/host/projects/-tmp-proj/ss.jsonl",
+        [
+            _session_start_success("h1", None, _digest_stdout("widget digest alpha")),
+            {**_claude_user("u1", "count the widgets"), "parentUuid": "h1"},
+        ],
+    )
+    errors, conn = _ingested(root)
+    assert errors == 0
+    assert _rows(conn, "SELECT role, text, injected FROM messages ORDER BY ord") == [
+        ("system", "widget digest alpha", 1),
+        ("user", "count the widgets", 0),
+    ]
+
+
+def test_session_start_context_in_both_record_kinds_is_one_row(tmp_path):
+    parsed = _parse_lines(
+        tmp_path,
+        [
+            _session_start_success("h1", None, _digest_stdout("widget digest alpha")),
+            _hook_attachment(
+                "h2",
+                "h1",
+                {
+                    "type": "hook_additional_context",
+                    "hookEvent": "SessionStart",
+                    "hookName": "SessionStart",
+                    "content": ["widget digest alpha"],
+                },
+            ),
+        ],
+    )
+    assert [(m.role, m.text) for m in parsed.messages] == [
+        ("system", "widget digest alpha")
+    ]
+
+
+def test_other_hook_attachments_are_never_indexed(tmp_path):
+    parsed = _parse_lines(
+        tmp_path,
+        [
+            _hook_attachment(
+                "p1",
+                None,
+                {
+                    "type": "hook_success",
+                    "hookEvent": "PostToolUse",
+                    "hookName": "PostToolUse:Bash",
+                    "content": "tool output repeated",
+                    "stdout": _digest_stdout("tool output repeated"),
+                },
+            ),
+            _hook_attachment(
+                "p2",
+                "p1",
+                {
+                    "type": "hook_additional_context",
+                    "hookEvent": "PostToolUse",
+                    "hookName": "PostToolUse:Bash",
+                    "content": ["tool output repeated"],
+                },
+            ),
+        ],
+    )
+    assert parsed.messages == []
+
+
+def test_session_start_non_json_stdout_is_skipped_without_error(tmp_path):
+    parsed = _parse_lines(
+        tmp_path,
+        [
+            _session_start_success("h1", None, "plain text, not json"),
+            _session_start_success("h2", "h1", json.dumps(["not", "an", "object"])),
+            _session_start_success("h3", "h2", ""),
+        ],
+    )
+    assert parsed.messages == []

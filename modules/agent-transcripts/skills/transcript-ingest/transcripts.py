@@ -453,7 +453,8 @@ def export_sources(
 # --------------------------------------------------------------- ingest: model
 
 # 6: Claude Workflow agents are subagents, and a response's usage counts once.
-PARSER_VERSION = 6
+# 7: a Claude SessionStart hook's additionalContext is a `system` row.
+PARSER_VERSION = 7
 
 # Migrations keyed on PRAGMA user_version (SQLITE-008). MIGRATIONS[0] is the
 # schema as of 0.6.3, idempotent for a database that already has it.
@@ -782,6 +783,29 @@ def _json_lines(path: Path) -> list[str]:
     return lines
 
 
+def _session_start_contexts(att) -> list[str]:
+    """The additionalContext strings a SessionStart hook injected, else [].
+
+    A strict allowlist: other hook attachments (PostToolUse repeats the whole tool
+    output) and a hook's raw stdout/stderr are never indexed."""
+    if not isinstance(att, dict) or att.get("hookEvent") != "SessionStart":
+        return []
+    found: list = []
+    if att.get("type") == "hook_success":
+        try:
+            out = json.loads(att.get("stdout") or "")
+        except (json.JSONDecodeError, TypeError):
+            return []
+        hso = out.get("hookSpecificOutput") if isinstance(out, dict) else None
+        if isinstance(hso, dict):
+            found = [hso.get("additionalContext")]
+    elif att.get("type") == "hook_additional_context":
+        # content is a list of strings (one per hook); a lone string is one entry
+        for value in (att.get("additionalContext"), att.get("content")):
+            found += value if isinstance(value, list) else [value]
+    return [s for s in found if isinstance(s, str) and s.strip()]
+
+
 def parse_claude(path: Path, relpath: str) -> ParsedFile:
     """One JSONL per session; `<session>/subagents/**/<name>.jsonl` are its subagents
     (Workflow agents sit at `subagents/workflows/<run>/agent-<id>.jsonl`)."""
@@ -799,11 +823,50 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
 
     messages: list[Message] = []
     rows_by_response: dict[str, list[Message]] = {}
+    contexts_seen: set[str] = set()  # hook_success and hook_additional_context repeat it
     for line in _json_lines(path):
         rec = json.loads(line)
         rtype = rec.get("type")
         if rtype == "ai-title":
             session.title = rec.get("title")
+            continue
+        if rtype == "attachment":
+            att = rec.get("attachment")
+            for text in _session_start_contexts(att):
+                if text in contexts_seen:
+                    continue
+                contexts_seen.add(text)
+                messages.append(
+                    Message(
+                        ord=len(messages),
+                        native_id=rec.get("uuid"),
+                        parent_native_id=rec.get("parentUuid"),
+                        on_main_path=False,
+                        role="system",
+                        ts=rec.get("timestamp"),
+                        text=text,
+                        model=None,
+                        stop_reason=None,
+                        input_tokens=None,
+                        output_tokens=None,
+                        # a reduced record: the full line carries stdout, stderr, command
+                        raw=json.dumps(
+                            {
+                                "type": rtype,
+                                "uuid": rec.get("uuid"),
+                                "parentUuid": rec.get("parentUuid"),
+                                "timestamp": rec.get("timestamp"),
+                                "attachment": {
+                                    "type": att.get("type"),
+                                    "hookEvent": att.get("hookEvent"),
+                                    "hookName": att.get("hookName"),
+                                    "additionalContext": text,
+                                },
+                            }
+                        ),
+                        injected=True,
+                    )
+                )
             continue
         if rtype not in ("user", "assistant"):
             continue  # system, mode, attachment, … carry no conversation
