@@ -397,7 +397,7 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: okf-wiki
-  version: 0.1.15
+  version: 0.1.16
   kinds:
   - skills
   - dsh-plugin
@@ -428,9 +428,8 @@ modules:
     - pi
     tags: []
     command: true
-    summary: Bootstrap or grow this repo's .wiki/ from its history — fix and revert commits, PR descriptions,
-      docs and runbooks, and existing OKF or llm-wiki bundles — by fanning out okf-wiki explorer agents
-      and landing the concepts that pass the capture bar.
+    summary: Bootstrap or grow .wiki/ from fix commits, PRs, docs and OKF or llm-wiki bundles via explorer
+      agents.
   - name: recall
     path: modules/okf-wiki/skills/recall/SKILL.md
     harness:
@@ -439,8 +438,7 @@ modules:
     - pi
     tags: []
     command: true
-    summary: Answer a question from this repo's .wiki/ with cited, freshness-checked concepts, using the
-      cheap okf-wiki reader agent in an isolated context.
+    summary: Answer a question from this repo's .wiki/ with cited, freshness-checked concepts.
   - name: reflect
     path: modules/okf-wiki/skills/reflect/SKILL.md
     harness:
@@ -449,10 +447,8 @@ modules:
     - pi
     tags: []
     command: true
-    summary: Measure whether this repo's .wiki/ and its prompting actually help — consult rate, hits versus
-      gaps, rediscovery of things the wiki already said, capture precision and misses — from the agent-transcripts
-      index and git, then fix the wiki's content and draft evidence-backed proposals for the okf-wiki
-      module's prompts.
+    summary: Measure whether .wiki/ helps (consults, hits vs gaps, rediscovery, missed captures) from
+      transcripts and git, then fix it and propose prompt changes.
   - name: tend
     path: modules/okf-wiki/skills/tend/SKILL.md
     harness:
@@ -461,9 +457,8 @@ modules:
     - pi
     tags: []
     command: true
-    summary: Health report for this repo's .wiki/ — validation errors and warnings, stale, unanchored
-      and unverified concepts, orphans nothing links to, likely duplicates, and tags to consolidate —
-      with an offer to heal the stale ones in one batch.
+    summary: Health report for .wiki/ (errors, stale and unverified concepts, orphans, duplicates, tags
+      to merge), offering to heal in one batch.
   - name: wiki
     path: modules/okf-wiki/skills/wiki/SKILL.md
     harness:

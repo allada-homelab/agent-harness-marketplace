@@ -1,6 +1,6 @@
 ---
 name: capture
-description: Save a durable, non-obvious finding to this repo's .wiki/ — or re-verify a stale concept — by briefing the cheap okf-wiki scribe agent in the background and printing a one-line receipt. Use unprompted before finishing any task that taught something grepping the code would not reveal, when the session-start digest marks a concept ⚠ stale, or when the user says "capture this", "remember this in the wiki" or "add to the wiki".
+description: Save a durable, non-obvious finding to this repo's .wiki/ — or re-verify a stale concept — by briefing the cheap okf-wiki scribe agent in the background and printing a one-line receipt. Use unprompted before finishing any task that taught something grepping the code would not reveal, when a ⚠ concept your task relies on needs re-verifying, or when the user says "capture this", "remember this in the wiki" or "add to the wiki".
 user-invocable: true
 argument-hint: "[finding to capture, or: re-verify <id>]"
 ---
@@ -17,13 +17,14 @@ You hold the context; the scribe does not. For each candidate finding apply the 
 from the wiki contract. Drop anything a grep would find. Several findings are several
 concepts; one finding is one concept even if it touched many files.
 
-Check whether an existing concept already covers it: the session digest lists them, and
-`python3 <okf> new <type> <slug> --check` exits 3 with the near-duplicates and writes
+Check whether an existing concept already covers it: grep `.wiki/index.md` for the
+finding's key terms (the digest lists only some concepts), then run
+`python3 <okf> new <type> <slug> --check`, which exits 3 with the near-duplicates and writes
 nothing; never probe with plain `new`, which creates the file. Updating beats creating.
 
 ## 2. Brief
 
-One brief per concept, three to seven lines:
+One block per concept, three to seven lines:
 
 ```
 okf: <absolute path of ../wiki/okf.py>
@@ -34,6 +35,9 @@ claim: <one sentence, the description to write>
 why: <the reason, the evidence you saw: commits, files, error text>
 anchor: <path> :: <symbol>   (or: none: <reason>)
 ```
+
+One scribe brief may carry several concepts in sequence: `okf:` and `root:` once, then a
+`mode`/`type`/`claim`/`why`/`anchor` block per concept, each written before the next.
 
 `root` is not optional when you work in a worktree: without it the scribe writes into the
 `.wiki/` of whatever checkout its own working directory is in, which can be the shared main
@@ -67,7 +71,8 @@ concept, and a `.wiki/` file mid-write is not yet valid. Never commit, revert or
 validate <id>` must pass first. Once every receipt is in, commit `.wiki/` in `<root>`, in the
 commit that carries the change that taught it or on this branch right after, so the knowledge
 ships in the same PR. A capture with no work branch to ride on (the work already merged)
-goes up as its own PR — stage the `.wiki/index.md` that `validate` regenerates, or the index
+goes up as its own PR, one per session rather than one per concept — stage the
+`.wiki/index.md` that `validate` regenerates, or the index
 drifts from the concept. When the user's instructions standing-approve wiki-only PRs, do not
 watch it yourself or wait for a per-PR yes: once `pr-flow open` prints the URL, hand it to
 `okf-wiki:lander` in the background (see "Dispatching" in the wiki contract) and go on with

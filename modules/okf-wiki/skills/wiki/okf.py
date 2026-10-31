@@ -38,6 +38,7 @@ VERIFIED_KEEP = 5
 FANOUT_DEFAULT, FANOUT_MIN, FANOUT_MAX = 4, 1, 16
 DIGEST_VERSION = 1
 DIGEST_BUDGET = 8000  # characters, roughly 2k tokens
+DIGEST_DESC_MAX, DIGEST_STALE_MAX = 160, 10
 REFLECT_SESSIONS, REFLECT_DAYS = 20, 14
 STATE_TTL_DAYS = 7
 
@@ -499,16 +500,22 @@ def _in_repo(root: Path, path: str) -> bool:
     return base in (base / path).resolve().parents
 
 
-def eval_anchor(root: Path, a: Anchor) -> tuple[bool, str]:
-    base = root.resolve()
-    p = (base / a.path).resolve()
-    if not _in_repo(root, a.path):
-        return False, f"{a.path} is outside the repository"
+def anchor_file_problem(root: Path, path: str) -> str | None:
+    """Why an anchor's file cannot be checked at all, or None."""
+    p = (root.resolve() / path).resolve()
+    if not _in_repo(root, path):
+        return f"{path} is outside the repository"
     if not p.is_file():
-        return False, f"{a.path} does not exist"
+        return f"{path} does not exist"
     if p.stat().st_size > 2_000_000:
-        return False, f"{a.path} is too large to check"
-    text = p.read_text(encoding="utf-8", errors="replace")
+        return f"{path} is too large to check"
+    return None
+
+
+def eval_anchor(root: Path, a: Anchor) -> tuple[bool, str]:
+    if problem := anchor_file_problem(root, a.path):
+        return False, problem
+    text = (root.resolve() / a.path).resolve().read_text(encoding="utf-8", errors="replace")
     if a.kind == "symbol":
         ok = a.needle in text
         return ok, f"`{a.needle}` {'found' if ok else 'not found'} in {a.path}"
@@ -635,7 +642,13 @@ def check_concept(c: Concept) -> list[Finding]:
             err(f"malformed Verify anchor (a `symbol` cannot contain a backtick; use /regex/ => N): {line}")
         else:
             warn(f"unparsed Verify line: {line}")
-    words = len(c.body.split())
+    root = c.path.parents[c.id.count("/")].parent  # the bundle's parent
+    for a in anchors:
+        if os.path.isabs(a.path) or not _in_repo(root, a.path):
+            warn(f"anchor path {a.path} is not repo-relative; freshness cannot check it")
+    if isinstance(t, str) and t in _tags(c):
+        warn(f"tag {t!r} repeats the concept's type")
+    words = _prose_words(c.body)
     if words > WORDS_MAX:
         warn(f"body is {words} words; trim or split below {WORDS_MAX}")
     for _, target in LINK_RE.findall(c.body):
@@ -646,6 +659,19 @@ def check_concept(c: Concept) -> list[Finding]:
         elif not (c.path.parent / target.split("#", 1)[0]).exists():
             warn(f"broken link {target}")
     return out
+
+
+def _prose_words(body: str) -> int:
+    """Body words outside fenced code and the Verify / Legacy verification sections."""
+    n, skip, fence = 0, False, False
+    for line in body.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            fence = not fence
+        elif not fence:
+            if line.startswith("## "):
+                skip = line[3:].strip() in ("Verify", "Legacy verification")
+            n += 0 if skip else len(line.split())
+    return n
 
 
 def check_bundle(bundle: Path, concepts: list[Concept]) -> list[Finding]:
@@ -692,24 +718,27 @@ def _sort_key(c: Concept):
             str(c.meta.get("title") or c.id).casefold(), c.id)
 
 
-def _digest_sort_key(c: Concept, stale: set[str]):
-    """Digest order: concepts the agent should act on first.
-
-    Stale (⚠) concepts lead — the digest rule tells the agent to re-verify them — then the
-    most-recently-verified concepts, so a session surfaces the work that just happened (and is
-    most likely to be relevant to it) instead of a fixed title-sorted slice of the whole wiki.
-    Deterministic tie-break by title then id keeps the digest stable across runs.
-    """
+def _digest_sort_key(c: Concept):
+    """Digest order within a group: most-recently-verified first, so a session surfaces the
+    work that just happened (most likely relevant to it) instead of a fixed title-sorted slice;
+    never-verified concepts last. Tie-break by title then id keeps the digest stable."""
     verified = _verified_entries(c.meta)
-    last = verified[-1] if verified else None
+    last = verified[-1] if verified and isinstance(verified[-1], dict) else None
     at = parse_ts(str(last.get("at", ""))) if last and last.get("at") else None
-    recency = -at.timestamp() if at else float("-inf")
-    return (c.id not in stale, recency, str(c.meta.get("title") or c.id).casefold(), c.id)
+    recency = -at.timestamp() if at else float("inf")
+    return (recency, str(c.meta.get("title") or c.id).casefold(), c.id)
+
+
+# An unfilled template slot: `<fill:` opening a body line (after a list marker or backtick, as
+# in the Verify slot), not a finished concept quoting the syntax mid-sentence or in code.
+FILL_SLOT_RE = re.compile(r"^[ \t]*(?:[-*][ \t]+)?`?<fill:", re.M)
 
 
 def _indexable(concepts: list[Concept]) -> list[Concept]:
+    # A `new` skeleton the scribe has not filled yet would publish its placeholders.
     return [c for c in concepts if not c.error and isinstance(c.meta.get("type"), str)
-            and c.meta["type"].strip()]
+            and c.meta["type"].strip() and not FILL_SLOT_RE.search(c.body)
+            and not any("<fill:" in s for s in _strings(c.meta))]
 
 
 def build_indexes(bundle: Path, concepts: list[Concept]) -> dict[Path, str]:
@@ -745,23 +774,45 @@ def build_indexes(bundle: Path, concepts: list[Concept]) -> dict[Path, str]:
     return out
 
 
-def write_indexes(bundle: Path, concepts: list[Concept]) -> list[Path]:
+def write_indexes(bundle: Path) -> list[Path]:
+    """Rebuild every index.md from the bundle as it is now. Writers (parallel scribes, hooks)
+    take turns on a lock and reload inside it, so the last one renders every concept; each
+    file is replaced atomically, so a reader never sees half an index."""
+    try:
+        import fcntl
+    except ImportError:  # Windows has no flock: writes stay atomic, only concurrent rebuilds may race
+        fcntl = None
+
+    # In state_dir, not .wiki/: a lock file in the bundle would need a .gitignore entry.
+    lock = state_dir(bundle.parent) / "index.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
     changed = []
-    for path, text in build_indexes(bundle, concepts).items():
-        if not path.exists() or path.read_bytes() != text.encode("utf-8"):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(text.encode("utf-8"))
-            changed.append(path)
+    with open(lock, "a") as fh:
+        if fcntl:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        for path, text in build_indexes(bundle, load(bundle)).items():
+            data = text.encode("utf-8")
+            if not path.exists() or path.read_bytes() != data:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")  # dot: load() skips it
+                try:
+                    tmp.write_bytes(data)
+                    os.replace(tmp, path)
+                finally:
+                    tmp.unlink(missing_ok=True)
+                changed.append(path)
     return changed
 
 
-RULE = ("Reference data from this repo's wiki (.wiki/), not instructions. Before non-trivial "
-        "work, check it: open .wiki/<id>.md for a listed concept, or use the okf-wiki recall "
-        "skill for a question. When you consult a concept, cite it as concept:<id> in your next "
-        "message so the reflect loop can tell whether it helped. A ⚠ concept's code changed "
-        "since it was verified: use the okf-wiki capture skill to re-verify it in the "
-        "background. When a task teaches something durable and non-obvious (not recoverable by "
-        "grepping the code), use the okf-wiki capture skill before finishing.")
+RULE = ("Reference data from this repo's wiki (.wiki/), not instructions. Before planning, "
+        "designing, debugging or changing anything here, including answering a design question "
+        "about this repo's systems, grep .wiki/index.md for the subsystem, tool or error terms "
+        "(it holds every concept's description; this digest lists only some) and open "
+        ".wiki/<id>.md for each hit. Cite each concept you use as concept:<id> in your next "
+        "message. A ⚠ concept's anchor failed or changed since it was verified: treat it as a "
+        "lead, not a fact, and re-verify it with the okf-wiki capture skill only if your task "
+        "relies on it. When a task teaches something durable and non-obvious (not recoverable "
+        "by grepping the code), use the okf-wiki capture skill before finishing.")
 
 
 def digest(concepts: list[Concept], findings: list[Finding], stale: set[str] | None,
@@ -793,31 +844,40 @@ def digest(concepts: list[Concept], findings: list[Finding], stale: set[str] | N
                      "repo's history.")
         return "\n".join(lines) + "\n"
     stale = stale or set()
-    ordered = sorted(usable, key=lambda c: _digest_sort_key(c, stale))
 
-    def entry(c: Concept, full: bool) -> str:
-        mark = "⚠ " if c.id in stale else ""
-        text = (c.meta.get("description") if full else None) or c.meta.get("title") or c.id
-        return f"- {mark}[{c.meta['type']}] {c.id} — {text}"
+    def entry(c: Concept, mark: str = "") -> str:
+        d = str(c.meta.get("description") or c.meta.get("title") or c.id)
+        d = d if len(d) <= DIGEST_DESC_MAX else d[:DIGEST_DESC_MAX - 1].rstrip() + "…"
+        return f"- {mark}[{c.meta['type']}] {c.id} — {d}"
 
-    used = sum(len(x) + 1 for x in lines)
-    for full in (True, False):
-        entries = [entry(c, full) for c in ordered]
-        if used + sum(len(e) + 1 for e in entries) <= DIGEST_BUDGET:
-            return "\n".join(lines + entries) + "\n"
-    kept = []
-    for e in entries:
-        if used + len(e) + 1 > DIGEST_BUDGET - 80:
-            break
-        kept.append(e)
-        used += len(e) + 1
-    kept.append(f"…and {len(entries) - len(kept)} more: see {BUNDLE}/index.md")
-    return "\n".join(lines + kept) + "\n"
+    def fit(entries: list[str], room: int) -> list[str]:
+        kept = []
+        for e in entries:
+            if len(e) + 1 > room:
+                break
+            kept.append(e)
+            room -= len(e) + 1
+        return kept
+
+    room = DIGEST_BUDGET - sum(len(x) + 1 for x in lines)
+    foot = 64  # room for one footer line
+    # The ⚠ tail is claimed first so the warnings survive a large wiki, but printed last.
+    warn_all = [entry(c, "⚠ ") for c in sorted((c for c in usable if c.id in stale), key=_digest_sort_key)]
+    warned = fit(warn_all[:DIGEST_STALE_MAX], room - 2 * foot)
+    room -= sum(len(e) + 1 for e in warned) + (foot if len(warned) < len(warn_all) else 0)
+    listed = [entry(c) for c in sorted((c for c in usable if c.id not in stale), key=_digest_sort_key)]
+    kept = listed if sum(len(e) + 1 for e in listed) <= room else fit(listed, room - foot)
+    out = lines + kept + warned
+    if len(warned) < len(warn_all):
+        out.append(f"{len(warn_all) - len(warned)} more ⚠ stale — run okf.py fresh")
+    if len(kept) < len(listed):
+        out.append(f"…and {len(listed) - len(kept)} more: see {BUNDLE}/index.md")
+    return "\n".join(out) + "\n"
 
 
 def cmd_index(args) -> int:
     _, bundle = _root_and_bundle(args)
-    changed = write_indexes(bundle, load(bundle))
+    changed = write_indexes(bundle)
     status("index", "written" if changed else "unchanged", f"{len(changed)} files")
     return 0
 
@@ -957,8 +1017,9 @@ def near_duplicates(concepts: list[Concept], slug: str, title: str = "") -> list
         if c.error:
             continue
         tags = c.meta.get("tags") if isinstance(c.meta.get("tags"), list) else []
+        # The description too: an old concept's slug and title often name the fix, not the topic.
         t = _tokens(c.id.split("/")[-1].replace("-", " ") + " " + str(c.meta.get("title", ""))
-                    + " " + " ".join(map(str, tags)))
+                    + " " + " ".join(map(str, tags)) + " " + str(c.meta.get("description", "")))
         common = q & t
         if q and t and len(common) >= 2 and len(common) / min(len(q), len(t)) >= 0.6:
             hits.append(c.id)
@@ -1019,7 +1080,7 @@ def cmd_new(args) -> int:
     meta, body = template(args.type, args.title or "")
     c = Concept(args.slug, path, meta, body)
     write(c)
-    write_indexes(bundle, load(bundle))
+    write_indexes(bundle)
     status("new", "created", f"{args.slug} {path}")
     return 0
 
@@ -1028,8 +1089,8 @@ def cmd_stamp(args) -> int:
     root, bundle = _root_and_bundle(args)
     c = find(load(bundle), args.id)
     stamp(root, c, args.by, args.generated, args.verified, args.human_confirmed)
-    # `new` indexed the unfilled skeleton; stamp is the scribe's last write, so refresh here.
-    write_indexes(bundle, load(bundle))
+    # `new` left the unfilled skeleton out of the index; stamp is the scribe's last write, so index it here.
+    write_indexes(bundle)
     status("stamp", "ok", args.id)
     return 0
 
@@ -1041,28 +1102,30 @@ def _names(out: str) -> set[str]:
 
 
 def freshness(root: Path, concepts: list[Concept], timeout: float = 10) -> dict[str, tuple[str, str]]:
-    """id -> (FRESH | STALE | UNANCHORED | UNVERIFIED, detail).
+    """id -> (FRESH | TOUCHED | STALE | UNANCHORED | UNVERIFIED, detail).
 
-    STALE when a commit in `<verified commit>..HEAD` (ancestry, not dates: a merged branch's
-    older commits count) touches an anchor file, or one was edited after verification and not
-    yet committed. A commit that also touches the concept is the concept being written
-    alongside the code, not drift.
+    A candidate is a concept whose anchor file a commit in `<verified commit>..HEAD` touches
+    (ancestry, not dates: a merged branch's older commits count), or that was edited after
+    verification and not yet committed. A commit that also touches the concept is the concept
+    being written alongside the code, not drift. A candidate is STALE when an anchor now fails
+    or a line it matches is not in the verified commit's copy of the file, else TOUCHED. A
+    missing or oversized anchor file is STALE whether or not anything touched it.
     """
     res: dict[str, tuple[str, str]] = {}
-    pending: dict[str, tuple[set[str], dict, str]] = {}
+    pending: dict[str, tuple[list[Anchor], dict, str]] = {}
     for c in concepts:
         if c.error:
             continue
         # Paths outside the repo (migrated container paths) have no git history to judge.
-        files = {a.path for a in parse_anchors(c.body)[0] if _in_repo(root, a.path)}
+        anchors = [a for a in parse_anchors(c.body)[0] if _in_repo(root, a.path)]
         entries = [e for e in _verified_entries(c.meta) if isinstance(e, dict)]
         last = entries[-1] if entries else None
-        if not files:
+        if not anchors:
             res[c.id] = ("UNANCHORED", "")
         elif not last or not last.get("commit"):
             res[c.id] = ("UNVERIFIED", "no verified commit")
         else:
-            pending[c.id] = (files, last, Path(os.path.relpath(c.path, root)).as_posix())
+            pending[c.id] = (anchors, last, Path(os.path.relpath(c.path, root)).as_posix())
     if not pending:
         return res
     deadline = time.monotonic() + timeout
@@ -1075,7 +1138,7 @@ def freshness(root: Path, concepts: list[Concept], timeout: float = 10) -> dict[
         return git(root, *args, check=check, timeout=left)
 
     dirty = _names(run("diff", "HEAD", "--name-only")) | _names(run("ls-files", "--others", "--exclude-standard"))
-    paths = set().union(*({*files, me} for files, _, me in pending.values()))
+    paths = set().union(*({*(a.path for a in anchors), me} for anchors, _, me in pending.values()))
     graph = [line.split() for line in run("rev-list", "--topo-order", "--parents", "HEAD").splitlines()]
     by_len: dict[int, dict[str, str]] = {}  # stamps store abbreviated shas (head_commit)
 
@@ -1120,19 +1183,59 @@ def freshness(root: Path, concepts: list[Concept], timeout: float = 10) -> dict[
         for par in parents:
             m |= contains.get(par, 0)
         contains[sha] = m
-    for cid, (files, last, me) in pending.items():
+
+    def raw(*args: str) -> subprocess.CompletedProcess:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise subprocess.TimeoutExpired("git", timeout)
+        # bytes, not text=True: an undecodable blob must not crash the SessionStart digest
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=left, check=False)
+
+    def blob_lines(rev: str, path: str) -> set[str]:
+        return set(raw("show", f"{rev}:{path}").stdout.decode("utf-8", "replace").splitlines())
+
+    def judge(anchors: list[Anchor], full: str | None, me: str) -> str | None:
+        """Why the anchors no longer back the concept, or None when each still passes and every
+        line it matches is in the verified commit's copy (the touch left the claim alone), or in
+        the copy at the commit the stamp landed in: capture stamps while the work is uncommitted,
+        so the verified commit predates the code it checked and the wiki commit follows it. The
+        EARLIEST such commit: a later concept-only commit (retag, relink) postdates any drift."""
+        old: dict[str, set[str]] = {}
+        own: list[str] = []  # [first commit after `full` on its ancestry path touching me, or ""]
+        for a in anchors:
+            ok, msg = eval_anchor(root, a)
+            if not ok:
+                return msg
+            if full is None:
+                return "verified commit left history, so its lines cannot be compared"
+            if a.path not in old:
+                old[a.path] = blob_lines(full, a.path)
+            text = (root / a.path).read_text(encoding="utf-8", errors="replace")
+            changed = sorted(_anchor_lines(a, text) - old[a.path])
+            if changed and not own:
+                landed = run("log", "--reverse", "--ancestry-path", "--format=%H", f"{full}..HEAD",
+                             "--", me, check=False).split()
+                own.append(landed[0] if landed else "")
+            if changed and own[0]:
+                changed = sorted(set(changed) - blob_lines(own[0], a.path))
+            if changed:
+                return f"matched line {changed[0].strip()!r} is not in {full[:7]}"
+        return None
+
+    for cid, (anchors, last, me) in pending.items():
+        files = {a.path for a in anchors}
         full = known[str(last["commit"])]
         mask = contains[full] if full else None
         at = parse_ts(str(last.get("at", "")))
+        if gone := next(filter(None, (anchor_file_problem(root, f) for f in sorted(files))), None):
+            res[cid] = ("STALE", gone)
+            continue
         # An uncommitted anchor file is drift only if edited after verification; `at` is
         # whole seconds, so "after" means a later second than the stamp's.
-        edited = sorted(f for f in files & dirty if (root / f).exists() and (
+        edited = sorted(f for f in files & dirty if (
             at is None or (root / f).stat().st_mtime >= at.timestamp() + 1))
-        if edited:
-            res[cid] = ("STALE", f"uncommitted change to {edited[0]}")
-            continue
-        state = ("FRESH", "")
-        for sha, date, touched in commits:
+        where = f"uncommitted change to {edited[0]}" if edited else ""
+        for sha, date, touched in [] if edited else commits:
             hit = files & touched
             if not hit or me in touched:
                 continue
@@ -1141,10 +1244,24 @@ def freshness(root: Path, concepts: list[Concept], timeout: float = 10) -> dict[
             # A commit that left history (rebase, squash) falls back to committer dates.
             if mask is None and at is not None and datetime.fromisoformat(date) <= at:
                 continue
-            state = ("STALE", f"{sorted(hit)[0]} changed in {sha[:7]}")
+            where = f"{sorted(hit)[0]} changed in {sha[:7]}"
             break
-        res[cid] = state
+        if not where:
+            res[cid] = ("FRESH", "")
+        elif why := judge(anchors, full, me):
+            res[cid] = ("STALE", f"{where}: {why}")
+        else:
+            res[cid] = ("TOUCHED", f"{where}; anchors hold")
     return res
+
+
+def _anchor_lines(a: Anchor, text: str) -> set[str]:
+    """The lines an anchor matches: what must survive unchanged for a touch to be harmless."""
+    lines = text.splitlines()
+    if a.kind == "symbol":
+        return {line for line in lines if a.needle in line}
+    starts = [text.count("\n", 0, m.start()) for m in re.finditer(a.needle, text, re.M)]
+    return {lines[i] for i in starts if i < len(lines)}
 
 
 def cmd_fresh(args) -> int:
@@ -1156,7 +1273,8 @@ def cmd_fresh(args) -> int:
     for cid in sorted(res):
         st, detail = res[cid]
         print(f"{st} {cid}" + (f" ({detail})" if detail else ""))
-    counts = {s: sum(1 for v in res.values() if v[0] == s) for s in ("FRESH", "STALE", "UNANCHORED", "UNVERIFIED")}
+    counts = {s: sum(1 for v in res.values() if v[0] == s)
+              for s in ("FRESH", "TOUCHED", "STALE", "UNANCHORED", "UNVERIFIED")}
     status("fresh", "ok", ", ".join(f"{n} {s.lower()}" for s, n in counts.items()))
     return 0
 
@@ -1250,28 +1368,40 @@ def move(bundle: Path, concepts: list[Concept], old: str, new: str) -> int:
 TYPE_MAP = {"gotcha": "gotcha", "decision": "decision", "runbook": "runbook",
             "convention": "convention", "architecture": "architecture",
             "reference": "reference", "howto": "runbook"}
-GREP_RE = re.compile(r"grep(?: -[A-Za-z]+)* [\"']([^\"']+)[\"'] (\S+?)`")
-FILE_SYMBOL_RE = re.compile(r"^`([\w./-]+\.[\w]+):([\w.-]+)`")
-REGEX_CHARS = set(".*+?[](){}|^$\\")
+GREP_RE = re.compile(r"""grep(?:\s+-[A-Za-z]+)*\s+(?:'([^']+)'|"([^"]+)")\s+([^\s`'"#]+)""")
+FILE_SYMBOL_RE = re.compile(r"`([\w./-]+\.\w+):([^`]+)`")
 
 
-def _migrate_verify(body: str) -> str:
+def legacy_anchor(root: Path, line: str) -> str | None:
+    """The `- <path> :: <literal>` anchor a legacy verification line names (`grep '<literal>'
+    <path>` or `<path>:<symbol>`), only when the path is in the repo and the anchor holds."""
+    if g := GREP_RE.search(line):
+        path, needle = g[3], g[1] or g[2]
+    elif (f := FILE_SYMBOL_RE.search(line)) and not f[2].strip().isdigit():  # `path:42` is a line
+        path, needle = f[1], f[2].strip()
+    else:
+        return None
+    if os.path.isabs(path) and _in_repo(root, path):
+        path = os.path.relpath(path, root.resolve())
+    a = Anchor(os.path.normpath(path), "symbol", needle)
+    if "`" in needle or os.path.isabs(a.path) or not eval_anchor(root, a)[0]:
+        return None
+    return f"- `{a.path}` :: `{needle}`"
+
+
+def _migrate_verify(body: str, root: Path) -> str:
     sec = verify_section(body)
     if sec is None:
         return body.rstrip("\n") + "\n\n## Verify\n\n- none: migrated without a verification section\n"
     anchors, legacy = [], []
     for line in sec.strip("\n").splitlines():
         s = line.strip()
-        g = GREP_RE.search(s)
-        f = FILE_SYMBOL_RE.search(s.lstrip("- ").strip())
-        if g and not set(g[1]) & REGEX_CHARS:
-            anchors.append(f"- `{g[2]}` :: `{g[1]}`")
-        elif f:
-            anchors.append(f"- `{f[1]}` :: `{f[2]}`")
+        if a := legacy_anchor(root, s):
+            anchors.append(a)
         elif s:
             legacy.append(line)
     new = "\n## Verify\n\n" + "\n".join(
-        anchors or ["- none: migrated from llm-wiki; see Legacy verification"]) + "\n"
+        list(dict.fromkeys(anchors)) or ["- none: migrated from llm-wiki; see Legacy verification"]) + "\n"
     if legacy:
         new += "\n## Legacy verification\n\n" + "\n".join(legacy) + "\n"
     start = body.index(sec) - len("## Verify")
@@ -1299,9 +1429,11 @@ def _first_h1(body: str) -> str | None:
     return None
 
 
-def migrate_concept(c: Concept) -> tuple[dict, str, str | None]:
+def migrate_concept(c: Concept, root: Path) -> tuple[dict, str, str | None]:
     """(meta, body, review note or None)."""
     meta = dict(c.meta)
+    if not str(meta.get("description") or "").strip() and str(meta.get("one-line") or "").strip():
+        meta["description"] = meta.pop("one-line")  # llm-wiki's name for the one-sentence claim
     raw = str(meta.get("type", "")).strip().lower()
     meta["type"] = TYPE_MAP.get(raw, raw)
     note = None if raw in TYPE_MAP else f"type {raw!r} needs a manual choice among {', '.join(TYPES)}"
@@ -1317,7 +1449,7 @@ def migrate_concept(c: Concept) -> tuple[dict, str, str | None]:
         meta["verified"] = [{**e, "by": _fix_actor(str(e.get("by", ""))),
                              **({"at": _fix_ts(str(e["at"]))} if "at" in e else {})}
                             for e in _verified_entries(meta) if isinstance(e, dict)]
-    return meta, _migrate_verify(c.body), note
+    return meta, _migrate_verify(c.body, root), note
 
 
 def migration_id(cid: str) -> str:
@@ -1328,7 +1460,7 @@ def migration_id(cid: str) -> str:
 def cmd_mv(args) -> int:
     _, bundle = _root_and_bundle(args)
     n = move(bundle, load(bundle), args.old, args.new)
-    write_indexes(bundle, load(bundle))
+    write_indexes(bundle)
     status("mv", "ok", f"{args.old} -> {args.new} ({n} files relinked)")
     return 0
 
@@ -1343,7 +1475,78 @@ def _commit_before(root: Path, at: str, cache: dict[str, str]) -> str:
     return cache[at]
 
 
+def _section_span(body: str, name: str) -> tuple[int, int] | None:
+    """[start, end) of `## <name>` through the line before the next `## ` heading."""
+    m = re.search(rf"^## {re.escape(name)}\s*$", body, re.M)
+    if not m:
+        return None
+    nxt = re.search(r"^## ", body[m.end():], re.M)
+    return m.start(), m.end() + (nxt.start() if nxt else len(body) - m.end())
+
+
+def _put_section(body: str, span: tuple[int, int], text: str | None) -> str:
+    before, after = body[:span[0]], body[span[1]:]
+    if text is None:
+        return before + after if after else before.rstrip("\n") + "\n"
+    return before + text.rstrip("\n") + "\n" + ("\n" + after if after else "")
+
+
+def legacy_to_anchors(root: Path, body: str) -> tuple[str, list[str]]:
+    """(body, anchors added): every Legacy verification line that names a holding anchor moves
+    into `## Verify`, which then drops its `- none:` placeholder. Idempotent."""
+    leg = _section_span(body, "Legacy verification")
+    ver = _section_span(body, "Verify")
+    if not leg or not ver:
+        return body, []
+    lines = body[leg[0]:leg[1]].splitlines()[1:]
+    have = {line.strip() for line in verify_section(body).splitlines()}
+    keep, moved = [], []
+    for line in lines:
+        a = legacy_anchor(root, line.strip()) if line.strip() else None
+        if a is None:
+            keep.append(line)
+        elif a not in have and a not in moved:
+            moved.append(a)
+    if len(keep) == len(lines):
+        return body, []
+    verify = [line for line in verify_section(body).strip("\n").splitlines()
+              if not (moved and ANCHOR_NONE.match(line.strip()))]
+    rest = "\n".join(keep).strip("\n")
+    leg_text = "## Legacy verification\n\n" + rest if rest.strip() else None
+    ver_text = "## Verify\n\n" + "\n".join([*verify, *moved]).strip("\n")
+    # The later section first, so the earlier span still points at the right text.
+    for span, text in sorted([(leg, leg_text), (ver, ver_text)], key=lambda e: -e[0][0]):
+        body = _put_section(body, span, text)
+    return body, moved
+
+
+def cmd_anchors_from_legacy(args) -> int:
+    root, bundle = _root_and_bundle(args)
+    added, touched = 0, 0
+    for c in load(bundle):
+        if c.error:
+            continue
+        body, moved = legacy_to_anchors(root, c.body)
+        if body == c.body:
+            continue
+        for a in moved:
+            print(f"ANCHOR {c.id} {a}")
+        added, touched = added + len(moved), touched + 1
+        if not args.dry_run:
+            c.body = body
+            write(c)
+    status("migrate", "dry-run" if args.dry_run else "ok", f"{added} anchors from legacy in {touched} concepts")
+    return 0
+
+
 def cmd_migrate(args) -> int:
+    if args.anchors_from_legacy and args.source:
+        raise OkfError("--anchors-from-legacy upgrades this repo's .wiki/ in place and takes no "
+                       "source directory; run it without one")
+    if args.anchors_from_legacy:
+        return cmd_anchors_from_legacy(args)
+    if not args.source:
+        raise OkfError("give a source directory, or --anchors-from-legacy")
     root, bundle = _root_and_bundle(args, need_bundle=False)
     src = Path(args.source).resolve()
     if not src.is_dir():
@@ -1366,7 +1569,7 @@ def cmd_migrate(args) -> int:
             print(f"SKIPPED {c.id} ({nid} already exists)")
             skipped += 1
             continue
-        meta, body, note = migrate_concept(c)
+        meta, body, note = migrate_concept(c, root)
         body, _ = _relink(body, str(c.path.parent.resolve()), str(target.parent.resolve()),
                           moved, rebase=False)
         body = WIKILINK_RE.sub(lambda m: f"[[{renamed.get(m[1], m[1])}{m[2] or ''}]]", body)
@@ -1381,7 +1584,7 @@ def cmd_migrate(args) -> int:
         migrated += 1
         review += note is not None
     if not args.dry_run and migrated:
-        write_indexes(bundle, load(bundle))
+        write_indexes(bundle)
     status("migrate", "dry-run" if args.dry_run else "ok",
            f"{migrated} migrated, {review} need review, {skipped} skipped")
     return 0
@@ -1442,7 +1645,11 @@ def transcripts_db() -> Path:
 
 
 CITE_RE = re.compile(r"(?:concept:|`)([a-z0-9][a-z0-9/-]*)`?")
-RECEIPT_RE = re.compile(r"wiki: ([+~✗])")
+RECEIPT_RE = re.compile(r"wiki: ([+~✗-])\s*(\S*)")
+# Claude Code's Read and pi's read are confirmed; read_file and view cover other harnesses,
+# and dsh's file-read tool name is unverified.
+READ_TOOLS = ("Read", "read", "read_file", "view")
+CONCEPT_PATH_RE = re.compile(re.escape(BUNDLE) + r"/([a-z0-9][a-z0-9/-]*)\.md")
 
 
 def transcript_stats(root: Path, days: int, known_ids: set[str] | None = None) -> dict:
@@ -1459,28 +1666,32 @@ def transcript_stats(root: Path, days: int, known_ids: set[str] | None = None) -
         "SELECT id FROM sessions WHERE kind = 'main' AND (cwd = ? OR cwd LIKE ? ESCAPE '\\') "
         "AND (started_at IS NULL OR started_at >= ?)", (str(root), like, since_iso))}
 
-    def hits(fts: str, needle: str) -> list[tuple[int, str]]:
+    # The agent's own words: injected text (skill bodies, the digest) quotes receipt formats.
+    own = "m.role = 'assistant' AND COALESCE(m.injected, 0) = 0"
+
+    def hits(fts: str, needle: str, where: str = "1") -> list[tuple[int, str]]:
         rows = conn.execute(
             "SELECT m.session_id, m.text FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid "
-            "WHERE messages_fts MATCH ? AND instr(m.text, ?) > 0", (fts, needle))
+            f"WHERE messages_fts MATCH ? AND instr(m.text, ?) > 0 AND {where}", (fts, needle))
         return [(sid, text) for sid, text in rows if sid in sessions]
 
     digest_rows = hits('"okf wiki digest"', "okf-wiki:digest")
     gap_rows = hits('"GAP"', "GAP:")
-    receipt_rows = hits('"wiki"', "wiki: ")
-    read_sessions = {sid for (sid,) in conn.execute(
-        "SELECT DISTINCT m.session_id FROM tool_calls t JOIN messages m ON m.id = t.message_id "
-        "WHERE instr(t.arguments, ?) > 0", (f"{BUNDLE}/",)) if sid in sessions}
+    receipt_rows = hits('"wiki"', "wiki: ", own)
     # Citations: a concept referenced as `concept:<id>` or backticked `<id>`, matched against the
-    # known concept ids so code identifiers and injected standing text do not count. The
-    # digest's own concept list is neither backticked nor `concept:`-prefixed, so it is not
-    # counted. A bounded scan over the window sessions only, never the whole index.
+    # known concept ids so code identifiers do not count; system and injected rows (standing
+    # text, the digest) are not the agent consulting anything. A Read of a concept file counts
+    # as a citation too. A bounded scan over the window sessions only, never the whole index.
     cited: dict[str, int] = {}
+    read: dict[str, int] = {}
     cite_sessions: set[int] = set()
+    read_sessions: set[int] = set()
+    reading_sessions: set[int] = set()
+    qmarks = ",".join("?" * len(sessions))
     if sessions and known_ids is not None:
-        qmarks = ",".join("?" * len(sessions))
         rows = conn.execute(
             f"SELECT m.session_id, m.text FROM messages m WHERE m.session_id IN ({qmarks}) "
+            "AND m.role IS NOT 'system' AND COALESCE(m.injected, 0) = 0 "
             "AND (instr(m.text, '`') > 0 OR instr(m.text, 'concept:') > 0)",
             tuple(sessions))
         for sid, text in rows:
@@ -1488,21 +1699,40 @@ def transcript_stats(root: Path, days: int, known_ids: set[str] | None = None) -
                 if cid in known_ids:
                     cited[cid] = cited.get(cid, 0) + 1
                     cite_sessions.add(sid)
-    receipts = {"+": 0, "~": 0, "✗": 0}
+    if sessions:
+        rows = conn.execute(
+            "SELECT m.session_id, t.arguments FROM tool_calls t JOIN messages m ON m.id = t.message_id "
+            f"WHERE m.session_id IN ({qmarks}) AND t.name IN ({','.join('?' * len(READ_TOOLS))})",
+            (*sessions, *READ_TOOLS))
+        for sid, args in rows:
+            reading_sessions.add(sid)
+            if f"{BUNDLE}/" in (args or ""):
+                read_sessions.add(sid)
+            for cid in dict.fromkeys(CONCEPT_PATH_RE.findall(args or "")):
+                if cid.rsplit("/", 1)[-1] != "index" and (known_ids is None or cid in known_ids):
+                    read[cid] = read.get(cid, 0) + 1
+    for cid, n in read.items():
+        cited[cid] = cited.get(cid, 0) + n
+    receipts = {"+": 0, "~": 0, "✗": 0, "-": 0}
     for _, text in receipt_rows:
-        for kind in RECEIPT_RE.findall(text):
-            receipts[kind] += 1
+        for kind, token in RECEIPT_RE.findall(text):
+            if token.rsplit("/", 1)[-1] != "<id>":  # a quoted receipt format, not a receipt
+                receipts[kind] += 1
     digest_sessions = {sid for sid, _ in digest_rows}
-    consulted = (cite_sessions | read_sessions) & (digest_sessions or sessions)
+    digest_visible = bool(digest_sessions) or not sessions
+    consulted = (cite_sessions | read_sessions) & (digest_sessions if digest_visible else sessions)
     return {
         "available": True,
         "sessions": len(sessions),
         "digest_sessions": len(digest_sessions),
-        "digest_visible": bool(digest_sessions) or not sessions,
+        "digest_visible": digest_visible,
+        "capabilities": {"digest_visible": digest_visible, "reads": bool(reading_sessions)},
         "consulted_sessions": len(consulted),
         "cited": cited,
+        "read": read,
         "gaps": sum(text.count("GAP:") for _, text in gap_rows),
-        "receipts": {"created_or_updated": receipts["+"], "healed": receipts["~"], "failed": receipts["✗"]},
+        "receipts": {"created_or_updated": receipts["+"], "healed": receipts["~"], "failed": receipts["✗"],
+                     "deprecated": receipts["-"]},
     }
 
 
@@ -1550,9 +1780,8 @@ NUDGE = ("okf-wiki: before you finish, did this work teach something durable and
          "(a gotcha, decision, runbook step, convention, architecture or reference fact that "
          "grepping the code will not reveal)? If yes, use the okf-wiki capture skill, which "
          "briefs the scribe in the background, and print its receipt. If not, finish normally; "
-         "no reply about the wiki is needed. Existing concepts whose code changed are marked ⚠ "
-         "in the next session's digest; do not re-verify them now. This is the only nudge on "
-         "this branch this session.")
+         "no reply about the wiki is needed. Do not re-verify ⚠ concepts now; tend heals them "
+         "in bulk. This is the only nudge on this branch this session.")
 
 
 WIKI_COMMIT = ("okf-wiki: .wiki/ has uncommitted concept changes while the work itself is "
@@ -1572,6 +1801,26 @@ def _event_root(ev: dict) -> Path | None:
     return root if root and (root / BUNDLE).is_dir() else None
 
 
+FRESH_BUDGET = 1.5  # seconds of the SessionStart hook's 5 s timeout
+FRESH_LOGIC_VERSION = 1  # bump whenever freshness() classifies differently: it invalidates cached results
+
+
+def cached_freshness(root: Path, concepts: list[Concept], tree: dict) -> dict[str, tuple[str, str]]:
+    """freshness(), memoised in state_dir: keyed by HEAD, the dirty-tree fingerprints (which
+    cover uncommitted anchor and concept edits) and every verified stamp, so a repeat start
+    on an unchanged repo is one file read."""
+    stamps = json.dumps([[c.id, _verified_entries(c.meta)] for c in concepts], sort_keys=True)
+    key = hashlib.sha1("\0".join((str(FRESH_LOGIC_VERSION), tree["head"], tree["fp"], tree["wiki_fp"],
+                                  stamps)).encode()).hexdigest()
+    f = state_dir(root) / "fresh.json"
+    st = _load_state(f)
+    if st and st.get("key") == key and isinstance(st.get("res"), dict):
+        return {cid: (v[0], v[1]) for cid, v in st["res"].items()}
+    res = freshness(root, concepts, timeout=FRESH_BUDGET)
+    _save_state(f, {"key": key, "res": res})
+    return res
+
+
 def hook_session_start(ev: dict) -> str | None:
     if ev.get("agent_id"):
         return None
@@ -1584,11 +1833,12 @@ def hook_session_start(ev: dict) -> str | None:
         text = WIKI_MISSING
     else:
         bundle = root / BUNDLE
+        write_indexes(bundle)
         concepts = load(bundle)
-        write_indexes(bundle, concepts)
         findings = check_bundle(bundle, concepts)
+        tree = _tree_state(root)[0]
         try:
-            fresh = freshness(root, [c for c in concepts if not c.error], timeout=0.3)
+            fresh = cached_freshness(root, [c for c in concepts if not c.error], tree)
             stale = {cid for cid, (st, _) in fresh.items() if st == "STALE"}
         except (OkfError, subprocess.TimeoutExpired):
             stale = None
@@ -1596,8 +1846,8 @@ def hook_session_start(ev: dict) -> str | None:
         due = reflect_tick(root, count=ev.get("source") not in ("resume", "compact"))
         text = digest(concepts, findings, stale, due)
         sf = _session_file(root, ev)
-        if _load_state(sf) is None:  # a resume keeps the baseline its session started from
-            _save_state(sf, {**_tree_state(root)[0], "since": int(time.time())})
+        if sf and _load_state(sf) is None:  # a resume keeps the baseline its session started from
+            _save_state(sf, {**tree, "since": int(time.time())})
     return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                               "additionalContext": text}})
 
@@ -1609,8 +1859,11 @@ def _porcelain_path(line: str) -> str:
     return p.strip().strip('"')
 
 
-def _session_file(root: Path, ev: dict) -> Path:
-    sid = re.sub(r"[^A-Za-z0-9_.-]", "_", str(ev.get("session_id") or "unknown"))
+def _session_file(root: Path, ev: dict) -> Path | None:
+    """None without a session id: one shared file would let sessions dedupe each other's nudges."""
+    if not ev.get("session_id"):
+        return None
+    sid = re.sub(r"[^A-Za-z0-9_.-]", "_", str(ev["session_id"]))
     return state_dir(root) / f"session-{sid}.json"
 
 
@@ -1704,16 +1957,21 @@ def hook_stop(ev: dict) -> str | None:
     if root is None:
         return None
     bundle = root / BUNDLE
+    write_indexes(bundle)
     concepts = load(bundle)
-    write_indexes(bundle, concepts)
     if os.environ.get("OKF_WIKI_NUDGE", "").strip().lower() == "off":
         return None
     now, dirty = _tree_state(root)
     sf = _session_file(root, ev)
     cutoff = time.time() - STATE_TTL_DAYS * 86400
-    for old in sf.parent.glob("session-*.json"):
-        if old.stat().st_mtime < cutoff:
-            old.unlink(missing_ok=True)
+    for old in state_dir(root).glob("session-*.json"):
+        try:  # a concurrent Stop hook may sweep the same file first
+            if old.stat().st_mtime < cutoff:
+                old.unlink(missing_ok=True)
+        except FileNotFoundError:
+            pass
+    if sf is None:  # no id, no dedupe: a harness that also omits stop_hook_active would block forever
+        return None
     # No baseline (no SessionStart seen, or it was unreadable): judge against a clean tree.
     st = _load_state(sf) or {**now, "fp": "", "since": int(time.time())}
     work = False
@@ -1721,11 +1979,11 @@ def hook_stop(ev: dict) -> str | None:
         work = bool(_own_commits(root, str(st.get("head") or ""), now["head"], int(st.get("since") or 0)))
         st.update(head=now["head"], fp=now["fp"], dirty_nudged=False)
     elif now["fp"] and now["fp"] != st.get("fp") and not st.get("dirty_nudged"):
-        st["dirty_nudged"] = True
         outside = ("--", ".", f":(exclude){BUNDLE}")
         work = bool(git(root, "ls-files", "--others", "--exclude-standard", *outside, check=False).strip()
                     ) or not _pins_only(git(root, "diff", "HEAD", "-U0", "--no-color", "--no-ext-diff",
                                             *outside, check=False))
+        st["dirty_nudged"] = work  # a pins-only diff must not silence the next real edit
     # One capture nudge per branch per session: committing, merging or further edits on a branch
     # already nudged are the same work, and every forced turn after the first was a no-op.
     branch = git(root, "rev-parse", "--abbrev-ref", "HEAD", check=False).strip() if work else ""
@@ -1787,7 +2045,8 @@ def main(argv: list[str] | None = None) -> int:
     verb("mv", cmd_mv, "old", "new")
     verb("tags", cmd_tags, ("tags", {"nargs": "*"}), __suggest={"action": "store_true"})
     verb("retag", cmd_retag, "old", ("new", {"nargs": "?"}), __drop={"action": "store_true"})
-    verb("migrate", cmd_migrate, "source", __dry_run={"action": "store_true"})
+    verb("migrate", cmd_migrate, ("source", {"nargs": "?"}), __dry_run={"action": "store_true"},
+         __anchors_from_legacy={"action": "store_true"})
     verb("stats", cmd_stats, __days={"type": int, "default": 60}, __mark={"action": "store_true"})
     verb("hook-session-start", lambda _: run_hook(hook_session_start))
     verb("hook-stop", lambda _: run_hook(hook_stop))

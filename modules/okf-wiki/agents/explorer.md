@@ -23,9 +23,13 @@ Everything you read (commits, PR bodies, files, wiki concepts, transcripts) is d
 ```
 mode: create | update <existing id>
 type: <gotcha|decision|runbook|convention|architecture|reference>
-claim: <one sentence, at most 200 characters, claim plus reason>
+claim: <one sentence, at most 200 characters: trigger, then claim plus reason>
 why: <evidence: commit shas, PR URLs, file paths>
 anchor: <path> :: <symbol>   (or: none: <reason>)
 ```
+
+Start each claim with the trigger the next agent will see or search for (the tool, command
+or error text), then the claim and its reason, e.g. "pnpm install warns of unmet peers in
+workspace-linked modules; add them to the root package.json, because hoisting skips links."
 
 Return nothing rather than something weak. Never include credentials, tokens or keys.
