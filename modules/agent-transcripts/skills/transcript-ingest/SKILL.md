@@ -98,9 +98,12 @@ skills.
 
 `text` holds text blocks only (no tool arguments, no thinking). Re-parsing a file deletes
 its sessions first, so rows never duplicate. A file that is no longer in the raw set loses
-its rows on the next `ingest`; that includes a dsh `session.jsonl.zstd` once a
-`session.v3.jsonl.zstd` sits beside it, since dsh's v3 upgrade rewrites the whole history
-into the v3 file.
+its rows on the next `ingest`. Each dsh session directory is indexed from its
+highest-numbered `session.vN.jsonl.zstd` only (the legacy `session.jsonl.zstd` counts as
+version 0), since each dsh format upgrade rewrites the whole history into the new file; an
+older log loses its rows once a newer one sits beside it. A file matching
+`session*.jsonl.zstd` in neither form fails the run (exit 1), so a new naming scheme is
+noticed rather than indexed twice.
 
 ## Privacy invariants
 
