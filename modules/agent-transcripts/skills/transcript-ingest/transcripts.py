@@ -13,7 +13,7 @@ Sources are never mutated: volume reads run in a throwaway `alpine` container wi
 the volume mounted `:ro`. The output root must never be inside a git worktree.
 
     uv run --script transcripts.py export claude|pi|dsh [--dry-run] [--dest DIR] [--json]
-    uv run --script transcripts.py ingest [--dest DIR] [--rebuild]
+    uv run --script transcripts.py ingest [--dest DIR] [--rebuild]   # 75 = another run holds the lock
     uv run --script transcripts.py annotate [--dest DIR] [--min-sessions N] [--exclude-role R]
     uv run --script transcripts.py stats  [--dest DIR]
 """
@@ -21,6 +21,8 @@ the volume mounted `:ro`. The output root must never be inside a git worktree.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import fnmatch
 import hashlib
 import json
@@ -280,10 +282,18 @@ def should_copy(size: int, mtime: int, dest_path: Path) -> bool:
     return size != st.st_size or mtime != int(st.st_mtime)
 
 
+def _tmp_path(dest: Path) -> Path:
+    """Same-directory temp name, so os.replace is an atomic rename and ingest never
+    reads a half-copied file; the suffix keeps it out of iter_raw_files' globs."""
+    return dest.with_name(f"{dest.name}.{os.getpid()}.tmp")
+
+
 def _write_member(dest: Path, data: bytes, mtime: int) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(data)
-    os.utime(dest, (mtime, mtime))  # preserve source mtime so incremental skip works
+    tmp = _tmp_path(dest)
+    tmp.write_bytes(data)
+    os.utime(tmp, (mtime, mtime))  # preserve source mtime so incremental skip works
+    os.replace(tmp, dest)
 
 
 def _source_root(dest_root: Path, src: dict) -> Path:
@@ -323,7 +333,9 @@ def _export_host(src: dict, dest_root: Path, dry_run: bool) -> dict:
         if should_copy(st.st_size, int(st.st_mtime), dest):
             if not dry_run:
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(f, dest)  # copy2 preserves mtime
+                tmp = _tmp_path(dest)
+                shutil.copy2(f, tmp)  # copy2 preserves mtime
+                os.replace(tmp, dest)
             copied += 1
         else:
             skipped += 1
@@ -526,6 +538,11 @@ MIGRATIONS: list[list[str]] = [
         "ALTER TABLE messages ADD COLUMN cache_read_tokens INTEGER",
         "ALTER TABLE messages ADD COLUMN cache_write_tokens INTEGER",
     ],
+    # v4: what a generation was built with (schema_version, parser_version,
+    # built_at); a mismatch makes the next ingest a full build.
+    [
+        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    ],
 ]
 
 
@@ -633,6 +650,10 @@ CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
     INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
     INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
 END;
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -684,14 +705,19 @@ class ParsedFile:
 
 
 def open_db(dest_root: Path) -> sqlite3.Connection:
-    """Open the index, migrate it to the current schema, and set per-connection pragmas.
+    """Open the live index (`transcripts.db`, a symlink to the current generation)."""
+    return _connect(dest_root / "transcripts.db")
+
+
+def _connect(db_path: Path) -> sqlite3.Connection:
+    """Open a database, migrate it to the current schema, and set per-connection pragmas.
 
     The pragmas (SQLITE-001..004, 012) are per-connection and do not persist in
     the file, so every connection sets them. WAL and the migration steps come
     first: the old schema was created without a user_version, so _migrate also
     builds a fresh database (MIGRATIONS[0] then [1]).
     """
-    conn = sqlite3.connect(dest_root / "transcripts.db", timeout=5.0)
+    conn = sqlite3.connect(db_path, timeout=5.0)
     # WAL is a property of the file and persists, but the returned mode must be
     # checked: SQLite silently keeps the old mode where WAL can't work.
     mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
@@ -1333,12 +1359,148 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool
     return True
 
 
-def ingest(dest_root: Path, rebuild: bool) -> int:
-    """Parse every new or changed raw file into the db. Returns the parse-error count."""
+class LockBusy(Exception):
+    """Another process holds `<dest>/ingest.lock`."""
+
+    def __init__(self, pid: str):
+        super().__init__(f"another ingest is running (pid {pid})")
+
+
+@contextlib.contextmanager
+def ingest_lock(dest_root: Path):
+    """Exclusive, non-blocking flock on `<dest>/ingest.lock`. The kernel drops it when
+    the holder exits or crashes, so there is never a stale lock to clean up."""
+    fd = os.open(dest_root / "ingest.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            holder = os.pread(fd, 32, 0).decode(errors="replace").strip()
+            raise LockBusy(holder or "?") from None
+        # Truncate only once held, so a refused run never erases the holder's pid.
+        os.ftruncate(fd, 0)
+        os.pwrite(fd, f"{os.getpid()}\n".encode(), 0)
+        yield
+    finally:
+        os.close(fd)
+
+
+@dataclass
+class IngestResult:
+    parsed: int
+    unchanged: int
+    errors: int
+    duplicates: int
+    removed: int
+
+
+def needs_full_build(dest_root: Path) -> bool:
+    """True when there is no index, its schema is older than this code, or it was
+    built by another PARSER_VERSION (every file would be re-parsed anyway). A newer
+    schema raises: copies of the module at different versions must never rebuild
+    over each other."""
     db_path = dest_root / "transcripts.db"
-    if rebuild and db_path.exists():
-        db_path.unlink()
-    conn = open_db(dest_root)
+    if not db_path.exists():
+        return True
+    conn = sqlite3.connect(db_path, timeout=5.0)
+    try:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version > len(MIGRATIONS):
+            raise RuntimeError(
+                f"transcripts.db is at schema {version}, newer than this code"
+            )
+        if version < len(MIGRATIONS):
+            return True
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'parser_version'"
+        ).fetchone()
+    finally:
+        conn.close()
+    return row is None or row[0] != str(PARSER_VERSION)
+
+
+def full_build(dest_root: Path) -> IngestResult:
+    """Build a new generation under `gens/`, then swap the `transcripts.db` symlink onto
+    it in one rename. Readers that opened the old generation keep reading it; readers
+    opened after the swap see the new one. The live file is never written."""
+    gens = dest_root / "gens"
+    gens.mkdir(exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    name = f"transcripts-{stamp}.db"
+    n = 0
+    while (gens / name).exists():  # a second build within the same second
+        n += 1
+        name = f"transcripts-{stamp}-{n}.db"
+    conn = _connect(gens / name)
+    result = _ingest_files(conn, dest_root)
+    conn.close()
+    # Finish the generation before it goes live, so no reader sees it un-annotated.
+    _post_ingest(dest_root, gens / name, result)
+    conn = _connect(gens / name)
+    with conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            [
+                ("schema_version", str(len(MIGRATIONS))),
+                ("parser_version", str(PARSER_VERSION)),
+                ("built_at", datetime.now(timezone.utc).isoformat()),
+            ],
+        )
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+
+    live = dest_root / "transcripts.db"
+    was_plain_file = live.exists() and not live.is_symlink()
+    link = dest_root / "transcripts.db.tmp-link"
+    link.unlink(missing_ok=True)  # left by a run that crashed between these two lines
+    link.symlink_to(Path("gens") / name)
+    os.replace(link, live)
+    keep = {name, f"{name}-wal", f"{name}-shm"}
+    for f in gens.iterdir():
+        if f.name not in keep:
+            f.unlink()  # a reader still holding an old generation keeps it until it closes
+    if was_plain_file:
+        for suffix in ("-wal", "-shm"):
+            (dest_root / f"transcripts.db{suffix}").unlink(missing_ok=True)
+    return result
+
+
+def ingest(dest_root: Path, rebuild: bool) -> IngestResult:
+    """Under the lock: a full build into a new generation when `rebuild` or
+    `needs_full_build`, else an incremental pass over the live one; then annotate.
+    Raises LockBusy when another run holds the lock."""
+    with ingest_lock(dest_root):
+        if rebuild or needs_full_build(dest_root):
+            return full_build(dest_root)
+        conn = open_db(dest_root)
+        result = _ingest_files(conn, dest_root)
+        conn.close()
+        _post_ingest(dest_root, dest_root / "transcripts.db", result)
+    return result
+
+
+def _post_ingest(dest_root: Path, db_path: Path, result: IngestResult) -> None:
+    """FTS merge and `injected` annotation for the database at `db_path`, after any
+    run that parsed files."""
+    if not result.parsed:
+        return
+    # The FTS external-content index grows via triggers; a periodic merge
+    # keeps searches fast on a large corpus.
+    t0 = time.monotonic()
+    conn = _connect(db_path)
+    conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
+    conn.commit()
+    conn.close()
+    t1 = time.monotonic()
+    annotate(dest_root, db_path=db_path)
+    print(
+        f"timing: fts_optimize={t1 - t0:.1f}s annotate={time.monotonic() - t1:.1f}s",
+        file=sys.stderr,
+    )
+
+
+def _ingest_files(conn: sqlite3.Connection, dest_root: Path) -> IngestResult:
+    """Parse every new or changed raw file into `conn`'s database."""
     known = {
         row[0]: (row[1], row[2], row[3])
         for row in conn.execute(
@@ -1397,7 +1559,6 @@ def ingest(dest_root: Path, rebuild: bool) -> int:
                 file=sys.stderr,
             )
         parsed_count += 1
-    conn.close()
     print(
         f"ingest: parsed={parsed_count} unchanged={unchanged} errors={errors}"
         f" duplicates={duplicates} removed={len(stale)}"
@@ -1407,21 +1568,7 @@ def ingest(dest_root: Path, rebuild: bool) -> int:
         f" insert={insert_s:.1f}s",
         file=sys.stderr,
     )
-    if parsed_count:
-        # The FTS external-content index grows via triggers; a periodic merge
-        # keeps searches fast on a large corpus.
-        t0 = time.monotonic()
-        conn = open_db(dest_root)
-        conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
-        conn.commit()
-        conn.close()
-        t1 = time.monotonic()
-        annotate(dest_root)
-        print(
-            f"timing: fts_optimize={t1 - t0:.1f}s annotate={time.monotonic() - t1:.1f}s",
-            file=sys.stderr,
-        )
-    return errors
+    return IngestResult(parsed_count, unchanged, errors, duplicates, len(stale))
 
 
 def _norm_text(text: str) -> str:
@@ -1445,6 +1592,8 @@ def annotate(
     dest_root: Path,
     min_sessions: int = 3,
     exclude_roles: tuple[str, ...] = ("tool_result",),
+    *,
+    db_path: Path | None = None,
 ) -> int:
     """Flag standing-instruction boilerplate as `injected` so a query can exclude it.
 
@@ -1457,9 +1606,10 @@ def annotate(
     not mistaken for boilerplate and hidden from issue hunts.
 
     Idempotent: it resets the column and recomputes from the index, so it can be
-    re-run after any ingest. Returns the number of messages flagged.
+    re-run after any ingest. Returns the number of messages flagged. `db_path`
+    defaults to the live index; a full build passes its new generation.
     """
-    conn = open_db(dest_root)
+    conn = _connect(db_path or dest_root / "transcripts.db")
     total = conn.execute("SELECT count(*) FROM messages").fetchone()[0]
     if total:
         populated = conn.execute(
@@ -1567,7 +1717,19 @@ def cmd_export(args) -> int:
 
 
 def cmd_ingest(args) -> int:
-    return ingest(resolve_dest(args.dest), args.rebuild)
+    """0 when the run completed, even with parse errors (recorded in `files`); 75
+    when another run holds the lock; any other failure raises (exit 1)."""
+    try:
+        result = ingest(resolve_dest(args.dest), args.rebuild)
+    except LockBusy as e:
+        print(e, file=sys.stderr)
+        return 75
+    if result.errors:
+        print(
+            f"errors: {result.errors} files failed to parse (see files.status='error')",
+            file=sys.stderr,
+        )
+    return 0
 
 
 def cmd_stats(args) -> int:
@@ -1579,7 +1741,14 @@ def cmd_stats(args) -> int:
 
 def cmd_annotate(args) -> int:
     roles = tuple(args.exclude_role) if args.exclude_role else ("tool_result",)
-    return annotate(resolve_dest(args.dest), args.min_sessions, roles)
+    dest_root = resolve_dest(args.dest)
+    try:
+        with ingest_lock(dest_root):
+            annotate(dest_root, args.min_sessions, roles)
+            return 0  # never the flagged count: 75 means "lock busy"
+    except LockBusy as e:
+        print(e, file=sys.stderr)
+        return 75
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1604,7 +1773,9 @@ def main(argv: list[str] | None = None) -> int:
     p_ingest = sub.add_parser("ingest", help="build or refresh the sqlite index")
     p_ingest.add_argument("--dest", help="cache root")
     p_ingest.add_argument(
-        "--rebuild", action="store_true", help="delete the database and reparse"
+        "--rebuild",
+        action="store_true",
+        help="reparse everything into a new generation, then swap it in",
     )
     p_ingest.set_defaults(func=cmd_ingest)
 

@@ -1,7 +1,9 @@
 import json
 import os
 import shutil
+import signal
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -206,7 +208,7 @@ def _rows(conn, sql, *params):
 
 
 def _ingested(root, rebuild=False):
-    errors = tr.ingest(root, rebuild)
+    errors = tr.ingest(root, rebuild).errors
     return errors, tr.open_db(root)
 
 
@@ -238,7 +240,7 @@ def test_iter_raw_files_finds_dsh_v3_sessions_and_ingest_parses_them(tmp_path):
     assert "session.v3.jsonl.zstd" in dsh_names
     assert "session.jsonl.zstd" in dsh_names
 
-    assert tr.ingest(cache, rebuild=False) == 1  # only the pi v1 fixture errors
+    assert tr.ingest(cache, rebuild=False).errors == 1  # only the pi v1 fixture errors
     conn = tr.open_db(cache)
     assert (
         conn.execute(
@@ -492,7 +494,6 @@ def test_pi_v1_header_is_recorded_as_an_error(cache):
     )
     assert row[0].endswith("v1.jsonl")
     assert "v1 is unsupported" in row[2]
-    assert tr.main(["ingest", "--dest", str(cache), "--rebuild"]) == 1
 
 
 # ---------------------------------------------------------------------- dsh
@@ -1371,7 +1372,7 @@ def test_ingest_reports_progress_slow_files_and_phase_timings(cache, capsys, mon
 
 
 def test_ingest_is_incremental_and_rebuildable(cache, capsys):
-    assert tr.ingest(cache, rebuild=False) == 1
+    assert tr.ingest(cache, rebuild=False).errors == 1
     assert "parsed=5 unchanged=0 errors=1" in capsys.readouterr().out
     conn = tr.open_db(cache)
     before = _rows(
@@ -1591,3 +1592,175 @@ def test_session_start_non_json_stdout_is_skipped_without_error(tmp_path):
         ],
     )
     assert parsed.messages == []
+
+
+# ---------------------------------------------- lock, generations, exit codes
+
+LOCK_HOLDER = """
+import fcntl, os, sys, time
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT)
+fcntl.flock(fd, fcntl.LOCK_EX)
+os.write(fd, str(os.getpid()).encode())
+print("held", flush=True)
+time.sleep(600)
+"""
+
+
+@pytest.fixture
+def hold_lock():
+    """Start a subprocess that holds `<root>/ingest.lock` until killed."""
+    procs = []
+
+    def start(root: Path) -> subprocess.Popen:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", LOCK_HOLDER, str(root / "ingest.lock")],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        procs.append(proc)
+        assert proc.stdout.readline() == "held\n"
+        return proc
+
+    yield start
+    for proc in procs:
+        proc.kill()
+        proc.wait()
+
+
+def _index_state(root: Path) -> dict:
+    """Every byte of the index: the link target and each file under gens/."""
+    state = {p.name: p.read_bytes() for p in sorted((root / "gens").iterdir())}
+    state["link"] = os.readlink(root / "transcripts.db")
+    return state
+
+
+def _reader(root: Path) -> sqlite3.Connection:
+    """Opens the index the way the review and query scripts do."""
+    return sqlite3.connect(f"file:{root / 'transcripts.db'}?mode=ro", uri=True)
+
+
+def _session_count(conn) -> int:
+    return conn.execute("SELECT count(*) FROM sessions").fetchone()[0]
+
+
+def test_ingest_exits_75_and_changes_nothing_while_another_run_holds_the_lock(
+    cache, hold_lock, capsys
+):
+    tr.ingest(cache, rebuild=False)
+    before = _index_state(cache)
+    holder = hold_lock(cache)
+    capsys.readouterr()
+
+    assert tr.main(["ingest", "--dest", str(cache), "--rebuild"]) == 75
+    assert f"another ingest is running (pid {holder.pid})" in capsys.readouterr().err
+    assert _index_state(cache) == before
+
+
+def test_ingest_succeeds_once_the_lock_holder_is_killed(cache, hold_lock):
+    holder = hold_lock(cache)
+    holder.send_signal(signal.SIGKILL)
+    holder.wait()
+
+    assert tr.main(["ingest", "--dest", str(cache)]) == 0
+
+
+def test_annotate_exits_75_while_another_run_holds_the_lock(cache, hold_lock):
+    tr.ingest(cache, rebuild=False)
+    hold_lock(cache)
+
+    assert tr.main(["annotate", "--dest", str(cache)]) == 75
+
+
+def test_annotate_exits_0_however_many_messages_it_flags(cache):
+    tr.ingest(cache, rebuild=False)
+
+    assert tr.main(["annotate", "--dest", str(cache), "--min-sessions", "1"]) == 0
+
+
+def test_a_full_build_is_annotated_before_it_goes_live(cache, monkeypatch):
+    tr.ingest(cache, rebuild=False)
+    live = cache / "transcripts.db"
+    seen = []
+    real = tr.annotate
+
+    def spy(dest_root, *args, db_path=None, **kw):
+        seen.append((db_path.name, Path(os.readlink(live)).name))
+        return real(dest_root, *args, db_path=db_path, **kw)
+
+    monkeypatch.setattr(tr, "annotate", spy)
+    tr.ingest(cache, rebuild=True)
+
+    annotated, live_at_the_time = seen[0]
+    assert annotated != live_at_the_time
+    assert Path(os.readlink(live)).name == annotated
+
+
+def test_a_reader_opened_before_a_rebuild_keeps_reading_the_old_generation(cache):
+    tr.ingest(cache, rebuild=False)
+    old = _reader(cache)
+    assert _session_count(old) == 5
+    (cache / "raw/claude/host/projects/-tmp-proj/s1/subagents/agent-a.jsonl").unlink()
+
+    tr.ingest(cache, rebuild=True)
+
+    assert _session_count(old) == 5
+    assert _session_count(_reader(cache)) == 4
+
+
+def test_the_first_full_build_replaces_a_plain_database_with_a_symlink(cache):
+    plain = tr.open_db(cache)  # an index from before generations: a plain file
+    plain.execute("CREATE TABLE leftover (x)")
+    plain.commit()
+    (cache / "transcripts.db-shm").touch()  # as if a reader still held the old file
+    (cache / "transcripts.db-wal").touch()
+    plain.close()
+
+    tr.ingest(cache, rebuild=False)
+
+    live = cache / "transcripts.db"
+    assert live.is_symlink()
+    assert [p.name for p in (cache / "gens").iterdir()] == [Path(os.readlink(live)).name]
+    assert not (cache / "transcripts.db-wal").exists()
+    assert not (cache / "transcripts.db-shm").exists()
+
+
+def test_a_parser_version_change_triggers_a_full_build(cache, monkeypatch):
+    tr.ingest(cache, rebuild=False)
+    first = os.readlink(cache / "transcripts.db")
+    monkeypatch.setattr(tr, "PARSER_VERSION", tr.PARSER_VERSION + 1)
+
+    tr.ingest(cache, rebuild=False)
+
+    assert os.readlink(cache / "transcripts.db") != first
+    assert _rows(tr.open_db(cache), "SELECT value FROM meta WHERE key = 'parser_version'") == [
+        (str(tr.PARSER_VERSION),)
+    ]
+
+
+def test_an_unchanged_parser_version_stays_incremental(cache):
+    tr.ingest(cache, rebuild=False)
+    first = os.readlink(cache / "transcripts.db")
+
+    tr.ingest(cache, rebuild=False)
+
+    assert os.readlink(cache / "transcripts.db") == first
+
+
+def test_a_newer_schema_is_refused_rather_than_rebuilt(cache):
+    tr.ingest(cache, rebuild=False)
+    conn = tr.open_db(cache)
+    conn.execute(f"PRAGMA user_version = {len(tr.MIGRATIONS) + 1}")
+    conn.close()
+    first = os.readlink(cache / "transcripts.db")
+
+    with pytest.raises(RuntimeError, match="newer than this code"):
+        tr.ingest(cache, rebuild=False)
+    assert os.readlink(cache / "transcripts.db") == first
+
+
+def test_cmd_ingest_exits_0_and_reports_the_count_when_a_file_fails_to_parse(cache, capsys):
+    assert tr.main(["ingest", "--dest", str(cache)]) == 0  # the pi v1 fixture fails
+
+    assert "errors: 1 files failed to parse (see files.status='error')" in capsys.readouterr().err
+    (row,) = _rows(tr.open_db(cache), "SELECT relpath FROM files WHERE status = 'error'")
+    assert row[0].endswith("v1.jsonl")

@@ -20,7 +20,7 @@ run.
 # Index everything new or changed since the last run.
 uv run --script ./transcripts.py ingest
 
-# Start from an empty database (after a parser change).
+# Re-parse everything into a fresh database (a parser change does this on its own).
 uv run --script ./transcripts.py ingest --rebuild
 
 # Flag standing-instruction boilerplate as `injected` (also auto-run at the end of ingest).
@@ -33,6 +33,26 @@ uv run --script ./transcripts.py stats
 Options: `--dest DIR` overrides the cache root (default `$AGENT_TRANSCRIPT_DIR`, else an
 `agent-transcripts` directory inside the user's cache directory), matching the export
 skills.
+
+## One run at a time, and a live index that is never rebuilt in place
+
+- **Lock.** `ingest` and `annotate` take an exclusive lock on `<cache>/ingest.lock`. A
+  second run started while one holds it prints `another ingest is running (pid N)`, changes
+  nothing and exits **75**. The lock dies with its process, so a crash never leaves a stale
+  one behind.
+- **Full builds.** `--rebuild`, a schema change or a parser-version change makes ingest
+  build a new database under `<cache>/gens/` and then swap the `transcripts.db` symlink
+  onto it in one rename. Readers keep seeing the previous complete index until the swap;
+  older generations are deleted after it. Every other run updates the current generation
+  in place. Never edit or delete files under `gens/` by hand; `ingest --rebuild` is the
+  way to start over.
+- **Newer schema.** An index built by a newer version of this module is refused, never
+  rebuilt over: each harness installs its own copy, and two versions rebuilding over each
+  other would never settle.
+- **Exit codes.** `ingest` exits **0** when the run completed, even when some files failed
+  to parse: those are recorded with `files.status = 'error'`, listed on stderr, and
+  counted in an `errors: N files failed to parse` line. It exits **1** when the run
+  itself failed and **75** when another run holds the lock.
 
 ## Schema summary
 
@@ -73,6 +93,8 @@ skills.
 - `tool_calls` — per message: `call_id`, `name`, `arguments`, the result message, `is_error`.
 - `messages_fts` — an FTS5 external-content index over `messages.text`, kept in sync by
   triggers.
+- `meta` — `key`/`value` pairs recording what the generation was built with:
+  `schema_version`, `parser_version`, `built_at`.
 
 `text` holds text blocks only (no tool arguments, no thinking). Re-parsing a file deletes
 its sessions first, so rows never duplicate. A file that is no longer in the raw set loses
