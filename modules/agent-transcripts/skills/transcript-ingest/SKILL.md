@@ -62,13 +62,17 @@ skills.
   `parser_version`, `status`, `error`, `parsed_at`. A file is re-parsed when it is new, its
   size or mtime changed, or its recorded parser version is older than the current one.
 - `sessions` — `harness`, `native_id`, the owning file, `cwd`, `project_key`, `kind`
-  (`main` or `subagent`), `parent_native_id`, `started_at`, `ended_at`, `model`, `title`.
+  (`main` or `subagent`), `parent_native_id`, `started_at`, `ended_at`, `model`, `title`,
+  and `fingerprint` — a SHA-256 over the message count and the original first and last
+  records, which ingest uses to tell a byte-identical copy of a session (kept once) from a
+  different session that shares its id (both kept).
   A Claude file anywhere under a session's `subagents/` directory is a `subagent` whose
   `parent_native_id` is that session — direct subagents and Workflow agents
   (`subagents/workflows/<run>/agent-<id>.jsonl`) alike.
 - `messages` — per session: `ord`, `native_id`, `parent_native_id`, `on_main_path`, `role`
   (`user`, `assistant`, `tool_result`, `system`), `ts`, `text`, `model`, `stop_reason`,
-  token counts, the original record as `raw`, and `injected`. The token counts are
+  token counts, and `injected`. The original record is not stored; the raw file is
+  canonical. The token counts are
   `input_tokens`, `output_tokens`, `cache_read_tokens` and `cache_write_tokens`, as the
   harness reported them: every harness reports `input_tokens` **exclusive** of the prompt
   cache, so the prompt a turn actually processed is `input_tokens + cache_read_tokens +
@@ -81,8 +85,7 @@ skills.
   `additionalContext` string (from a `hook_success` record's JSON stdout, or a
   `hook_additional_context` record), one row per distinct text per session, `injected = 1`
   from ingest on. The allowlist is strict — every other attachment (including PostToolUse
-  hooks, which repeat the tool output) and any non-JSON hook stdout is skipped, and its
-  `raw` is a reduced record without the hook's stdout, stderr or command.
+  hooks, which repeat the tool output) and any non-JSON hook stdout is skipped.
   `injected` is `1` for a message
   that is standing-instruction boilerplate — a `system` message, or any non-`tool_result`
   message whose normalized text appears in several distinct sessions (a standing instruction

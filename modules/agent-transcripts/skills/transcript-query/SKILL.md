@@ -20,7 +20,7 @@ private conversations into context and destroys the session it was meant to info
 In practice:
 
 - Selecting `count(*)`, `avg`, `sum`, ids, names, timestamps and other metadata: always fine.
-- Selecting `text` or `raw` across many rows: never. Group and count instead.
+- Selecting `text` across many rows: never. Group and count instead.
 - Selecting one message's `text` to adjudicate a specific case: fine, through the excerpt
   form below, which caps what comes back.
 

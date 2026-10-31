@@ -1422,6 +1422,24 @@ def test_a_native_id_collision_between_different_content_keeps_both_sessions(tmp
     conn.close()
 
 
+def test_messages_do_not_store_the_original_record(cache):
+    _, conn = _ingested(cache)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
+    conn.close()
+    assert "raw" not in columns
+
+
+def test_a_session_fingerprint_hashes_its_count_and_first_and_last_records(tmp_path):
+    lines = [
+        {**DUP_SESSION_LINE, "uuid": f"u{i}", "message": {"role": "user", "content": f"m{i}"}}
+        for i in range(3)
+    ]
+    path = _write_lines(tmp_path / "s.jsonl", lines)
+    raw = path.read_text().split("\n")
+    expected = tr.hashlib.sha256(f"3\n{raw[0]}\n{raw[2]}".encode()).hexdigest()
+    assert tr.parse_claude(path, "s.jsonl").session.fingerprint == expected
+
+
 # ------------------------------------------------------------------ general
 
 
