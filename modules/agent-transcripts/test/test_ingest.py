@@ -762,14 +762,36 @@ DSH_NATIVE_TOOLS = [
 ]
 
 
-@pytest.fixture
-def dsh_native_cache(tmp_path):
-    """A cache holding one dsh session written the way dsh really writes tool rows."""
+def _as_v4_result(row: dict) -> dict:
+    """session.v4 writes a tool result as the message itself: toolCallId, isError and
+    the text blocks sit at the message level instead of in a nested tool-result."""
+    if row["type"] != "tool/result":
+        return row
+    message = row["data"]["message"]
+    (block,) = message["content"]
+    v4 = {
+        "id": message["id"],
+        "role": "tool",
+        "source": message["source"],
+        "toolCallId": block["toolCallId"],
+        "isError": block.get("isError", False),
+        "content": block["content"],
+    }
+    return {**row, "data": {**row["data"], "message": v4}}
+
+
+@pytest.fixture(params=["session.jsonl.zstd", "session.v4.jsonl.zstd"])
+def dsh_native_cache(tmp_path, request):
+    """A cache holding one dsh session written the way dsh really writes tool rows,
+    in the legacy/v3 result shape and in v4's."""
     root = tmp_path / "cache"
     session = root / "raw/dsh/host/sessions/--tmp-proj--/session-9999"
     session.mkdir(parents=True)
-    (session / "session.jsonl.zstd").write_bytes(
-        _frame([{**DSH_HEADER, "id": "session-9999"}]) + _frame(DSH_NATIVE_TOOLS)
+    rows = DSH_NATIVE_TOOLS
+    if request.param == "session.v4.jsonl.zstd":
+        rows = [_as_v4_result(r) for r in rows]
+    (session / request.param).write_bytes(
+        _frame([{**DSH_HEADER, "id": "session-9999"}]) + _frame(rows)
     )
     return root
 

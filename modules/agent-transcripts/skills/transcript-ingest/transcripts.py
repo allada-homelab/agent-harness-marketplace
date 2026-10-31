@@ -475,6 +475,7 @@ def export_sources(
 # 7: a Claude SessionStart hook's additionalContext is a `system` row.
 # 8: `raw` is no longer stored; sessions carry a content `fingerprint`.
 # 9: the fingerprint hashes parsed fields, so a workflow agent's two logs are one session.
+#    dsh session.v4 tool results (message-level toolCallId) get their text and links.
 PARSER_VERSION = 9
 
 # Migrations keyed on PRAGMA user_version (SQLITE-008). MIGRATIONS[0] is the
@@ -1158,24 +1159,31 @@ def parse_dsh(path: Path, relpath: str) -> ParsedFile:
                         )
                     )
         elif rtype == "tool/result":
+            # v3 nests tool-result blocks in the message; v4's message is the result
+            # itself (toolCallId, isError and text blocks at the message level).
+            blocks = [
+                b for b in msg.get("content") or []
+                if isinstance(b, dict) and b.get("type") in ("tool-result", "toolResult")
+            ]
+            if not blocks and msg.get("toolCallId"):
+                blocks = [msg]
             texts = []
-            for b in msg.get("content") or []:
-                if isinstance(b, dict) and b.get("type") in ("tool-result", "toolResult"):
-                    call_id = b.get("toolCallId") or ""
-                    block_text = _blocks_text(b.get("content"))
-                    # data.error is the row-level failure; seen only with isError so far
-                    is_error = bool(b.get("isError")) or bool(data.get("error"))
-                    if not is_error and last_assistant is not None:
-                        call = next(
-                            (c for c in last_assistant.tool_calls if c.call_id == call_id),
-                            None,
-                        )
-                        if call is not None and call.name == "bash":
-                            codes = _DSH_BASH_EXIT_RE.findall(block_text)
-                            if codes and int(codes[-1]) != 0:
-                                is_error = True
-                    results.append((call_id, is_error))
-                    texts.append(block_text)
+            for b in blocks:
+                call_id = b.get("toolCallId") or ""
+                block_text = _blocks_text(b.get("content"))
+                # data.error is the row-level failure; seen only with isError so far
+                is_error = bool(b.get("isError")) or bool(data.get("error"))
+                if not is_error and last_assistant is not None:
+                    call = next(
+                        (c for c in last_assistant.tool_calls if c.call_id == call_id),
+                        None,
+                    )
+                    if call is not None and call.name == "bash":
+                        codes = _DSH_BASH_EXIT_RE.findall(block_text)
+                        if codes and int(codes[-1]) != 0:
+                            is_error = True
+                results.append((call_id, is_error))
+                texts.append(block_text)
             text = "\n".join(t for t in texts if t)
         source = msg.get("source") or {}
         usage = data.get("usage") or {}
