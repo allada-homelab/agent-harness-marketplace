@@ -31,6 +31,7 @@ import sqlite3
 import subprocess
 import sys
 import tarfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,11 @@ DEFAULT_DEST_NAME = "agent-transcripts"
 # Tier-3 name-pattern sweeps for orphaned volumes whose containers were deleted.
 CLAUDE_VOLUME_PATTERNS = ("claude-code-config-*", "*-claude-*")
 DSH_VOLUME_PATTERNS = ("*deepseek*",)
+
+# ingest diagnostics on stderr: a progress line this often, and a line for any
+# single file slower than this, so a long rebuild shows where its time goes.
+PROGRESS_EVERY_S = 30.0
+SLOW_FILE_S = 2.0
 
 
 # ---------------------------------------------------------------- destination
@@ -1348,12 +1354,25 @@ def ingest(dest_root: Path, rebuild: bool) -> int:
     stale = [relpath for relpath in known if relpath not in current]
     with conn:
         conn.executemany("DELETE FROM files WHERE relpath = ?", [(r,) for r in stale])
-    for harness, path in raw_files:
+    start = last_progress = time.monotonic()
+    parse_s = insert_s = 0.0
+    for done, (harness, path) in enumerate(raw_files, 1):
+        now = time.monotonic()
+        if now - last_progress >= PROGRESS_EVERY_S:
+            last_progress = now
+            elapsed = now - start
+            print(
+                f"progress: {done - 1}/{len(raw_files)} files"
+                f" ({(done - 1) / elapsed:.1f}/s) elapsed={elapsed:.0f}s"
+                f" parse={parse_s:.0f}s insert={insert_s:.0f}s",
+                file=sys.stderr,
+            )
         relpath = path.relative_to(dest_root).as_posix()
         st = path.stat()
         if known.get(relpath) == (st.st_size, int(st.st_mtime), PARSER_VERSION):
             unchanged += 1
             continue
+        t0 = time.monotonic()
         try:
             parsed = PARSERS[harness](path, relpath)
         except Exception as e:  # one bad file is recorded, never stops the run
@@ -1362,24 +1381,46 @@ def ingest(dest_root: Path, rebuild: bool) -> int:
             errors += 1
             print(f"error: {relpath}: {e!r}", file=sys.stderr)
             continue
+        t1 = time.monotonic()
         with conn:
             file_id = _record_file(conn, harness, relpath, st, "ok", None)
             if not _insert_parsed(conn, file_id, harness, parsed):
                 duplicates += 1
+        t2 = time.monotonic()
+        parse_s += t1 - t0
+        insert_s += t2 - t1
+        if t2 - t0 >= SLOW_FILE_S:
+            print(
+                f"slow: {relpath} parse={t1 - t0:.1f}s insert={t2 - t1:.1f}s"
+                f" bytes={st.st_size} messages={len(parsed.messages)}"
+                f" tool_calls={sum(len(m.tool_calls) for m in parsed.messages)}",
+                file=sys.stderr,
+            )
         parsed_count += 1
     conn.close()
     print(
         f"ingest: parsed={parsed_count} unchanged={unchanged} errors={errors}"
         f" duplicates={duplicates} removed={len(stale)}"
     )
+    print(
+        f"timing: files={time.monotonic() - start:.1f}s parse={parse_s:.1f}s"
+        f" insert={insert_s:.1f}s",
+        file=sys.stderr,
+    )
     if parsed_count:
         # The FTS external-content index grows via triggers; a periodic merge
         # keeps searches fast on a large corpus.
+        t0 = time.monotonic()
         conn = open_db(dest_root)
         conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
         conn.commit()
         conn.close()
+        t1 = time.monotonic()
         annotate(dest_root)
+        print(
+            f"timing: fts_optimize={t1 - t0:.1f}s annotate={time.monotonic() - t1:.1f}s",
+            file=sys.stderr,
+        )
     return errors
 
 
