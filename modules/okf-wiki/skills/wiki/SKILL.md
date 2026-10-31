@@ -48,7 +48,7 @@ Every concept ends with `## Verify`. Keep the body under about 400 words.
 ---
 type: gotcha
 title: pnpm drops peer deps of workspace-linked modules
-description: Linked modules lose peer deps under pnpm; add them to the root package.json, because hoisting skips links.
+description: pnpm install warns of unmet peers in workspace-linked modules; add them to the root package.json, because hoisting skips links.
 tags: [pnpm, deps]
 generated: {by: okf-wiki/haiku, at: 2026-09-25T16:40:00Z}
 verified:
@@ -58,8 +58,9 @@ sources:
 ---
 ```
 
-- `description` is the retrieval signal: one sentence, a claim plus its reason, at most 200
-  characters. Agents often act on the description alone.
+- `description` is the retrieval signal: one sentence, at most 200 characters. Start it with
+  the trigger the next agent will see or search for (the tool, command or error text), then
+  the claim and its reason, as in the example above. Agents often act on the description alone.
 - **Never type `generated` or `verified` yourself.** `okf.py stamp` writes them with the real
   time and commit.
 - `human:<id>` appears in `verified` only after the user explicitly confirmed the concept.
@@ -98,14 +99,15 @@ with `python3` from anywhere inside the repository. The last line is always
 | `stamp <id> --by okf-wiki/<model> [--generated] [--verified]` | after a content change pass both; after a re-check pass `--verified`; it refuses while anchors fail |
 | `validate [ids]` | conformance; fix every ERROR |
 | `anchor <id>` | evaluate the Verify anchors |
-| `fresh [ids]` | FRESH / STALE / UNANCHORED / UNVERIFIED from git |
+| `fresh [ids]` | FRESH / TOUCHED / STALE / UNANCHORED / UNVERIFIED from git: TOUCHED means an anchor file changed but the anchors still pass (not ⚠); STALE (⚠) means an anchor failed or its matched text changed |
 | `mv <old> <new>` | rename and rewrite every inbound link |
 | `tags [tag...] [--suggest]` | every tag by use count; with tags, the concepts carrying each; `--suggest` lists spelling and plural variants to merge, redundant and malformed tags |
 | `retag <old> <new>`, `retag <old> --drop` | rename or merge a tag across every concept, or remove it |
 | `index`, `digest` | rebuild `index.md`, print the session digest (hooks do both) |
 | `migrate <dir> [--dry-run]` | import another OKF or llm-wiki bundle |
+| `migrate --anchors-from-legacy [--dry-run]` | turn a migrated concept's Legacy verification grep/path lines into anchors that pass; idempotent |
 | `fanout [--fanout N]` | parallel width: flag, else `OKF_WIKI_FANOUT`, else 4 |
-| `stats [--mark]` | effectiveness counts for the reflect skill |
+| `stats [--mark]` | effectiveness counts for the reflect skill; act on `transcripts.read`/`never_cited` only when `transcripts.capabilities.reads` is true |
 
 Never edit `.wiki/index.md` by hand; `new`, `stamp`, `mv` and the hooks rebuild it, and
 `validate` fails a stale one (fix: `okf.py index`). There is no `log.md`: history is
@@ -125,12 +127,13 @@ After any wiki change, print exactly one line per concept so the user can see an
 
 ## Dispatching the okf-wiki agents
 
-The agents are `okf-wiki:scribe`, `okf-wiki:reader`, `okf-wiki:explorer`,
-`okf-wiki:auditor` and `okf-wiki:lander`. On Claude Code use the Agent tool with that
+The agents are `okf-wiki:scribe`, `okf-wiki:explorer`, `okf-wiki:auditor` and
+`okf-wiki:lander`. On Claude Code use the Agent tool with that
 `subagent_type`, in the background for the scribe and the lander. On pi and dsh use
 `delegate_agent` with that `agent_type`; on dsh also pass `run_in_background: true` for the
 scribe and the lander. Every brief but the lander's must include the absolute path of
-`okf.py`. If no agent tool exists, follow the agent's steps yourself.
+`okf.py`. If no agent tool exists, follow the agent's steps yourself from
+`../../agents/<name>.md`.
 
 A backgrounded scribe takes roughly 2–5 minutes. A `.wiki/<id>.md` with an unfilled `<fill:`
 placeholder means its scribe is still writing, not stalled — the Stop hook already stays quiet

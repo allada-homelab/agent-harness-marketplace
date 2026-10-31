@@ -9,7 +9,7 @@ def test_new_scaffolds_a_template_that_fails_validate_until_filled(repo):
     for section in ("## Symptom", "## What fails", "## What works", "## Why", "## Verify"):
         assert section in text
     assert run(repo, "validate").returncode == 1  # <fill: …> placeholders remain
-    assert "cache-trap" in (repo / ".wiki" / "index.md").read_text()
+    assert "cache-trap" not in (repo / ".wiki" / "index.md").read_text()  # stamp indexes it once filled
 
 
 def test_new_creates_the_bundle_when_missing(repo):
@@ -133,7 +133,8 @@ def test_stamp_round_trips_source_titles_with_commas_quotes_and_hashes(repo):
 
 
 def test_stamp_refreshes_the_index_after_the_scribe_fills_the_skeleton(repo):
-    # The scribe's sequence: `new` indexes the skeleton, it fills the file by hand, then stamps.
+    # The scribe's sequence: `new` writes the skeleton (left out of the index), it fills the
+    # file by hand, then stamps.
     assert run(repo, "new", "gotcha", "pnpm-peer-trap", "--title", "x").returncode == 0
     concept(repo, "pnpm-peer-trap")
     assert run(repo, "stamp", "pnpm-peer-trap", "--by", "okf-wiki/haiku", "--generated").returncode == 0
@@ -141,3 +142,12 @@ def test_stamp_refreshes_the_index_after_the_scribe_fills_the_skeleton(repo):
     assert "<fill:" not in index
     assert "add them to the root package.json" in index
     assert run(repo, "validate").returncode == 0
+
+
+def test_new_check_also_matches_an_existing_concepts_description(repo):
+    concept(repo, "cache-ttl", meta="type: gotcha\ntitle: TTL too short\n"
+            "description: Redis eviction drops sessions when maxmemory-policy is allkeys-lru.\n")
+    r = run(repo, "new", "gotcha", "redis-eviction-sessions", "--check")
+    assert r.returncode == 3 and "DUPLICATE? cache-ttl" in r.stdout
+    assert r.stdout.splitlines()[-1] == "okf: new duplicate cache-ttl"
+    assert run(repo, "new", "gotcha", "pnpm-lockfile-drift", "--check").returncode == 0

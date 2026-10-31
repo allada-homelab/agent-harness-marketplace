@@ -1,6 +1,6 @@
 ---
 name: ingest
-description: Bootstrap or grow this repo's .wiki/ from its history — fix and revert commits, PR descriptions, docs and runbooks, and existing OKF or llm-wiki bundles — by fanning out okf-wiki explorer agents and landing the concepts that pass the capture bar. Use when the wiki is empty, when the digest says "run ingest", or when the user asks to "seed", "bootstrap", "ingest" or "migrate" a wiki.
+description: Bootstrap or grow .wiki/ from fix commits, PRs, docs and OKF or llm-wiki bundles via explorer agents. Use when the wiki is empty, the digest says "run ingest", or asked to "seed", "bootstrap", "ingest" or "migrate" one.
 user-invocable: true
 argument-hint: "[--fanout N] [--max N] [--since <date>] [<existing bundle dir to migrate>]"
 ---

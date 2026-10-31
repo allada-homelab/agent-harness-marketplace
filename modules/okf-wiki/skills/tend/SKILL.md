@@ -1,6 +1,6 @@
 ---
 name: tend
-description: Health report for this repo's .wiki/ — validation errors and warnings, stale, unanchored and unverified concepts, orphans nothing links to, likely duplicates, and tags to consolidate — with an offer to heal the stale ones in one batch. Use when the user asks to "tend", "check", "clean up" or "audit" the whole wiki, or when the digest shows invalid concepts — not when one concept is marked stale, which the capture skill re-verifies.
+description: Health report for .wiki/ (errors, stale and unverified concepts, orphans, duplicates, tags to merge), offering to heal in one batch. Use to "tend", "check", "clean up" or "audit" the whole wiki, or on invalid concepts.
 user-invocable: true
 argument-hint: "[--fanout N]"
 ---
@@ -21,7 +21,8 @@ instead). Read-only until the user agrees to a fix. Let `<okf>` be the absolute 
    into one proposed map: `old -> new` or `old -> drop` per line, each malformed tag mapped to
    its kebab form.
 5. Report in this order, one line each, grouped under headings: ERRORs (must fix), STALE,
-   UNVERIFIED and UNANCHORED, duplicates, orphans, tags, then a count of WARNs.
+   UNVERIFIED and UNANCHORED, duplicates, orphans, tags, then a count of WARNs and of TOUCHED
+   concepts (an anchor file changed but the anchors still pass; not ⚠, nothing to heal).
 6. Offer, as one question: heal every STALE and UNVERIFIED concept (scribes in re-verify
    mode, briefed and committed as `../capture/SKILL.md` §2–5 say, `root:` line included; at most `python3 <okf> fanout` in flight), merge the duplicates, apply the tag map,
    fix the errors. Do only what the user accepts, and print a receipt per concept. Apply the

@@ -51,6 +51,7 @@ Body text.
 
 
 def test_migrate_converts_an_llm_wiki_concept(repo, tmp_path):
+    (repo / "src" / "app.py").write_text("def resolve_peers():\n    subscribers = []\n")  # anchors must hold
     src = tmp_path / "old"
     src.mkdir()
     (src / "Alerter_Nobody.md").write_text(LLM_WIKI)

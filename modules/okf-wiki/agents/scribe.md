@@ -1,6 +1,6 @@
 ---
 name: scribe
-description: Writes one concept in a repo's .wiki/ (OKF v0.2) from a short brief — create, update or re-verify — using okf.py for every deterministic step, and returns a one-line receipt. Dispatched by the okf-wiki capture, ingest, tend and reflect skills.
+description: Writes the concepts in a short brief to a repo's .wiki/ (OKF v0.2) — create, update or re-verify — using okf.py for every deterministic step, and returns one receipt line per concept. Dispatched by the okf-wiki capture, ingest, tend and reflect skills.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: haiku
 ---
@@ -16,6 +16,9 @@ claim: <the one-sentence description>
 why: <reason and evidence>
 anchor: <path> :: <symbol>   (or: none: <reason>)
 ```
+
+A brief may repeat the `mode`…`anchor` block for several concepts; do them one at a time, in
+order, each through "finish".
 
 Work only inside `<root>/.wiki/`, plus reading the files the brief names. When the brief has
 a `root`, every `python3 <okf> <verb>` below means `python3 <okf> --root <root> <verb>` and
@@ -42,7 +45,10 @@ working directory. Run `python3 <okf> <verb>` for every step it covers; never ha
    On exit 3 (near-duplicates) read those concepts; if one covers the claim, switch to update
    mode for it; only if they are genuinely different, rerun with `--force`.
 2. Fill every `<fill: ...>` in the new file: `title`, `description` (the claim, at most 200
-   characters), `tags` (reuse what `python3 <okf> tags` lists before coining one), `sources` (from the brief's evidence, with ids cited as `[^id]` in the
+   characters, starting with the trigger the next agent will see or search for — the tool,
+   command or error text — then the claim and its reason, e.g. "pnpm install warns of unmet
+   peers in workspace-linked modules; add them to the root package.json, because hoisting
+   skips links."), `tags` (reuse what `python3 <okf> tags` lists before coining one), `sources` (from the brief's evidence, with ids cited as `[^id]` in the
    body), each template section in a few tight sentences, and the `## Verify` anchor.
 3. Go to "finish".
 
@@ -65,11 +71,12 @@ Read the concept and the files its `## Verify` anchors name. `python3 <okf> anch
 ## finish
 
 1. `python3 <okf> anchor <id>` until it prints `confirmed` or `none`. Fix the anchor, not the
-   code.
-2. `python3 <okf> stamp <id> --by okf-wiki/<model> --generated --verified` (use your model
-   alias for `<model>`, e.g. haiku).
+   code. `none:` only when no repo file configures, pins or wraps the behaviour; a config
+   value, version pin or wrapper script is an anchor.
+2. `python3 <okf> stamp <id> --by okf-wiki/<model> --generated --verified`: record the model
+   you actually run as (`okf-wiki/<model>`); if you cannot tell, use `okf-wiki/unknown`.
 3. `python3 <okf> validate <id>`; fix every ERROR.
-4. Reply with exactly one line: `wiki: +<type>/<id>` (or the receipt named above). If you
-   cannot finish, reply `wiki: ✗ <id> — <reason>` and nothing else.
+4. Reply with exactly one line per concept: `wiki: +<type>/<id>` (or the receipt named
+   above). If you cannot finish one, its line is `wiki: ✗ <id> — <reason>`; add nothing else.
 
 Never write credentials or tokens, not even as examples. Never touch files outside `.wiki/`.

@@ -24,9 +24,9 @@ def test_fresh_after_stamp(repo):
     assert fresh(repo)["x"] == ("FRESH", "")
 
 
-def test_commit_touching_an_anchor_file_makes_it_stale(repo):
+def test_commit_changing_an_anchored_line_makes_it_stale(repo):
     stamped(repo)
-    commit_app(repo, "def resolve_peers():\n    return 2\n")
+    commit_app(repo, "def resolve_peers(strict=False):\n    return 2\n")
     state, detail = fresh(repo)["x"]
     assert state == "STALE" and detail.startswith("src/app.py changed in ")
 
@@ -42,8 +42,9 @@ def test_commit_elsewhere_keeps_it_fresh(repo):
 def test_uncommitted_edit_makes_it_stale(repo):
     stamped(repo)
     time.sleep(1.1)  # verification is stamped to the second; this edit comes after it
-    (repo / "src" / "app.py").write_text("def resolve_peers():\n    return 3\n")
-    assert fresh(repo)["x"] == ("STALE", "uncommitted change to src/app.py")
+    (repo / "src" / "app.py").write_text("def resolve_peers(strict=False):\n    return 3\n")
+    state, detail = fresh(repo)["x"]
+    assert state == "STALE" and detail.startswith("uncommitted change to src/app.py: matched line")
 
 
 def test_unknown_commit_falls_back_to_dates(repo):
@@ -67,7 +68,7 @@ def test_fresh_cli_lists_states(repo):
     stamped(repo)
     r = run(repo, "fresh")
     assert r.stdout.splitlines()[0] == "FRESH x"
-    assert r.stdout.splitlines()[-1] == "okf: fresh ok 1 fresh, 0 stale, 0 unanchored, 0 unverified"
+    assert r.stdout.splitlines()[-1] == "okf: fresh ok 1 fresh, 0 touched, 0 stale, 0 unanchored, 0 unverified"
 
 
 def test_anchor_symbol_and_count(repo):
@@ -95,7 +96,7 @@ def test_merged_branch_changing_an_anchor_file_makes_it_stale(repo, monkeypatch)
     # A feature branch edits the anchored file before the concept is verified on main, and is
     # merged after: its commit is new to the verified commit's history even though it is older.
     git(repo, "checkout", "-qb", "feature")
-    (repo / "src" / "app.py").write_text("def resolve_peers():\n    return 9\n")
+    (repo / "src" / "app.py").write_text("def resolve_peers(v=9):\n    return 9\n")
     monkeypatch.setenv("GIT_COMMITTER_DATE", "2020-01-02T00:00:00Z")
     git(repo, "commit", "-qam", "feature edit")
     monkeypatch.delenv("GIT_COMMITTER_DATE")
@@ -110,7 +111,7 @@ def test_merged_branch_changing_an_anchor_file_makes_it_stale(repo, monkeypatch)
 
 def test_dot_slash_anchor_paths_still_go_stale(repo):
     stamped(repo, body=GOOD_BODY.replace("`src/app.py`", "`./src/app.py`"))
-    commit_app(repo, "def resolve_peers():\n    return 2\n")
+    commit_app(repo, "def resolve_peers(strict=False):\n    return 2\n")
     assert fresh(repo)["x"][0] == "STALE"
 
 
@@ -146,7 +147,7 @@ def test_freshness_of_250_concepts_at_distinct_commits_fits_the_session_start_bu
                 f"  - {{by: okf-wiki/haiku, at: 2026-09-01T00:00:00Z, commit: {sha[:12]}}}\n",
                 body=f"\nBody.\n\n## Verify\n\n- `src/m{i:03d}.py` :: `f{i:03d}`\n")
     commit_file = repo / "src" / "m007.py"
-    commit_file.write_text("def f007():\n    return -1\n")
+    commit_file.write_text("def f007(x):\n    return -1\n")
     git(repo, "commit", "-qam", "change m007")
     concepts = okf.load(repo / ".wiki")
     t = time.perf_counter()
@@ -171,7 +172,7 @@ def test_anchor_paths_outside_the_repo_do_not_break_freshness(repo):
     meta = GOOD_META + f"verified:\n  - {{by: x/y, at: 2026-01-01T00:00:00Z, commit: {okf.head_commit(repo)}}}\n"
     concept(repo, "only-outside", meta=meta, body=outside)  # as migrate writes them; stamp refuses these
     concept(repo, "mixed", meta=meta, body=both)
-    commit_app(repo, "def resolve_peers():\n    return 2\n")
+    commit_app(repo, "def resolve_peers(strict=False):\n    return 2\n")
     res = fresh(repo)
     assert res["only-outside"][0] == "UNANCHORED"
     assert res["mixed"][0] == "STALE"

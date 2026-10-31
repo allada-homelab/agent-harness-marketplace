@@ -19,7 +19,9 @@ to you.
 1. Run `<watch>` exactly as given, as one bare command: its `-C <root>` already runs it in the
    worktree, so no `cd` in front and no pipe after. It blocks for up to an hour and prints a final
    line `pr-flow: watch <verdict> [<url>]`; a refusal exits 2 with a `pr-flow: <reason>` line on
-   stderr. Read the real exit code.
+   stderr. The verdict is that final line, not the exit code: when it says `merged`, report
+   merged even on a nonzero exit, because pr-flow deletes the worktree it ran in and the shell
+   can fail afterwards. Otherwise read the real exit code.
 2. On `timeout` (exit 14), run the same command again, at most three times in all.
 3. On any other verdict, stop. Do not fix checks, resolve conflicts, answer reviews, push,
    force-push, merge by hand, run `pr-flow teardown` or remove the worktree — the dispatching
@@ -32,4 +34,6 @@ wiki-pr: <verdict> <pr URL>
 ```
 
 `merged` means pr-flow merged the PR and tore the worktree down. `green` means it is green
-but did not merge: say the first path outside the prefix, or why `--merge` refused.
+but did not merge: say the first path outside the prefix, or why `--merge` refused. On
+`review`, add one line per unresolved review thread, bot or human: `- <author>: <first line
+of the comment>` (from the watch output, else read them with `gh`; never reply or resolve).
