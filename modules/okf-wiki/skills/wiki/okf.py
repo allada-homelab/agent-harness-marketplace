@@ -1383,6 +1383,14 @@ def legacy_anchor(root: Path, line: str) -> str | None:
         return None
     if os.path.isabs(path) and _in_repo(root, path):
         path = os.path.relpath(path, root.resolve())
+    elif os.path.isabs(path):
+        # Legacy lines name the checkout they were written in (/workspaces/<repo>/…), so the
+        # same bundle must convert identically from any clone: take the longest suffix that is
+        # a repo file; eval_anchor below still has to hold.
+        parts = Path(path).parts[1:]
+        path = next((str(Path(*parts[i:])) for i in range(len(parts))
+                     if _in_repo(root, str(Path(*parts[i:]))) and (root / Path(*parts[i:])).is_file()),
+                    path)
     a = Anchor(os.path.normpath(path), "symbol", needle)
     if "`" in needle or os.path.isabs(a.path) or not eval_anchor(root, a)[0]:
         return None
