@@ -1359,6 +1359,17 @@ def test_a_native_id_collision_between_different_content_keeps_both_sessions(tmp
 # ------------------------------------------------------------------ general
 
 
+def test_ingest_reports_progress_slow_files_and_phase_timings(cache, capsys, monkeypatch):
+    monkeypatch.setattr(tr, "PROGRESS_EVERY_S", 0.0)
+    monkeypatch.setattr(tr, "SLOW_FILE_S", 0.0)
+    tr.ingest(cache, rebuild=False)
+    err = capsys.readouterr().err
+    assert "progress: " in err
+    assert "slow: raw/claude/host/projects/-tmp-proj/s1.jsonl parse=" in err
+    assert "timing: files=" in err
+    assert "timing: fts_optimize=" in err
+
+
 def test_ingest_is_incremental_and_rebuildable(cache, capsys):
     assert tr.ingest(cache, rebuild=False) == 1
     assert "parsed=5 unchanged=0 errors=1" in capsys.readouterr().out
