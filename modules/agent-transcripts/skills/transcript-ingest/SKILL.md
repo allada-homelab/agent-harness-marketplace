@@ -26,6 +26,9 @@ uv run --script ./transcripts.py ingest --rebuild
 # Flag standing-instruction boilerplate as `injected` (also auto-run at the end of ingest).
 uv run --script ./transcripts.py annotate [--min-sessions N] [--exclude-role R]
 
+# Rebuild the full-text index in one pass (a full build runs it on its own, after the swap).
+uv run --script ./transcripts.py fts
+
 # What is in the cache and the index.
 uv run --script ./transcripts.py stats
 ```
@@ -36,7 +39,7 @@ skills.
 
 ## One run at a time, and a live index that is never rebuilt in place
 
-- **Lock.** `ingest` and `annotate` take an exclusive lock on `<cache>/ingest.lock`. A
+- **Lock.** `ingest`, `annotate` and `fts` take an exclusive lock on `<cache>/ingest.lock`. A
   second run started while one holds it prints `another ingest is running (pid N)`, changes
   nothing and exits **75**. The lock dies with its process, so a crash never leaves a stale
   one behind.
@@ -46,6 +49,13 @@ skills.
   older generations are deleted after it. Every other run updates the current generation
   in place. Never edit or delete files under `gens/` by hand; `ingest --rebuild` is the
   way to start over.
+- **Full-text index.** `messages_fts` is not updated per row. A full build runs `fts` after
+  the swap (minutes on a large corpus); until it finishes, `search.py` and `excerpt.py`
+  refuse with `full-text index is stale` and exit 2, while every other reader works. An
+  incremental run removes a re-parsed or deleted file's old text from the index and adds
+  the new messages in one batch at the end. If that update fails, the run still succeeds
+  but marks the index dirty (`meta.fts_dirty = 1`), and searches refuse until `fts` runs.
+  `fts` refuses (exit 1) an index whose schema is older than this code: run `ingest`.
 - **Newer schema.** An index built by a newer version of this module is refused, never
   rebuilt over: each harness installs its own copy, and two versions rebuilding over each
   other would never settle.
@@ -94,10 +104,12 @@ skills.
   these so a term search reflects what sessions actually did, not the instruction text that
   appears everywhere.
 - `tool_calls` — per message: `call_id`, `name`, `arguments`, the result message, `is_error`.
-- `messages_fts` — an FTS5 external-content index over `messages.text`, kept in sync by
-  triggers.
+- `messages_fts` — an FTS5 external-content index over `messages.text`, built by `fts` and
+  extended by each incremental ingest (no triggers).
 - `meta` — `key`/`value` pairs recording what the generation was built with:
-  `schema_version`, `parser_version`, `built_at`.
+  `schema_version`, `parser_version`, `built_at`; and the full-text index's state:
+  `fts_max_id` (the highest message id it covers) and `fts_dirty` (`1` after a failed
+  update).
 
 `text` holds text blocks only (no tool arguments, no thinking). Re-parsing a file deletes
 its sessions first, so rows never duplicate. A file that is no longer in the raw set loses

@@ -111,7 +111,12 @@ FROM messages GROUP BY 1
 ## Full-text search
 
 The `messages_fts` index searches message text. Search returns **where** something was
-discussed, not the text itself:
+discussed, not the text itself. It is built after each full ingest, not per row, so for a
+few minutes after a rebuild it lags the messages; `search.py` and `excerpt.py --term` check
+`meta` first and refuse a stale index with `full-text index is stale; run: uv run --script
+…/transcript-ingest/transcripts.py fts` and exit 2. Run that command (or wait for the
+ingest that is building it) and retry. A hand-written `MATCH` in `query.py` gets no such
+check: it is current only when `meta.fts_dirty = 0` and `meta.fts_max_id >= max(messages.id)`.
 
 ```sql
 SELECT s.harness, s.native_id, count(*) AS hits

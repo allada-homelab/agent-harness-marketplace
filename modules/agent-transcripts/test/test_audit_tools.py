@@ -2,7 +2,7 @@
 
 Covers the ingest `injected`/annotate pass, and the search.py / excerpt.py / cluster.py
 helpers, against a synthetic index built through the real ingest schema so the FTS
-triggers, foreign keys and the `injected` column match production.
+index, foreign keys and the `injected` column match production.
 """
 
 import sys
@@ -83,6 +83,7 @@ def _seed(root: Path) -> None:
 def index(tmp_path):
     _seed(tmp_path)
     ti.annotate(tmp_path)
+    ti.build_fts(tmp_path)
     return tmp_path
 
 
@@ -173,6 +174,51 @@ def test_search_ranks_by_error_context(index, capsys):
     first = lines[0]
     assert first.startswith("10 |")  # session 10 has the most error-context matches
     assert first.split(" | ")[5] == "2"  # error_hits (col 5)
+
+
+def _stale(conn) -> None:
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('fts_dirty', '1')")
+
+
+def _unbuilt(conn) -> None:
+    conn.execute("DELETE FROM meta WHERE key = 'fts_max_id'")
+
+
+def _behind(conn) -> None:
+    conn.execute("UPDATE meta SET value = value - 1 WHERE key = 'fts_max_id'")
+
+
+FTS_READERS = {
+    "search": lambda root: s.main(["--term", "devcontainer", "--dest", str(root)]),
+    "excerpt": lambda root: ex.main(
+        ["--term", "devcontainer", "--dest", str(root), "--work", str(root / "w")]
+    ),
+}
+
+
+@pytest.mark.parametrize("reader", FTS_READERS)
+@pytest.mark.parametrize("make_stale", [_stale, _unbuilt, _behind])
+def test_fts_readers_exit_2_with_the_instruction_on_a_stale_index(
+    index, capsys, reader, make_stale
+):
+    conn = ti.open_db(index)
+    make_stale(conn)
+    conn.commit()
+    conn.close()
+    with pytest.raises(SystemExit) as exc:
+        FTS_READERS[reader](index)
+    assert exc.value.code == 2
+    assert "full-text index is stale; run: uv run --script " in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("reader", FTS_READERS)
+def test_fts_readers_answer_again_after_transcripts_fts(index, capsys, reader):
+    conn = ti.open_db(index)
+    _stale(conn)
+    conn.commit()
+    conn.close()
+    assert ti.main(["fts", "--dest", str(index)]) == 0
+    assert FTS_READERS[reader](index) == 0
 
 
 # ---------------------------------------------------------------------- excerpt
