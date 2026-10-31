@@ -1429,15 +1429,22 @@ def test_messages_do_not_store_the_original_record(cache):
     assert "raw" not in columns
 
 
-def test_a_session_fingerprint_hashes_its_count_and_first_and_last_records(tmp_path):
-    lines = [
-        {**DUP_SESSION_LINE, "uuid": f"u{i}", "message": {"role": "user", "content": f"m{i}"}}
-        for i in range(3)
-    ]
-    path = _write_lines(tmp_path / "s.jsonl", lines)
-    raw = path.read_text().split("\n")
-    expected = tr.hashlib.sha256(f"3\n{raw[0]}\n{raw[2]}".encode()).hexdigest()
-    assert tr.parse_claude(path, "s.jsonl").session.fingerprint == expected
+def test_two_logs_of_one_agent_that_differ_only_in_line_metadata_are_one_session(tmp_path):
+    """Claude logs a workflow agent at subagents/agent-<id>.jsonl and again under
+    subagents/workflows/<run>/; the second copy adds per-line metadata (version,
+    entrypoint) but carries the same messages."""
+    root = tmp_path / "cache"
+    d = root / "raw/claude/host/projects/proj"
+    d.mkdir(parents=True)
+    (d / "dup-session.jsonl").write_text(json.dumps(DUP_SESSION_LINE) + "\n")
+    tagged = {**DUP_SESSION_LINE, "version": "2.1.302", "entrypoint": "sdk-cli"}
+    (d / "workflows").mkdir()
+    (d / "workflows/dup-session.jsonl").write_text(json.dumps(tagged) + "\n")
+
+    errors, conn = _ingested(root)
+
+    assert _rows(conn, "SELECT count(*) FROM sessions WHERE native_id = 'dup-session'") == [(1,)]
+    conn.close()
 
 
 # ------------------------------------------------------------------ general
@@ -1716,9 +1723,6 @@ def test_session_start_hook_success_is_one_injected_system_row(tmp_path):
     assert [(m.text, m.injected, m.native_id) for m in system] == [
         ("widget digest alpha", True, "h1")
     ]
-    # only the additionalContext is kept, never the hook's raw stdout/stderr/command
-    for needle in ("stderr-must-not-be-indexed", "command-must-not-be-indexed", "hookSpecificOutput"):
-        assert needle not in system[0].raw
 
 
 def test_session_start_context_is_injected_in_the_index(tmp_path):

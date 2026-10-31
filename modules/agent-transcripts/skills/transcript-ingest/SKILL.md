@@ -73,9 +73,10 @@ skills.
   size or mtime changed, or its recorded parser version is older than the current one.
 - `sessions` — `harness`, `native_id`, the owning file, `cwd`, `project_key`, `kind`
   (`main` or `subagent`), `parent_native_id`, `started_at`, `ended_at`, `model`, `title`,
-  and `fingerprint` — a SHA-256 over the message count and the original first and last
-  records, which ingest uses to tell a byte-identical copy of a session (kept once) from a
-  different session that shares its id (both kept).
+  and `fingerprint` — a SHA-256 over the message count and the first and last messages'
+  id, role, timestamp and text, which ingest uses to tell a copy of a session (kept once,
+  even when its lines carry different metadata, as a Claude workflow agent's second log
+  does) from a different session that shares its id (both kept).
   A Claude file anywhere under a session's `subagents/` directory is a `subagent` whose
   `parent_native_id` is that session — direct subagents and Workflow agents
   (`subagents/workflows/<run>/agent-<id>.jsonl`) alike.

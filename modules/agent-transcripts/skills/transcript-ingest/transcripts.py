@@ -474,7 +474,8 @@ def export_sources(
 # 6: Claude Workflow agents are subagents, and a response's usage counts once.
 # 7: a Claude SessionStart hook's additionalContext is a `system` row.
 # 8: `raw` is no longer stored; sessions carry a content `fingerprint`.
-PARSER_VERSION = 8
+# 9: the fingerprint hashes parsed fields, so a workflow agent's two logs are one session.
+PARSER_VERSION = 9
 
 # Migrations keyed on PRAGMA user_version (SQLITE-008). MIGRATIONS[0] is the
 # schema as of 0.6.3, idempotent for a database that already has it.
@@ -684,7 +685,6 @@ class Message:
     stop_reason: str | None
     input_tokens: int | None
     output_tokens: int | None
-    raw: str
     injected: bool = False
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
@@ -810,7 +810,10 @@ def _mark_main_path(messages: list[Message]) -> None:
 def _finalize(session: Session, messages: list[Message]) -> ParsedFile:
     """Session span, model and fingerprint derive from the messages."""
     if messages:
-        evidence = f"{len(messages)}\n{messages[0].raw}\n{messages[-1].raw}"
+        # Parsed fields, not the raw lines: Claude logs a workflow agent twice, and
+        # the copies differ only in per-line metadata (version, entrypoint, usage).
+        ends = [(m.native_id, m.role, m.ts, m.text) for m in (messages[0], messages[-1])]
+        evidence = json.dumps([len(messages), ends])
         session.fingerprint = hashlib.sha256(evidence.encode()).hexdigest()
     stamps = [m.ts for m in messages if m.ts]
     session.started_at = stamps[0] if stamps else None
@@ -899,21 +902,6 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
                         stop_reason=None,
                         input_tokens=None,
                         output_tokens=None,
-                        # a reduced record: the full line carries stdout, stderr, command
-                        raw=json.dumps(
-                            {
-                                "type": rtype,
-                                "uuid": rec.get("uuid"),
-                                "parentUuid": rec.get("parentUuid"),
-                                "timestamp": rec.get("timestamp"),
-                                "attachment": {
-                                    "type": att.get("type"),
-                                    "hookEvent": att.get("hookEvent"),
-                                    "hookName": att.get("hookName"),
-                                    "additionalContext": text,
-                                },
-                            }
-                        ),
                         injected=True,
                     )
                 )
@@ -965,7 +953,6 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
                 output_tokens=usage.get("output_tokens"),
                 cache_read_tokens=usage.get("cache_read_input_tokens"),
                 cache_write_tokens=usage.get("cache_creation_input_tokens"),
-                raw=line,
                 tool_calls=calls,
                 results=results,
             )
@@ -1051,7 +1038,6 @@ def parse_pi(path: Path, relpath: str) -> ParsedFile:
                 output_tokens=usage.get("output"),
                 cache_read_tokens=usage.get("cacheRead"),
                 cache_write_tokens=usage.get("cacheWrite"),
-                raw=line,
                 tool_calls=calls,
                 results=results,
             )
@@ -1213,7 +1199,6 @@ def parse_dsh(path: Path, relpath: str) -> ParsedFile:
             output_tokens=usage.get("outputTokens"),
             cache_read_tokens=usage.get("cacheReadTokens"),
             cache_write_tokens=usage.get("cacheWriteTokens"),
-            raw=line,
             tool_calls=calls,
             results=results,
         )
