@@ -83,6 +83,26 @@ def connect(dest_root: Path) -> sqlite3.Connection:
     return conn
 
 
+def require_fresh_fts(conn: sqlite3.Connection) -> None:
+    """Exit 2 unless `messages_fts` covers every message: a stale external-content
+    index can return rows whose text has since changed."""
+    try:
+        meta = dict(conn.execute(
+            "SELECT key, value FROM meta WHERE key IN ('fts_max_id', 'fts_dirty')"
+        ))
+    except sqlite3.OperationalError:  # an index from before 0.9.0 has no meta table
+        meta = {}
+    max_id = conn.execute("SELECT coalesce(max(id), 0) FROM messages").fetchone()[0]
+    if (
+        "fts_max_id" not in meta
+        or meta.get("fts_dirty") != "0"
+        or max_id > int(meta["fts_max_id"])
+    ):
+        ingest = Path(__file__).resolve().parent.parent / "transcript-ingest" / "transcripts.py"
+        print(f"full-text index is stale; run: uv run --script {ingest} fts", file=sys.stderr)
+        raise SystemExit(2)
+
+
 def quote_term(term: str) -> str:
     """Quote each bare token that contains a hyphen/punctuation so FTS5 does not parse it
     as operators. Already-quoted tokens are left alone."""
@@ -160,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     conn = connect(resolve_dest(args.dest))
+    require_fresh_fts(conn)
     sql, params = build_query(args)
     cur = conn.execute(sql, tuple(params))
     rows = cur.fetchmany(args.limit + 1)

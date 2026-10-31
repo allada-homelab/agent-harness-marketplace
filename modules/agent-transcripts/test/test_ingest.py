@@ -1504,6 +1504,73 @@ def test_fts_finds_a_message_by_a_word_in_its_text(cache):
     ) == [(4,)]
 
 
+def _pi_session(path: Path, word: str) -> Path:
+    """A one-message pi session; `zz` sorts last, so its rows hold the top ids."""
+    return _write_lines(path, [
+        {"type": "session", "version": 3, "id": path.stem, "cwd": "/tmp/proj"},
+        {"type": "message", "id": "m1", "message": {
+            "role": "user", "content": [{"type": "text", "text": f"say {word}"}]}},
+    ])
+
+
+def _fts_hits(root: Path, word: str) -> int:
+    conn = tr.open_db(root)
+    # integrity-check raises if the index disagrees with the messages it covers
+    conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('integrity-check')")
+    hits = conn.execute(
+        "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH ?", (word,)
+    ).fetchone()[0]
+    conn.close()
+    return hits
+
+
+def test_a_full_build_leaves_a_clean_full_text_index_covering_every_message(cache):
+    _, conn = _ingested(cache)
+    meta = dict(conn.execute("SELECT key, value FROM meta"))
+    max_id = conn.execute("SELECT max(id) FROM messages").fetchone()[0]
+    conn.close()
+    assert (meta["fts_dirty"], meta["fts_max_id"]) == ("0", str(max_id))
+
+
+def test_an_incrementally_reparsed_file_swaps_its_old_words_for_its_new_ones(cache):
+    path = _pi_session(cache / "raw/pi/host/default/zz.jsonl", "aardvark")
+    tr.ingest(cache, rebuild=False)
+    _pi_session(path, "zebrafish")
+    tr.ingest(cache, rebuild=False)
+    assert (_fts_hits(cache, "aardvark"), _fts_hits(cache, "zebrafish")) == (0, 1)
+
+
+def test_a_removed_files_words_leave_the_full_text_index(cache):
+    path = _pi_session(cache / "raw/pi/host/default/zz.jsonl", "aardvark")
+    tr.ingest(cache, rebuild=False)
+    path.unlink()
+    tr.ingest(cache, rebuild=False)
+    assert _fts_hits(cache, "aardvark") == 0
+
+
+def test_a_failed_full_text_batch_marks_the_index_dirty_and_the_run_succeeds(
+    cache, monkeypatch
+):
+    tr.ingest(cache, rebuild=False)
+    _pi_session(cache / "raw/pi/host/default/zz.jsonl", "aardvark")
+
+    class FailingBatch(sqlite3.Connection):
+        def execute(self, sql, *args):
+            if sql.startswith("INSERT INTO messages_fts(rowid, text)"):
+                raise sqlite3.OperationalError("disk full")
+            return super().execute(sql, *args)
+
+    real_connect = sqlite3.connect
+    monkeypatch.setattr(
+        sqlite3, "connect", lambda *a, **kw: real_connect(*a, factory=FailingBatch, **kw)
+    )
+    assert tr.main(["ingest", "--dest", str(cache)]) == 0
+    monkeypatch.undo()
+    conn = tr.open_db(cache)
+    assert _rows(conn, "SELECT value FROM meta WHERE key = 'fts_dirty'") == [("1",)]
+    conn.close()
+
+
 def test_stats_table_counts_every_harness(cache):
     _, conn = _ingested(cache)
     table = tr.stats(conn)

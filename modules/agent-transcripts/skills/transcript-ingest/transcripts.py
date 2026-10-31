@@ -15,6 +15,7 @@ the volume mounted `:ro`. The output root must never be inside a git worktree.
     uv run --script transcripts.py export claude|pi|dsh [--dry-run] [--dest DIR] [--json]
     uv run --script transcripts.py ingest [--dest DIR] [--rebuild]   # 75 = another run holds the lock
     uv run --script transcripts.py annotate [--dest DIR] [--min-sessions N] [--exclude-role R]
+    uv run --script transcripts.py fts    [--dest DIR]   # rebuild the full-text index
     uv run --script transcripts.py stats  [--dest DIR]
 """
 
@@ -551,6 +552,13 @@ MIGRATIONS: list[list[str]] = [
         "ALTER TABLE sessions ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''",
         "CREATE INDEX sessions_harness_native ON sessions(harness, native_id)",
     ],
+    # v6: per-row FTS triggers made a large insert crawl; `fts` builds the index in
+    # one pass and an incremental ingest updates it in one batch (meta fts_max_id).
+    [
+        "DROP TRIGGER messages_fts_ai",
+        "DROP TRIGGER messages_fts_ad",
+        "DROP TRIGGER messages_fts_au",
+    ],
 ]
 
 
@@ -649,16 +657,6 @@ CREATE INDEX IF NOT EXISTS messages_harness ON messages(harness);
 CREATE INDEX IF NOT EXISTS tool_calls_harness ON tool_calls(harness);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
     USING fts5(text, content='messages', content_rowid='id');
-CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
-END;
-CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
-END;
-CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
-    INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
-END;
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -1233,6 +1231,7 @@ PARSERS = {"claude": parse_claude, "pi": parse_pi, "dsh": parse_dsh}
 
 def _record_file(conn, harness: str, relpath: str, st, status: str, error) -> int:
     """Replace the file's row; the cascade drops the sessions parsed from it before."""
+    _fts_forget(conn, [relpath])
     conn.execute("DELETE FROM files WHERE relpath = ?", (relpath,))
     cur = conn.execute(
         "INSERT INTO files (harness, relpath, size, mtime, parser_version, status,"
@@ -1313,15 +1312,23 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool
         ),
     )
     session_id = cur.lastrowid
+    # SQLite would reuse the ids of a re-parsed file's deleted rows, which sit at the
+    # top; ids at or below fts_max_id must never be reused, or the next FTS batch
+    # (`id > fts_max_id`) misses the new rows.
+    next_id = max(
+        conn.execute("SELECT coalesce(max(id), 0) FROM messages").fetchone()[0],
+        _fts_max_id(conn) or 0,
+    ) + 1
     inserted: list[tuple[int, Message]] = []
     for m in parsed.messages:
         mcur = conn.execute(
-            "INSERT INTO messages (session_id, ord, native_id, parent_native_id,"
+            "INSERT INTO messages (id, session_id, ord, native_id, parent_native_id,"
             " on_main_path, role, ts, text, model, stop_reason, input_tokens,"
             " output_tokens, injected, norm_key, harness, cache_read_tokens,"
             " cache_write_tokens)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
+                next_id,
                 session_id,
                 m.ord,
                 m.native_id,
@@ -1342,6 +1349,7 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool
             ),
         )
         message_id = mcur.lastrowid
+        next_id += 1
         inserted.append((message_id, m))
         for c in m.tool_calls:
             conn.execute(
@@ -1464,6 +1472,8 @@ def full_build(dest_root: Path) -> IngestResult:
     if was_plain_file:
         for suffix in ("-wal", "-shm"):
             (dest_root / f"transcripts.db{suffix}").unlink(missing_ok=True)
+    # After the swap, so review never waits for it; searches refuse until it is done.
+    build_fts(dest_root)
     return result
 
 
@@ -1476,9 +1486,86 @@ def ingest(dest_root: Path, rebuild: bool) -> IngestResult:
             return full_build(dest_root)
         conn = open_db(dest_root)
         result = _ingest_files(conn, dest_root)
+        _fts_add_new(conn)
         conn.close()
         _post_ingest(dest_root, dest_root / "transcripts.db", result)
     return result
+
+
+def build_fts(dest_root: Path) -> None:
+    """Rebuild `messages_fts` over every message of the live index in one pass and
+    record the highest message id it covers. The caller holds the ingest lock."""
+    t0 = time.monotonic()
+    conn = open_db(dest_root)
+    with conn:
+        conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value)"
+            " SELECT 'fts_max_id', coalesce(max(id), 0) FROM messages"
+        )
+        conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('fts_dirty', '0')")
+    conn.close()
+    print(f"timing: fts={time.monotonic() - t0:.1f}s", file=sys.stderr)
+
+
+def _fts_max_id(conn) -> int | None:
+    """The highest message id `messages_fts` covers, or None when the index has not
+    been built or is marked dirty (then only `fts` can make it current)."""
+    meta = dict(
+        conn.execute("SELECT key, value FROM meta WHERE key IN ('fts_max_id', 'fts_dirty')")
+    )
+    if meta.get("fts_dirty") != "0" or "fts_max_id" not in meta:
+        return None
+    return int(meta["fts_max_id"])
+
+
+def _mark_fts_dirty(conn, err: Exception) -> None:
+    """A failed FTS update leaves the run successful; searches refuse until `fts` runs."""
+    print(f"warning: full-text index update failed ({err!r}); run `fts`", file=sys.stderr)
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('fts_dirty', '1')")
+
+
+def _fts_forget(conn, relpaths: list[str]) -> None:
+    """Remove these files' indexed text before their rows are deleted: an
+    external-content index needs the old text to remove it. Runs in the caller's
+    transaction."""
+    max_id = _fts_max_id(conn)
+    if max_id is None or not relpaths:
+        return
+    try:
+        conn.executemany(
+            "INSERT INTO messages_fts(messages_fts, rowid, text)"
+            " SELECT 'delete', m.id, m.text FROM messages m"
+            " JOIN sessions s ON s.id = m.session_id JOIN files f ON f.id = s.file_id"
+            " WHERE f.relpath = ? AND m.id <= ?",
+            [(r, max_id) for r in relpaths],
+        )
+    except sqlite3.Error as e:
+        _mark_fts_dirty(conn, e)
+
+
+def _fts_add_new(conn) -> None:
+    """Index the messages this run inserted (every id above fts_max_id) in one batch."""
+    max_id = _fts_max_id(conn)
+    if max_id is None:
+        return
+    t0 = time.monotonic()
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO messages_fts(rowid, text) SELECT id, text FROM messages"
+                " WHERE id > ?",
+                (max_id,),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value)"
+                " SELECT 'fts_max_id', max(?, coalesce(max(id), 0)) FROM messages",
+                (max_id,),
+            )
+    except sqlite3.Error as e:
+        with conn:
+            _mark_fts_dirty(conn, e)
+    print(f"timing: fts_batch={time.monotonic() - t0:.1f}s", file=sys.stderr)
 
 
 def _post_ingest(dest_root: Path, db_path: Path, result: IngestResult) -> None:
@@ -1486,8 +1573,7 @@ def _post_ingest(dest_root: Path, db_path: Path, result: IngestResult) -> None:
     run that parsed files."""
     if not result.parsed:
         return
-    # The FTS external-content index grows via triggers; a periodic merge
-    # keeps searches fast on a large corpus.
+    # Each incremental FTS batch adds a segment; a merge keeps searches fast.
     t0 = time.monotonic()
     conn = _connect(db_path)
     conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
@@ -1517,6 +1603,7 @@ def _ingest_files(conn: sqlite3.Connection, dest_root: Path) -> IngestResult:
     current = {path.relative_to(dest_root).as_posix() for _, path in raw_files}
     stale = [relpath for relpath in known if relpath not in current]
     with conn:
+        _fts_forget(conn, stale)
         conn.executemany("DELETE FROM files WHERE relpath = ?", [(r,) for r in stale])
     start = last_progress = time.monotonic()
     parse_s = insert_s = 0.0
@@ -1753,6 +1840,30 @@ def cmd_annotate(args) -> int:
         return 75
 
 
+def cmd_fts(args) -> int:
+    """Rebuild the full-text index of the live generation; 75 when the lock is held."""
+    dest_root = resolve_dest(args.dest)
+    try:
+        with ingest_lock(dest_root):
+            db_path = dest_root / "transcripts.db"
+            version = 0
+            if db_path.exists():
+                conn = sqlite3.connect(db_path, timeout=5.0)
+                version = conn.execute("PRAGMA user_version").fetchone()[0]
+                conn.close()
+            if version < len(MIGRATIONS):
+                # Opening would create or migrate the live file in place; ingest
+                # builds a new generation instead.
+                print("the index needs a full build first; run: transcripts.py ingest",
+                      file=sys.stderr)
+                return 1
+            build_fts(dest_root)
+            return 0
+    except LockBusy as e:
+        print(e, file=sys.stderr)
+        return 75
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Export agent transcripts on-device and index them."
@@ -1802,6 +1913,10 @@ def main(argv: list[str] | None = None) -> int:
         help="role the duplicate detector never flags (repeatable; default tool_result)",
     )
     p_annotate.set_defaults(func=cmd_annotate)
+
+    p_fts = sub.add_parser("fts", help="rebuild the full-text index in one pass")
+    p_fts.add_argument("--dest", help="cache root")
+    p_fts.set_defaults(func=cmd_fts)
 
     args = ap.parse_args(argv)
     return args.func(args)
