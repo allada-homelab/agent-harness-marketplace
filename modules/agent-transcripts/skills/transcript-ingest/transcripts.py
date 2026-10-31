@@ -472,7 +472,8 @@ def export_sources(
 
 # 6: Claude Workflow agents are subagents, and a response's usage counts once.
 # 7: a Claude SessionStart hook's additionalContext is a `system` row.
-PARSER_VERSION = 7
+# 8: `raw` is no longer stored; sessions carry a content `fingerprint`.
+PARSER_VERSION = 8
 
 # Migrations keyed on PRAGMA user_version (SQLITE-008). MIGRATIONS[0] is the
 # schema as of 0.6.3, idempotent for a database that already has it.
@@ -543,6 +544,13 @@ MIGRATIONS: list[list[str]] = [
     [
         "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     ],
+    # v5: the original record is no longer copied into the index (the raw cache
+    # holds it); the duplicate check compares a per-session fingerprint instead.
+    [
+        "ALTER TABLE messages DROP COLUMN raw",
+        "ALTER TABLE sessions ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''",
+        "CREATE INDEX sessions_harness_native ON sessions(harness, native_id)",
+    ],
 ]
 
 
@@ -591,7 +599,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     started_at       TEXT,
     ended_at         TEXT,
     model            TEXT,
-    title            TEXT
+    title            TEXT,
+    fingerprint      TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS messages (
     id               INTEGER PRIMARY KEY,
@@ -607,7 +616,6 @@ CREATE TABLE IF NOT EXISTS messages (
     stop_reason      TEXT,
     input_tokens     INTEGER,
     output_tokens    INTEGER,
-    raw              TEXT NOT NULL,
     injected         INTEGER NOT NULL DEFAULT 0,
     norm_key         TEXT NOT NULL DEFAULT '',
     harness          TEXT NOT NULL DEFAULT '',
@@ -627,6 +635,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 -- Result linking and cascade deletes look rows up by these; without them each
 -- UPDATE scans the table and a large file inserts in minutes instead of seconds.
 CREATE INDEX IF NOT EXISTS sessions_file_id ON sessions(file_id);
+CREATE INDEX IF NOT EXISTS sessions_harness_native ON sessions(harness, native_id);
 CREATE INDEX IF NOT EXISTS messages_session_id ON messages(session_id);
 CREATE INDEX IF NOT EXISTS tool_calls_message_id ON tool_calls(message_id);
 CREATE INDEX IF NOT EXISTS tool_calls_call_id ON tool_calls(call_id);
@@ -696,6 +705,7 @@ class Session:
     ended_at: str | None = None
     model: str | None = None
     title: str | None = None
+    fingerprint: str = ""
 
 
 @dataclass
@@ -800,7 +810,10 @@ def _mark_main_path(messages: list[Message]) -> None:
 
 
 def _finalize(session: Session, messages: list[Message]) -> ParsedFile:
-    """Session span and model derive from the messages."""
+    """Session span, model and fingerprint derive from the messages."""
+    if messages:
+        evidence = f"{len(messages)}\n{messages[0].raw}\n{messages[-1].raw}"
+        session.fingerprint = hashlib.sha256(evidence.encode()).hexdigest()
     stamps = [m.ts for m in messages if m.ts]
     session.started_at = stamps[0] if stamps else None
     session.ended_at = stamps[-1] if stamps else None
@@ -1240,7 +1253,8 @@ def _record_file(conn, harness: str, relpath: str, st, status: str, error) -> in
 
 def _duplicate_session_id(conn, harness: str, native_id: str, parsed: ParsedFile) -> int | None:
     """The id of an existing (harness, native_id) session whose CONTENT matches
-    `parsed`, if any — same message count and the same first/last raw record.
+    `parsed`, if any — the same fingerprint (message count and first/last original
+    record).
 
     A bare native_id match is not enough to call two sessions duplicates: a
     subagent tool can give its own log a generic filename (e.g. a workflow's
@@ -1252,30 +1266,11 @@ def _duplicate_session_id(conn, harness: str, native_id: str, parsed: ParsedFile
     coincidental id collision between different real content will not.
     """
     row = conn.execute(
-        "SELECT id FROM sessions WHERE harness = ? AND native_id = ? LIMIT 1",
-        (harness, native_id),
+        "SELECT id FROM sessions WHERE harness = ? AND native_id = ? AND fingerprint = ?"
+        " LIMIT 1",
+        (harness, native_id, parsed.session.fingerprint),
     ).fetchone()
-    if row is None:
-        return None
-    session_id = row[0]
-    count = conn.execute(
-        "SELECT count(*) FROM messages WHERE session_id = ?", (session_id,)
-    ).fetchone()[0]
-    if count != len(parsed.messages):
-        return None
-    if count == 0:
-        return session_id  # both empty: nothing to compare, nothing to lose either way
-    first_raw = conn.execute(
-        "SELECT raw FROM messages WHERE session_id = ? ORDER BY ord ASC LIMIT 1",
-        (session_id,),
-    ).fetchone()[0]
-    last_raw = conn.execute(
-        "SELECT raw FROM messages WHERE session_id = ? ORDER BY ord DESC LIMIT 1",
-        (session_id,),
-    ).fetchone()[0]
-    if first_raw == parsed.messages[0].raw and last_raw == parsed.messages[-1].raw:
-        return session_id
-    return None
+    return row[0] if row else None
 
 
 def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool:
@@ -1300,8 +1295,8 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool
         return False
     cur = conn.execute(
         "INSERT INTO sessions (harness, native_id, file_id, cwd, project_key, kind,"
-        " parent_native_id, started_at, ended_at, model, title)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " parent_native_id, started_at, ended_at, model, title, fingerprint)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             harness,
             s.native_id,
@@ -1314,6 +1309,7 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool
             s.ended_at,
             s.model,
             s.title,
+            s.fingerprint,
         ),
     )
     session_id = cur.lastrowid
@@ -1322,9 +1318,9 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool
         mcur = conn.execute(
             "INSERT INTO messages (session_id, ord, native_id, parent_native_id,"
             " on_main_path, role, ts, text, model, stop_reason, input_tokens,"
-            " output_tokens, raw, injected, norm_key, harness, cache_read_tokens,"
+            " output_tokens, injected, norm_key, harness, cache_read_tokens,"
             " cache_write_tokens)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session_id,
                 m.ord,
@@ -1338,7 +1334,6 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool
                 m.stop_reason,
                 m.input_tokens,
                 m.output_tokens,
-                m.raw,
                 int(m.injected),
                 _norm_key(m.text),
                 harness,

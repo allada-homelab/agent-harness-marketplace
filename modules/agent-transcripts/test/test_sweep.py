@@ -42,8 +42,8 @@ class Index:
     def _message(self, session_id, role, text):
         self.ord += 1
         cur = self.conn.execute(
-            "INSERT INTO messages (session_id, ord, on_main_path, role, text, raw)"
-            " VALUES (?, ?, 1, ?, ?, '{}')",
+            "INSERT INTO messages (session_id, ord, on_main_path, role, text)"
+            " VALUES (?, ?, 1, ?, ?)",
             (session_id, self.ord, role, text),
         )
         return cur.lastrowid

@@ -41,8 +41,8 @@ class Index:
     def _message(self, session_id, role, text):
         self.ords[session_id] += 1
         cur = self.conn.execute(
-            "INSERT INTO messages (session_id, ord, on_main_path, role, text, raw)"
-            " VALUES (?, ?, 1, ?, ?, '{}')",
+            "INSERT INTO messages (session_id, ord, on_main_path, role, text)"
+            " VALUES (?, ?, 1, ?, ?)",
             (session_id, self.ords[session_id], role, text),
         )
         return cur.lastrowid, self.ords[session_id]
@@ -648,8 +648,8 @@ def test_the_rubric_example_is_a_verdict_record_accepts(index, store, tmp_path, 
     for finding in rv.EXAMPLE_VERDICT["findings"]:  # the example names its own ords
         if finding["present"] == 1:
             index.conn.execute(
-                "INSERT INTO messages (session_id, ord, on_main_path, role, text, raw)"
-                " VALUES (?, ?, 1, 'user', ?, '{}')",
+                "INSERT INTO messages (session_id, ord, on_main_path, role, text)"
+                " VALUES (?, ?, 1, 'user', ?)",
                 (s, finding["evidence_ord"], finding["quote"]),
             )
     index.close()
@@ -1057,8 +1057,8 @@ def test_the_example_analysis_is_one_record_analysis_accepts(index, store, tmp_p
     for kind in ("turning_points", "went_badly"):
         for item in rv.EXAMPLE_ANALYSIS[kind]:  # the example names its own ords
             index.conn.execute(
-                "INSERT INTO messages (session_id, ord, on_main_path, role, text, raw)"
-                " VALUES (?, ?, 1, 'user', ?, '{}')", (s, item["ord"], item["quote"]),
+                "INSERT INTO messages (session_id, ord, on_main_path, role, text)"
+                " VALUES (?, ?, 1, 'user', ?)", (s, item["ord"], item["quote"]),
             )
     index.close()
     run_id = fi.start_run(store[0], "transcript-analyze", "m", "{}")
