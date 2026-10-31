@@ -1671,6 +1671,30 @@ def test_annotate_exits_75_while_another_run_holds_the_lock(cache, hold_lock):
     assert tr.main(["annotate", "--dest", str(cache)]) == 75
 
 
+def test_annotate_exits_0_however_many_messages_it_flags(cache):
+    tr.ingest(cache, rebuild=False)
+
+    assert tr.main(["annotate", "--dest", str(cache), "--min-sessions", "1"]) == 0
+
+
+def test_a_full_build_is_annotated_before_it_goes_live(cache, monkeypatch):
+    tr.ingest(cache, rebuild=False)
+    live = cache / "transcripts.db"
+    seen = []
+    real = tr.annotate
+
+    def spy(dest_root, *args, db_path=None, **kw):
+        seen.append((db_path.name, Path(os.readlink(live)).name))
+        return real(dest_root, *args, db_path=db_path, **kw)
+
+    monkeypatch.setattr(tr, "annotate", spy)
+    tr.ingest(cache, rebuild=True)
+
+    annotated, live_at_the_time = seen[0]
+    assert annotated != live_at_the_time
+    assert Path(os.readlink(live)).name == annotated
+
+
 def test_a_reader_opened_before_a_rebuild_keeps_reading_the_old_generation(cache):
     tr.ingest(cache, rebuild=False)
     old = _reader(cache)

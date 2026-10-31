@@ -1433,6 +1433,10 @@ def full_build(dest_root: Path) -> IngestResult:
         name = f"transcripts-{stamp}-{n}.db"
     conn = _connect(gens / name)
     result = _ingest_files(conn, dest_root)
+    conn.close()
+    # Finish the generation before it goes live, so no reader sees it un-annotated.
+    _post_ingest(dest_root, gens / name, result)
+    conn = _connect(gens / name)
     with conn:
         conn.executemany(
             "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
@@ -1467,26 +1471,32 @@ def ingest(dest_root: Path, rebuild: bool) -> IngestResult:
     Raises LockBusy when another run holds the lock."""
     with ingest_lock(dest_root):
         if rebuild or needs_full_build(dest_root):
-            result = full_build(dest_root)
-        else:
-            conn = open_db(dest_root)
-            result = _ingest_files(conn, dest_root)
-            conn.close()
-        if result.parsed:
-            # The FTS external-content index grows via triggers; a periodic merge
-            # keeps searches fast on a large corpus.
-            t0 = time.monotonic()
-            conn = open_db(dest_root)
-            conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
-            conn.commit()
-            conn.close()
-            t1 = time.monotonic()
-            annotate(dest_root)
-            print(
-                f"timing: fts_optimize={t1 - t0:.1f}s annotate={time.monotonic() - t1:.1f}s",
-                file=sys.stderr,
-            )
+            return full_build(dest_root)
+        conn = open_db(dest_root)
+        result = _ingest_files(conn, dest_root)
+        conn.close()
+        _post_ingest(dest_root, dest_root / "transcripts.db", result)
     return result
+
+
+def _post_ingest(dest_root: Path, db_path: Path, result: IngestResult) -> None:
+    """FTS merge and `injected` annotation for the database at `db_path`, after any
+    run that parsed files."""
+    if not result.parsed:
+        return
+    # The FTS external-content index grows via triggers; a periodic merge
+    # keeps searches fast on a large corpus.
+    t0 = time.monotonic()
+    conn = _connect(db_path)
+    conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
+    conn.commit()
+    conn.close()
+    t1 = time.monotonic()
+    annotate(dest_root, db_path=db_path)
+    print(
+        f"timing: fts_optimize={t1 - t0:.1f}s annotate={time.monotonic() - t1:.1f}s",
+        file=sys.stderr,
+    )
 
 
 def _ingest_files(conn: sqlite3.Connection, dest_root: Path) -> IngestResult:
@@ -1582,6 +1592,8 @@ def annotate(
     dest_root: Path,
     min_sessions: int = 3,
     exclude_roles: tuple[str, ...] = ("tool_result",),
+    *,
+    db_path: Path | None = None,
 ) -> int:
     """Flag standing-instruction boilerplate as `injected` so a query can exclude it.
 
@@ -1594,9 +1606,10 @@ def annotate(
     not mistaken for boilerplate and hidden from issue hunts.
 
     Idempotent: it resets the column and recomputes from the index, so it can be
-    re-run after any ingest. Returns the number of messages flagged.
+    re-run after any ingest. Returns the number of messages flagged. `db_path`
+    defaults to the live index; a full build passes its new generation.
     """
-    conn = open_db(dest_root)
+    conn = _connect(db_path or dest_root / "transcripts.db")
     total = conn.execute("SELECT count(*) FROM messages").fetchone()[0]
     if total:
         populated = conn.execute(
@@ -1731,7 +1744,8 @@ def cmd_annotate(args) -> int:
     dest_root = resolve_dest(args.dest)
     try:
         with ingest_lock(dest_root):
-            return annotate(dest_root, args.min_sessions, roles)
+            annotate(dest_root, args.min_sessions, roles)
+            return 0  # never the flagged count: 75 means "lock busy"
     except LockBusy as e:
         print(e, file=sys.stderr)
         return 75
