@@ -23,8 +23,22 @@ has the portable `SKILL.md` contract. Do not reconstruct either from memory.
   tag, so an unbumped change is invisible to them.
 - **A content module's `cordis.patch.yml` must be empty.** Older modules carried
   loader rows; copying one now fails the gate.
-- **`extensions/` and `lib/` are forbidden** by `tests/conformance/`. Reintroducing
-  executable code is a repo-shape decision — stop and ask.
+- **`extensions/` and `lib/` are forbidden** by `tests/conformance/`. Those are
+  harness *plugin* code loaded inside the pi or dsh process; reintroducing them is
+  a repo-shape decision — stop and ask. Scripts a skill runs, and a module `bin/`,
+  are not that and are fine.
+- **A module may ship commands in `bin/`, and every harness puts them on PATH.**
+  Claude Code, pi and dsh all add each enabled module's `bin/` to the bash tool's
+  PATH (pi and dsh through the maintainer's dotfiles harness layer), appended
+  after the user's own entries, so a module command can never shadow `git` or
+  another system command. Use it when a skill drives a CLI: the skill then says
+  `pr-flow open` instead of a skill-relative `python3 …/pr-flow.py`. Keep each
+  entry a thin, executable shim that runs with what every host has (`sh`,
+  `python3`, `uv run --script`) — not a compiled per-platform binary — and give
+  it a name unlikely to collide with another module's, since a clash resolves by
+  load order. `modules/pr-flow/bin/pr-flow` is the reference example. One cost:
+  claude.ai and Cowork refuse to install a plugin with a top-level `bin/`, so a
+  module that must install there keeps its scripts out of `bin/`.
 - **Skills are portable by default.** No `allowed-tools`, `model`, `CLAUDE_*`
   placeholders, absolute or `~/` paths, or bang-backtick shell injection unless
   the skill is scoped `harness: [claude]` — and that unlocks them only when the

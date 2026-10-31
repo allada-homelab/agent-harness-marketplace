@@ -493,7 +493,7 @@ modules:
     summary: Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent)
       will execute without the planner present.
 - name: pr-flow
-  version: 0.2.14
+  version: 0.2.15
   kinds:
   - skills
   - dsh-plugin
