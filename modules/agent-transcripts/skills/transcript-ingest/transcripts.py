@@ -735,6 +735,9 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+_DSH_LOG_NAME = re.compile(r"session(?:\.v(\d+))?\.jsonl\.zstd")
+
+
 def iter_raw_files(dest_root: Path) -> list[tuple[str, Path]]:
     """Every raw transcript file under the cache root, as (harness, path), sorted."""
     raw = dest_root / "raw"
@@ -742,17 +745,21 @@ def iter_raw_files(dest_root: Path) -> list[tuple[str, Path]]:
     for harness, pattern in (
         ("claude", "*/**/*.jsonl"),
         ("pi", "*/**/*.jsonl"),
-        ("dsh", "*/sessions/*/*/session*.jsonl.zstd"),
     ):
         found += [(harness, p) for p in (raw / harness).glob(pattern) if p.is_file()]
-    # dsh's v3 upgrade rewrites a session's whole history into session.v3.jsonl.zstd
-    # and leaves the legacy file beside it; indexing both would count it twice.
-    found = [
-        (h, p)
-        for h, p in found
-        if not (h == "dsh" and p.name == "session.jsonl.zstd"
-                and p.with_name("session.v3.jsonl.zstd").is_file())
-    ]
+    # Each dsh format upgrade rewrites a session's whole history into a new
+    # session.vN.jsonl.zstd beside the older logs; only the newest is indexed.
+    newest: dict[Path, tuple[int, Path]] = {}
+    for p in (raw / "dsh").glob("*/sessions/*/*/session*.jsonl.zstd"):
+        if not p.is_file():
+            continue
+        m = _DSH_LOG_NAME.fullmatch(p.name)
+        if m is None:
+            raise ValueError(f"unknown dsh session log name: {p}")
+        version = int(m.group(1) or 0)  # the legacy session.jsonl.zstd is version 0
+        if p.parent not in newest or version > newest[p.parent][0]:
+            newest[p.parent] = (version, p)
+    found += [("dsh", p) for _, p in newest.values()]
     return sorted(found, key=lambda row: (row[0], str(row[1])))
 
 
@@ -1509,8 +1516,8 @@ def _ingest_files(conn: sqlite3.Connection, dest_root: Path) -> IngestResult:
     }
     parsed_count = unchanged = errors = duplicates = 0
     raw_files = iter_raw_files(dest_root)
-    # A row whose file left the indexed set (deleted, or a dsh legacy log now
-    # superseded by its v3 sibling) is stale; the cascade drops its sessions, so an
+    # A row whose file left the indexed set (deleted, or a dsh log superseded by
+    # a newer session.vN sibling) is stale; the cascade drops its sessions, so an
     # incremental run ends where --rebuild would.
     current = {path.relative_to(dest_root).as_posix() for _, path in raw_files}
     stale = [relpath for relpath in known if relpath not in current]

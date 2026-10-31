@@ -309,6 +309,71 @@ def test_a_legacy_session_already_indexed_is_dropped_once_v3_appears(tmp_path, c
     conn.close()
 
 
+def _add_v4(legacy_or_v3: Path) -> Path:
+    """A session.v4.jsonl.zstd beside the given log: the same history plus a turn."""
+    v4 = legacy_or_v3.with_name("session.v4.jsonl.zstd")
+    header = {**DSH_HEADER, "id": legacy_or_v3.parent.name, "version": 4}
+    v4.write_bytes(_frame([header]) + _frame(DSH_BODY) + _frame(DSH_TAIL))
+    return v4
+
+
+def _indexed_relpaths(cache, native_id: str) -> list[tuple[str]]:
+    conn = tr.open_db(cache)
+    rows = _rows(
+        conn,
+        "SELECT f.relpath FROM sessions s JOIN files f ON f.id = s.file_id"
+        " WHERE s.native_id = ?",
+        native_id,
+    )
+    conn.close()
+    return rows
+
+
+def test_only_v4_is_indexed_when_v3_sits_beside_it(tmp_path):
+    cache = build_cache(tmp_path)
+    legacy, v3 = _legacy_and_v3_pair(cache)
+    legacy.unlink()
+    v4 = _add_v4(v3)
+    tr.ingest(cache, rebuild=False)
+    assert _indexed_relpaths(cache, "session-both") == [(v4.relative_to(cache).as_posix(),)]
+
+
+def test_only_v4_is_indexed_when_legacy_v3_and_v4_all_exist(tmp_path):
+    cache = build_cache(tmp_path)
+    _, v3 = _legacy_and_v3_pair(cache)
+    v4 = _add_v4(v3)
+    tr.ingest(cache, rebuild=False)
+    assert _indexed_relpaths(cache, "session-both") == [(v4.relative_to(cache).as_posix(),)]
+
+
+def test_an_index_holding_v3_and_v4_rows_drops_v3_on_the_next_incremental_run(
+    tmp_path, capsys, monkeypatch
+):
+    """An index written by the previous version holds both logs of a session."""
+    cache = build_cache(tmp_path)
+    legacy, v3 = _legacy_and_v3_pair(cache)
+    legacy.unlink()
+    v4 = _add_v4(v3)
+    real_iter = tr.iter_raw_files
+    monkeypatch.setattr(
+        tr, "iter_raw_files", lambda root: sorted([*real_iter(root), ("dsh", v3)])
+    )
+    tr.ingest(cache, rebuild=False)
+    monkeypatch.setattr(tr, "iter_raw_files", real_iter)
+    capsys.readouterr()
+
+    tr.ingest(cache, rebuild=False)
+    assert "removed=1" in capsys.readouterr().out
+    assert _indexed_relpaths(cache, "session-both") == [(v4.relative_to(cache).as_posix(),)]
+
+
+def test_an_unknown_dsh_log_name_fails_the_run(cache):
+    unknown = cache / "raw/dsh/host/sessions/--tmp-proj--/session-0000/session.foo.jsonl.zstd"
+    unknown.write_bytes(_frame([DSH_HEADER]))
+    with pytest.raises(ValueError, match="session.foo.jsonl.zstd"):
+        tr.main(["ingest", "--dest", str(cache)])
+
+
 def test_ingest_populates_norm_key_and_harness(cache):
     tr.ingest(cache, rebuild=False)
     conn = tr.open_db(cache)
