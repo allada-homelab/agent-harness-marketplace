@@ -2065,3 +2065,159 @@ def test_cmd_ingest_exits_0_and_reports_the_count_when_a_file_fails_to_parse(cac
     assert "errors: 1 files failed to parse (see files.status='error')" in capsys.readouterr().err
     (row,) = _rows(tr.open_db(cache), "SELECT relpath FROM files WHERE status = 'error'")
     assert row[0].endswith("v1.jsonl")
+
+
+# ------------------------------------------- native authorship, kept records, coverage
+
+
+def _claude_rec(uuid, parent, rtype="user", content="hi", **extra) -> dict:
+    return {
+        "type": rtype,
+        "uuid": uuid,
+        "parentUuid": parent,
+        "timestamp": "2026-01-01T00:00:01.000Z",
+        "cwd": "/tmp/proj",
+        "message": {"role": rtype, "content": content},
+        **extra,
+    }
+
+
+def _queued(uuid, parent, prompt, kind=None) -> dict:
+    origin = {"origin": {"kind": kind}} if kind else {}
+    return _hook_attachment(uuid, parent, {"type": "queued_command", "prompt": prompt, **origin})
+
+
+def test_claude_turns_the_harness_wrote_are_injected_system_rows(tmp_path):
+    parsed = _parse_lines(tmp_path, [
+        _claude_rec("h", None, content="fix the build", origin={"kind": "human"}),
+        _claude_rec("m", "h", content="Stop hook feedback: add a status line", isMeta=True),
+        _claude_rec("c", "m", content="This session is being continued", isCompactSummary=True),
+        _claude_rec("t", "c", content="task done", origin={"kind": "task-notification"}),
+        _claude_rec("o", "t", content="<task-notification>old</task-notification>"),
+        _claude_rec("u", "o", content="no, stop"),
+    ])
+    assert [(m.native_id, m.role, m.injected) for m in parsed.messages] == [
+        ("h", "user", False), ("m", "system", True), ("c", "system", True),
+        ("t", "system", True), ("o", "system", True), ("u", "user", False),
+    ]
+
+
+def test_injected_claude_turns_stay_injected_after_annotate(tmp_path):
+    """annotate recomputes `injected` from scratch; a system row survives that."""
+    root = tmp_path / "cache"
+    _write_lines(root / "raw/claude/host/projects/-tmp-proj/s.jsonl", [
+        _claude_rec("h", None, content="fix it"),
+        _claude_rec("m", "h", content="a reminder", isMeta=True),
+    ])
+    errors, conn = _ingested(root)
+    assert errors == 0
+    assert _rows(conn, "SELECT native_id, role, injected FROM messages ORDER BY ord") == [
+        ("h", "user", 0), ("m", "system", 1),
+    ]
+
+
+def test_a_claude_mid_turn_prompt_is_one_row_in_its_place(tmp_path):
+    parsed = _parse_lines(tmp_path, [
+        _claude_rec("u1", None, content="start"),
+        _claude_rec("a1", "u1", rtype="assistant", content=[{"type": "text", "text": "working"}]),
+        _queued("q1", "a1", "actually use sqlite", "human"),
+        _queued("q2", "q1", "<task-notification>x</task-notification>"),
+        _queued("q3", "q2", "repeat me"),
+        _claude_rec("u2", "q3", content="repeat me\n<system-reminder>r</system-reminder>"),
+        _queued("q4", "u2", "quoted later"),
+        _claude_rec("c", "q4", content="Summary. All user messages: - quoted later - more",
+                    isCompactSummary=True),
+    ])
+    assert [(m.native_id, m.role) for m in parsed.messages] == [
+        ("u1", "user"), ("a1", "assistant"), ("q1", "user"), ("q2", "system"),
+        ("u2", "user"), ("q4", "user"), ("c", "system"),
+    ]
+    assert parsed.messages[2].text == "actually use sqlite"
+    assert [m.ord for m in parsed.messages] == list(range(7))
+
+
+def test_claude_main_path_runs_through_records_that_are_not_indexed(tmp_path):
+    parsed = _parse_lines(tmp_path, [
+        _claude_rec("u1", None, content="go"),
+        _hook_attachment("h1", "u1", {"type": "hook_success", "hookEvent": "PostToolUse"}),
+        {"type": "system", "subtype": "turn_duration", "uuid": "s1", "parentUuid": "h1"},
+        _claude_rec("a1", "s1", rtype="assistant", content=[{"type": "text", "text": "done"}]),
+    ])
+    assert [(m.native_id, m.parent_native_id, m.on_main_path) for m in parsed.messages] == [
+        ("u1", None, True), ("a1", "u1", True),
+    ]
+
+
+def test_claude_custom_title_wins_and_an_api_error_is_its_stop_reason(tmp_path):
+    parsed = _parse_lines(tmp_path, [
+        {"type": "custom-title", "customTitle": "mine"},
+        _claude_rec("u1", None, content="go"),
+        _claude_rec("a1", "u1", rtype="assistant", content=[{"type": "text", "text": "API Error"}],
+                    isApiErrorMessage=True, error="rate_limit"),
+        {"type": "ai-title", "title": "generated"},
+    ])
+    assert parsed.session.title == "mine"
+    assert parsed.messages[-1].stop_reason == "api_error:rate_limit"
+
+
+def _parse_dsh_rows(tmp_path, rows):
+    path = tmp_path / "s" / "session.jsonl.zstd"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(_frame([DSH_HEADER]) + _frame(rows))
+    return tr.parse_dsh(path, "raw/dsh/host/sessions/--tmp-proj--/s/session.jsonl.zstd")
+
+
+def _dsh_user(seq: int, kind: str, text: str) -> dict:
+    return {"type": "user/message", "seq": seq, "time": 1700000000000 + seq, "data": {
+        "id": f"u{seq}", "role": "user", "source": {"kind": kind},
+        "content": [{"type": "text", "text": text}],
+    }}
+
+
+def test_dsh_injected_turns_compaction_summaries_and_interrupts_are_kept(tmp_path):
+    parsed = _parse_dsh_rows(tmp_path, [
+        _dsh_user(1, "user", "fix it"),
+        _dsh_user(2, "goal", "keep going"),
+        {"type": "assistant/message", "seq": 3, "time": 1700000000003, "data": {
+            "interrupted": True,
+            "message": {"id": "a3", "role": "assistant", "content": [{"type": "text", "text": "half"}]},
+        }},
+        {"type": "compaction/summary", "seq": 4, "time": 1700000000004, "data": {
+            "compactionId": "c4", "summary": [{"type": "text", "text": "## Summary"}],
+        }},
+    ])
+    assert [(m.native_id, m.role, m.injected, m.stop_reason, m.text) for m in parsed.messages] == [
+        ("u1", "user", False, None, "fix it"),
+        ("u2", "system", True, None, "keep going"),
+        ("a3", "assistant", False, "interrupted", "half"),
+        ("c4", "system", True, None, "## Summary"),
+    ]
+
+
+def test_a_dsh_tool_call_block_without_its_call_row_is_kept(tmp_path):
+    parsed = _parse_dsh_rows(tmp_path, [
+        {"type": "assistant/message", "seq": 1, "time": 1700000000001, "data": {"message": {
+            "id": "a1", "role": "assistant",
+            "content": [{"type": "tool-call", "id": "c1", "name": "bash", "arguments": {"command": "ls"}}],
+        }}},
+    ])
+    assert [(c.call_id, c.name) for c in parsed.messages[0].tool_calls] == [("c1", "bash")]
+
+
+def test_ingest_names_a_record_shape_coverage_does_not_know(tmp_path, capsys):
+    root = tmp_path / "cache"
+    _write_lines(root / "raw/claude/host/projects/-tmp-proj/s.jsonl", [
+        _claude_rec("u1", None, content="go"), {"type": "brand-new-record"},
+    ])
+    errors, _ = _ingested(root)
+    assert errors == 0
+    assert "coverage: claude rec:brand-new-record unknown x1" in capsys.readouterr().err
+
+
+def test_coverage_exits_0_on_known_shapes_and_1_on_an_unknown_one(cache, capsys):
+    assert tr.main(["coverage", "--dest", str(cache)]) == 0
+    _write_lines(cache / "raw/claude/host/projects/-tmp-proj/new.jsonl", [
+        _claude_rec("u1", None, content="go"), {"type": "surprise"},
+    ])
+    assert tr.main(["coverage", "--dest", str(cache)]) == 1
+    assert "claude\trec:surprise\t1\tUNKNOWN" in capsys.readouterr().out

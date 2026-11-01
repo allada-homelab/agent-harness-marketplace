@@ -4,9 +4,11 @@ okf_version: "0.2"
 
 # Gotcha
 
+* [annotate() resets parser-set injected flags on non-system rows](./annotate-wipes-parser-injected.md) - annotate() in transcripts.py clears injected on every non-system row outside its target set; keep harness-injected turns as role=system or the flag is wiped.
 * [Artifacts live beside dsh sessions, not inside them](./artifacts-live-beside-dsh-sessions.md) - Artifacts go in $DSH_HOME/artifacts/<key>/, a sibling of sessions/ (never inside sessions/<key>/), keyed like dsh's projectKey; dsh's chatfile viewer must allowlist that root.
 * [bin/check.sh fails on macOS without timeout binary](./check-sh-fails-on-macos-without-timeout.md) - bin/check.sh test suite fails on macOS hosts lacking timeout/gtimeout, though the fallback path passes; check assumes timeout exists to assert the fallback is reachable.
 * [Chrome's IsolateSandboxedIframes silences deferred errors in headless probes](./chrome-isolates-sandboxed-iframes-from-virtual-time.md) - Chrome's sandboxed iframe isolation (`IsolateSandboxedIframes`) blocks `--virtual-time-budget`, silencing deferred errors; fix with `--disable-features=IsolateSandboxedIframes`.
+* [Compaction summaries quote earlier prompts; substring dedupe drops real ones](./compaction-summary-substring-dedupe.md) - parse_claude drops queued prompts that a user record repeats; a compaction summary quotes every earlier prompt, so match exact or start/end, never substring, or real prompts vanish.
 * [Concurrent transcript ingest --rebuild orphans the database](./concurrent-ingest-rebuild-orphans-db.md) - transcripts.py ingest exits 75 'another ingest is running' since 0.9.0: an ingest.lock flock refuses a second run. Before 0.9.0 a concurrent --rebuild unlinked the live db and lost work.
 * [Controlled headless claude -p runs for skill measurement](./claude-p-controlled-skill-runs.md) - Measure a skill instruction with claude -p --tools '' --strict-mcp-config and no --bare: without strict MCP, an auth-reminder leaks into output; --bare fails under OAuth login.
 * [dsh session.v4 tool results carry the result at message level](./dsh-v4-tool-result-shape.md) - dsh session.v4 tool/result rows hold the result on the message itself, so a v3-only parser stores empty text and no call link; read the message-level form too.

@@ -31,6 +31,9 @@ uv run --script ./transcripts.py fts
 
 # What is in the cache and the index.
 uv run --script ./transcripts.py stats
+
+# Every record and block shape in the cache, its count, and whether it is parsed.
+uv run --script ./transcripts.py coverage
 ```
 
 Options: `--dest DIR` overrides the cache root (default `$AGENT_TRANSCRIPT_DIR`, else an
@@ -68,6 +71,12 @@ skills.
   keeps the record glued after it and the rest of the file, and prints a
   `torn: <file> line N` warning, so one lost record never drops the whole session. A torn
   final line is dropped the same way.
+- **Coverage.** `COVERAGE` in `transcripts.py` lists every record and content-block shape
+  each harness writes, as parsed or skipped with a reason. A shape it does not list is new,
+  usually after a harness upgrade: ingest still succeeds but prints a
+  `coverage: <harness> <shape> unknown xN (e.g. <file>)` line, and `coverage` exits **1**.
+  Decide whether the new shape carries data worth indexing, then add it to the parser or
+  to the table.
 
 ## Schema summary
 
@@ -97,11 +106,24 @@ skills.
   response's usage, so ingest stores that usage once — each field's maximum across the
   response's rows, on its last row — and leaves the other rows' counts `NULL`. A `sum()`
   over `messages` therefore counts each API call once.
-  A Claude `system` row is a SessionStart hook's injected context: only the
+  `user` is the human. A turn the harness wrote in the user's place is a `system` row with
+  `injected = 1`, decided by the harness's own author fields, not by its text: Claude's
+  `isMeta`, `isCompactSummary` and `origin.kind` (anything but `human`), plus any turn that
+  is a `<task-notification>`; dsh's `source.kind` (anything but `user`: goal, plugin,
+  agent-instructions, subagent-settled, …). Older records without those fields stay
+  `user`, so review still strips known boilerplate from user text (`signals.py`).
+  A Claude prompt typed while the agent was working (`queued_command`) is a `user` row in
+  its place, unless the file also holds it as an ordinary user record. A dsh
+  `compaction/summary` is a `system` row. A Claude API error's `stop_reason` is
+  `api_error:<kind>`; an interrupted dsh response's is `interrupted`. A Claude custom title
+  (`/rename`) wins over the generated one. A Claude message's `parent_native_id` skips the
+  records that are not indexed (hook attachments, system lines), so `on_main_path` follows
+  the whole conversation.
+  The other Claude `system` rows are a SessionStart hook's injected context: only the
   `additionalContext` string (from a `hook_success` record's JSON stdout, or a
-  `hook_additional_context` record), one row per distinct text per session, `injected = 1`
-  from ingest on. The allowlist is strict — every other attachment (including PostToolUse
-  hooks, which repeat the tool output) and any non-JSON hook stdout is skipped.
+  `hook_additional_context` record), one row per distinct text per session. The allowlist
+  is strict — every other attachment (including PostToolUse hooks, which repeat the tool
+  output) and any non-JSON hook stdout is skipped.
   `injected` is `1` for a message
   that is standing-instruction boilerplate — a `system` message, or any non-`tool_result`
   message whose normalized text appears in several distinct sessions (a standing instruction

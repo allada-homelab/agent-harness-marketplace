@@ -17,6 +17,7 @@ the volume mounted `:ro`. The output root must never be inside a git worktree.
     uv run --script transcripts.py annotate [--dest DIR] [--min-sessions N] [--exclude-role R]
     uv run --script transcripts.py fts    [--dest DIR]   # rebuild the full-text index
     uv run --script transcripts.py stats  [--dest DIR]
+    uv run --script transcripts.py coverage [--dest DIR]   # 1 = a record shape COVERAGE does not know
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ import subprocess
 import sys
 import tarfile
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -479,7 +481,10 @@ def export_sources(
 # 9: the fingerprint hashes parsed fields, so a workflow agent's two logs are one session.
 #    dsh session.v4 tool results (message-level toolCallId) get their text and links.
 # 10: a record torn mid-file costs only that record, not the whole file.
-PARSER_VERSION = 10
+# 11: text the harness injected as a user turn is a `system` row (native author fields);
+#     Claude mid-turn prompts, custom titles and API errors, dsh compaction summaries and
+#     interrupts are kept; Claude parents resolve through records that are not indexed.
+PARSER_VERSION = 11
 
 # Migrations keyed on PRAGMA user_version (SQLITE-008). MIGRATIONS[0] is the
 # schema as of 0.6.3, idempotent for a database that already has it.
@@ -729,6 +734,7 @@ class Session:
 class ParsedFile:
     session: Session
     messages: list[Message]
+    shapes: Counter  # record/block shape -> count, for COVERAGE
 
 
 def open_db(dest_root: Path) -> sqlite3.Connection:
@@ -826,8 +832,10 @@ def _mark_main_path(messages: list[Message]) -> None:
         cur = by_id.get(cur.parent_native_id) if cur.parent_native_id else None
 
 
-def _finalize(session: Session, messages: list[Message]) -> ParsedFile:
+def _finalize(session: Session, messages: list[Message], shapes: Counter) -> ParsedFile:
     """Session span, model and fingerprint derive from the messages."""
+    for m in messages:
+        m.injected = m.injected or m.role == "system"  # annotate keeps exactly these
     if messages:
         # Parsed fields, not the raw lines: Claude logs a workflow agent twice, and
         # the copies differ only in per-line metadata (version, entrypoint, usage).
@@ -839,7 +847,7 @@ def _finalize(session: Session, messages: list[Message]) -> ParsedFile:
     session.ended_at = stamps[-1] if stamps else None
     models = [m.model for m in messages if m.role == "assistant" and m.model]
     session.model = models[-1] if models else None
-    return ParsedFile(session=session, messages=messages)
+    return ParsedFile(session=session, messages=messages, shapes=shapes)
 
 
 def _json_lines(path: Path) -> list[str]:
@@ -905,6 +913,40 @@ def _session_start_contexts(att) -> list[str]:
     return [s for s in found if isinstance(s, str) and s.strip()]
 
 
+def _claude_injected(kind, text: str) -> bool:
+    """A user turn the harness wrote, by its native author: `origin.kind` is set on
+    records since late 2026, and a task notification is injected whatever the version."""
+    return kind not in (None, "human") or text.lstrip().startswith("<task-notification>")
+
+
+def _block_shapes(shapes: Counter, blocks) -> None:
+    """Count each content block's type, and a tool result's inner block types, for COVERAGE."""
+    for b in blocks if isinstance(blocks, list) else []:
+        if not isinstance(b, dict):
+            continue
+        btype = b.get("type")
+        shapes[f"block:{btype}"] += 1
+        if btype in ("tool_result", "tool-result"):
+            inner = b.get("content")
+            for ib in inner if isinstance(inner, list) else [inner]:
+                kind = ib.get("type") if isinstance(ib, dict) else "str" if isinstance(ib, str) else None
+                if kind:
+                    shapes[f"block:{btype}>{kind}"] += 1
+
+
+def _resolve_parents(messages: list[Message], parent_of: dict[str, str | None]) -> None:
+    """Point each message's parent at its nearest indexed ancestor: the record in between
+    (a hook attachment, a model change) is not a message, and the tree walk would stop there."""
+    emitted = {m.native_id for m in messages if m.native_id}
+    for m in messages:
+        parent, seen = m.parent_native_id, set()
+        while parent and parent not in emitted and parent not in seen:
+            seen.add(parent)  # a corrupt file's cycle must not hang the parse
+            parent = parent_of.get(parent)
+        if parent in emitted:
+            m.parent_native_id = parent
+
+
 def parse_claude(path: Path, relpath: str) -> ParsedFile:
     """One JSONL per session; `<session>/subagents/**/<name>.jsonl` are its subagents
     (Workflow agents sit at `subagents/workflows/<run>/agent-<id>.jsonl`)."""
@@ -921,16 +963,43 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
         session.parent_native_id = parts[idx - 1]
 
     messages: list[Message] = []
+    shapes: Counter = Counter()
     rows_by_response: dict[str, list[Message]] = {}
     contexts_seen: set[str] = set()  # hook_success and hook_additional_context repeat it
+    # Every record's parent, indexed or not: a message's parent is often a hook attachment
+    # or a system line, and the tree must be walked through those to reach the next message.
+    parent_of: dict[str, str | None] = {}
+    queued: list[Message] = []  # mid-turn prompts; dropped below when a user record repeats one
+    turn_texts: list[str] = []
+    custom_title = None
     for line in _json_lines(path):
         rec = json.loads(line)
         rtype = rec.get("type")
+        att = rec.get("attachment") if rtype == "attachment" else None
+        sub = (att or {}).get("type") if rtype == "attachment" else rec.get("subtype") if rtype == "system" else None
+        shapes[f"rec:{rtype}/{sub}" if sub else f"rec:{rtype}"] += 1
+        if rec.get("uuid"):
+            parent_of[rec["uuid"]] = rec.get("parentUuid")
         if rtype == "ai-title":
             session.title = rec.get("title")
             continue
+        if rtype == "custom-title":
+            custom_title = rec.get("customTitle") or custom_title
+            continue
+        if rtype == "attachment" and isinstance(att, dict) and att.get("type") == "queued_command":
+            # Typed (or delivered) while the agent was working: no user record of its own.
+            text = _blocks_text(att.get("prompt"))
+            if text.strip():
+                injected = _claude_injected((att.get("origin") or {}).get("kind"), text)
+                queued.append(Message(
+                    ord=len(messages), native_id=rec.get("uuid"),
+                    parent_native_id=rec.get("parentUuid"), on_main_path=False,
+                    role="system" if injected else "user", ts=rec.get("timestamp"), text=text,
+                    model=None, stop_reason=None, input_tokens=None, output_tokens=None,
+                ))
+                messages.append(queued[-1])
+            continue
         if rtype == "attachment":
-            att = rec.get("attachment")
             for text in _session_start_contexts(att):
                 if text in contexts_seen:
                     continue
@@ -957,6 +1026,7 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
         msg = rec.get("message") or {}
         content = msg.get("content")
         blocks = content if isinstance(content, list) else []
+        _block_shapes(shapes, blocks)
         calls: list[ToolCall] = []
         results: list[tuple[str, bool]] = []
         result_texts: list[str] = []
@@ -979,22 +1049,33 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
             session.cwd = rec.get("cwd")
         is_result = rtype == "user" and bool(results)
         usage = msg.get("usage") or {}
+        text = (
+            # sibling text blocks sit beside the tool_result; keep both
+            "\n".join(t for t in (_blocks_text(content), *result_texts) if t)
+            if is_result
+            else _blocks_text(content)
+        )
+        role = "tool_result" if is_result else rtype
+        injected = role == "user" and (
+            bool(rec.get("isMeta")) or bool(rec.get("isCompactSummary"))
+            or _claude_injected((rec.get("origin") or {}).get("kind"), text)
+        )
+        if role == "user" and not injected:
+            turn_texts.append(text.strip())
         messages.append(
             Message(
                 ord=len(messages),
                 native_id=rec.get("uuid"),
                 parent_native_id=rec.get("parentUuid"),
                 on_main_path=False,
-                role="tool_result" if is_result else rtype,
+                role="system" if injected else role,
                 ts=rec.get("timestamp"),
-                text=(
-                    # sibling text blocks sit beside the tool_result; keep both
-                    "\n".join(t for t in (_blocks_text(content), *result_texts) if t)
-                    if is_result
-                    else _blocks_text(content)
-                ),
+                text=text,
                 model=msg.get("model"),
-                stop_reason=msg.get("stop_reason"),
+                stop_reason=(
+                    f"api_error:{rec.get('error') or 'unknown'}"
+                    if rec.get("isApiErrorMessage") else msg.get("stop_reason")
+                ),
                 input_tokens=usage.get("input_tokens"),
                 output_tokens=usage.get("output_tokens"),
                 cache_read_tokens=usage.get("cache_read_input_tokens"),
@@ -1013,8 +1094,21 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
             for r in rows:
                 setattr(r, f, None)
             setattr(rows[-1], f, max(seen) if seen else None)
+    # Some versions also write a queued prompt as an ordinary user record, alone or with a
+    # wrapper before or after it: keep that one. Not a substring anywhere — a compaction
+    # summary quotes every earlier prompt.
+    dupes = set()
+    for q in queued:
+        text = q.text.strip()
+        if any(t.startswith(text) or t.endswith(text) for t in turn_texts):
+            dupes.add(id(q))
+    messages = [m for m in messages if id(m) not in dupes]
+    for i, m in enumerate(messages):
+        m.ord = i
+    _resolve_parents(messages, parent_of)
+    session.title = custom_title or session.title
     _mark_main_path(messages)
-    return _finalize(session, messages)
+    return _finalize(session, messages, shapes)
 
 
 def parse_pi(path: Path, relpath: str) -> ParsedFile:
@@ -1039,9 +1133,14 @@ def parse_pi(path: Path, relpath: str) -> ParsedFile:
 
     model: str | None = None  # set by model_change for later messages that lack one
     messages: list[Message] = []
+    shapes: Counter = Counter({"rec:session": 1})
+    parent_of: dict[str, str | None] = {}
     for line in lines[1:]:
         rec = json.loads(line)
         rtype = rec.get("type")
+        shapes[f"rec:{rtype}"] += 1
+        if rec.get("id"):
+            parent_of[rec["id"]] = rec.get("parentId")
         if rtype == "model_change":
             model = rec.get("modelId")
             continue
@@ -1058,6 +1157,7 @@ def parse_pi(path: Path, relpath: str) -> ParsedFile:
             role = "tool_result"
             results.append((msg.get("toolCallId") or "", bool(msg.get("isError"))))
         content = msg.get("content")
+        _block_shapes(shapes, content)
         if isinstance(content, list):
             for b in content:
                 if isinstance(b, dict) and b.get("type") == "toolCall":
@@ -1088,8 +1188,9 @@ def parse_pi(path: Path, relpath: str) -> ParsedFile:
                 results=results,
             )
         )
+    _resolve_parents(messages, parent_of)
     _mark_main_path(messages)
-    return _finalize(session, messages)
+    return _finalize(session, messages, shapes)
 
 
 def decode_zstd_lines(path: Path):
@@ -1119,11 +1220,12 @@ def decode_zstd_lines(path: Path):
     # Whatever is left never saw a newline: an incomplete last line, dropped.
 
 
-DSH_EVENTS = ("user/message", "assistant/message", "tool/call", "tool/result")
-# Cheap pre-filter so chunk rows are never JSON-parsed; tolerant of JSON spacing.
-_DSH_KEEP = re.compile(
-    r'"type":\s*"(?:' + "|".join(re.escape(t) for t in ("session", "session/title", *DSH_EVENTS)) + r')"'
-)
+DSH_EVENTS = ("user/message", "assistant/message", "tool/call", "tool/result", "compaction/summary")
+_DSH_KEPT = {"session", "session/title", *DSH_EVENTS}
+# dsh writes `type` first: reading it off the prefix means chunk rows are never JSON-parsed.
+# A row that does not start this way is parsed in full instead, so key order is a fast
+# path, never a reason to drop a row.
+_DSH_TYPE = re.compile(r'\{"type":\s*"([^"]*)"')
 
 # dsh's own bash tool never sets isError on a nonzero exit (verified against the
 # live cache: 0 of 53,873 dsh bash results had is_error=1); it only appends this
@@ -1147,11 +1249,19 @@ def parse_dsh(path: Path, relpath: str) -> ParsedFile:
     """Header frame plus seq-ordered event rows; chunk and control rows are dropped."""
     # Only rows whose type we keep are JSON-parsed; chunk rows dominate the log and
     # are discarded on the cheap prefix match instead.
-    rows = [
-        (line, json.loads(line))
-        for line in decode_zstd_lines(path)
-        if _DSH_KEEP.search(line)
-    ]
+    shapes: Counter = Counter()
+    rows = []
+    for line in decode_zstd_lines(path):
+        m = _DSH_TYPE.match(line)
+        rec = None
+        if m:
+            rtype = m.group(1)
+        else:
+            rec = json.loads(line)
+            rtype = rec.get("type") if isinstance(rec, dict) else None
+        shapes[f"rec:{rtype}"] += 1
+        if rtype in _DSH_KEPT:
+            rows.append((line, rec if rec is not None else json.loads(line)))
     if not rows or rows[0][1].get("type") != "session":
         raise ValueError("dsh session file does not start with a session header")
     header = rows[0][1]
@@ -1174,6 +1284,14 @@ def parse_dsh(path: Path, relpath: str) -> ParsedFile:
         data = rec.get("data") or {}
         rtype = rec.get("type")
         ts = to_iso(rec["time"]) if rec.get("time") else None
+        if rtype == "compaction/summary":
+            messages.append(Message(
+                ord=len(messages), native_id=data.get("compactionId"), parent_native_id=None,
+                on_main_path=True, role="system", ts=ts, text=_blocks_text(data.get("summary")),
+                model=data.get("model"), stop_reason=None, input_tokens=None,
+                output_tokens=None,
+            ))
+            continue
         if rtype == "tool/call":
             # tool/call rows are the source of truth; the assistant block may repeat one.
             if last_assistant is None:
@@ -1193,9 +1311,10 @@ def parse_dsh(path: Path, relpath: str) -> ParsedFile:
         calls: list[ToolCall] = []
         results: list[tuple[str, bool]] = []
         text = _blocks_text(msg.get("content"))
+        _block_shapes(shapes, msg.get("content"))
         if rtype == "assistant/message":
             for b in msg.get("content") or []:
-                if isinstance(b, dict) and b.get("type") == "toolCall":
+                if isinstance(b, dict) and b.get("type") in ("toolCall", "tool-call"):
                     calls.append(
                         ToolCall(
                             call_id=b.get("id") or "",
@@ -1232,18 +1351,21 @@ def parse_dsh(path: Path, relpath: str) -> ParsedFile:
             text = "\n".join(t for t in texts if t)
         source = msg.get("source") or {}
         usage = data.get("usage") or {}
+        # source.kind names who wrote a user turn: "user" is the human, every other kind
+        # (goal, plugin, agent-instructions, subagent-settled, …) is the harness.
+        injected = rtype == "user/message" and source.get("kind") not in (None, "user")
         message = Message(
             ord=len(messages),
             native_id=msg.get("id"),
             parent_native_id=None,  # dsh files carry no intra-file tree
             on_main_path=True,
-            role={"user/message": "user", "assistant/message": "assistant"}.get(
+            role="system" if injected else {"user/message": "user", "assistant/message": "assistant"}.get(
                 rtype, "tool_result"
             ),
             ts=ts,
             text=text,
             model=source.get("model"),
-            stop_reason=(
+            stop_reason="interrupted" if data.get("interrupted") else (
                 ((source.get("replayState") or {}).get("response") or {}).get(
                     "stopReason"
                 )
@@ -1258,10 +1380,106 @@ def parse_dsh(path: Path, relpath: str) -> ParsedFile:
         messages.append(message)
         if rtype == "assistant/message":
             last_assistant = message
-    return _finalize(session, messages)
+    return _finalize(session, messages, shapes)
 
 
 PARSERS = {"claude": parse_claude, "pi": parse_pi, "dsh": parse_dsh}
+
+# Every record and content-block shape each harness writes, and what the parser does with
+# it. A shape missing here is new (usually a harness upgrade): ingest prints a `coverage:`
+# line for it and `transcripts.py coverage` exits 1, so new data is triaged, not lost.
+_PARSED = "parsed"
+_BOOKKEEPING = "skip: harness bookkeeping, no conversation"
+_CONTEXT = "skip: harness-injected context or state, re-sent every turn"
+_REASONING = "skip: reasoning is not indexed (decided 2026-11-01)"
+_IMAGE = "skip: image, no text"
+_STREAM = "skip: streaming delta of a message that is stored whole"
+COVERAGE: dict[str, dict[str, str]] = {
+    "claude": {
+        **dict.fromkeys((
+            "rec:user", "rec:assistant", "rec:ai-title", "rec:custom-title",
+            "rec:attachment/queued_command", "block:text", "block:tool_use", "block:tool_result",
+            "block:tool_result>str", "block:tool_result>text",
+        ), _PARSED),
+        "rec:attachment/hook_success": "parsed: SessionStart additionalContext only",
+        "rec:attachment/hook_additional_context": "parsed: SessionStart additionalContext only",
+        "block:thinking": _REASONING,
+        "block:redacted_thinking": _REASONING,
+        "block:image": _IMAGE,
+        "block:tool_result>image": _IMAGE,
+        "block:tool_result>tool_reference": "skip: deferred-tool reference, no text",
+        **dict.fromkeys(("block:server_tool_use", "block:advisor_tool_result", "block:fallback"),
+                        "skip: server-side tool, result is in the assistant text"),
+        "rec:queue-operation": "skip: queue bookkeeping; the prompt is a user record or queued_command",
+        "rec:system/compact_boundary": "skip: marker; the summary is the isCompactSummary record",
+        **dict.fromkeys((f"rec:{t}" for t in (
+            "agent-name", "agent-setting", "api-request", "api-request-blob", "api-request-shape",
+            "artifact-autoreact-ledger", "artifact-comment-monitor", "atis-latch", "bridge-session",
+            "continued-in", "cost-state", "failed", "file-history-delta", "file-history-snapshot",
+            "fork-context-ref", "frame-link", "history-suppression", "last-prompt", "launched",
+            "mode", "permission-mode", "pr-link", "relocated", "result", "started", "tools-used",
+            "worktree-state", "system", "system/agents_killed", "system/api_error", "system/away_summary",
+            "system/bridge_status", "system/informational", "system/local_command",
+            "system/model_fallback", "system/model_refusal_fallback", "system/scheduled_task_fire",
+            "system/stop_hook_summary", "system/turn_duration",
+        )), _BOOKKEEPING),
+        **dict.fromkeys((f"rec:attachment/{t}" for t in (
+            "agent_listing_delta", "auto_mode", "auto_mode_exit", "bash_output_audience_note",
+            "batching_reminder_sent", "command_permissions", "compact_file_reference",
+            "credential_org", "date", "date_change", "deferred_tools_delta",
+            "deferred_tools_record", "diagnostics", "dynamic_skill", "edited_text_file",
+            "environment", "file", "goal_status", "hook_blocking_error", "hook_cancelled",
+            "hook_non_blocking_error", "hook_system_message", "inlined_image_paths",
+            "instructions", "invoked_skills", "max_turns_reached", "mcp_instructions_delta",
+            "model", "nested_memory", "opened_file_in_ide", "output_style",
+            "output_style_instructions", "plan_file_reference", "plan_mode", "plan_mode_exit",
+            "plan_mode_reentry", "prompt_snapshot", "read_truncation_notice",
+            "remote_session_change", "selected_lines_in_ide", "session_context",
+            "session_cron_carry", "silent_turn_reminder", "skill_listing", "skill_mention",
+            "structured_output", "task_reminder", "task_status", "thinking_drop",
+            "thinking_stripped", "total_tokens_reminder", "ultra_effort_enter",
+            "ultra_effort_exit", "ultrathink_effort", "unknown_command_fallback",
+            "workflow_keyword_request",
+        )), _CONTEXT),
+    },
+    "pi": {
+        **dict.fromkeys(("rec:session", "rec:message", "rec:model_change", "rec:session_info",
+                         "block:text", "block:toolCall"), _PARSED),
+        "block:thinking": _REASONING,
+        "block:image": _IMAGE,
+        "rec:compaction": "skip: summary of entries that stay in the file",
+        **dict.fromkeys(("rec:thinking_level_change", "rec:custom", "rec:custom_message"),
+                        _BOOKKEEPING),
+    },
+    "dsh": {
+        **dict.fromkeys(tuple(f"rec:{t}" for t in _DSH_KEPT), _PARSED),
+        **dict.fromkeys(("block:text", "block:tool-result", "block:tool-result>text",
+                         "block:toolResult"), _PARSED),
+        **dict.fromkeys(("block:tool-call", "block:toolCall"),
+                        "parsed: from its tool/call row, which carries the same call"),
+        "block:reasoning": _REASONING,
+        **dict.fromkeys(("block:image", "block:tool-result>image"), _IMAGE),
+        **dict.fromkeys((f"rec:{t}" for t in (
+            "assistant/chunk", "reasoning-chunks", "text-chunks", "tool-call-chunks",
+        )), _STREAM),
+        "rec:agent/inbox/spliced": "skip: copies of user/message rows (671 of 674 checked)",
+        **dict.fromkeys(("rec:system/message", "rec:developer/message", "rec:request/header",
+                         "rec:request/context"), "skip: system prompt or provider request"),
+        **dict.fromkeys((f"rec:{t}" for t in (
+            "agent-preset/selected", "approval/asked", "approval/decided", "approval/policy",
+            "assistant/attempt", "command/done", "command/run", "compaction/end",
+            "compaction/prune", "compaction/start", "deliverables/presented", "goal/change",
+            "job/registered", "job/settled", "llm/retry", "llm/retry-started",
+            "model/selection", "permission/preset", "plan/mode", "sandbox/mode",
+            "session/end-seed", "session/title-llm-request", "step/end", "step/start",
+            "subagent/catalog", "subagent/descriptor", "subagent/model-selection-policy",
+            "todo/write", "tool-workflow/agent-end", "tool-workflow/agent-start",
+            "tool-workflow/run-end", "tool-workflow/run-start", "tool/code-dispatch",
+            "tool/code-dispatch-start", "turn/end", "turn/start", "working-directory/change",
+            "workspace/changes",
+        )), _BOOKKEEPING),
+    },
+}
 
 
 # --------------------------------------------------------------- ingest: write
@@ -1721,6 +1939,7 @@ def _ingest_files(
         )
     }
     parsed_count = unchanged = errors = duplicates = 0
+    unknown: dict[tuple[str, str], list] = {}  # (harness, shape) -> [count, first relpath]
     raw_files = iter_raw_files(dest_root)
     # A row whose file left the indexed set (deleted, or a dsh log superseded by
     # a newer session.vN sibling) is stale; the cascade drops its sessions, so an
@@ -1762,6 +1981,9 @@ def _ingest_files(
             print(f"error: {relpath}: {e!r}", file=sys.stderr)
             continue
         t1 = time.monotonic()
+        for shape, n in parsed.shapes.items():
+            if shape not in COVERAGE[harness]:
+                unknown.setdefault((harness, shape), [0, relpath])[0] += n
         file_id = _record_file(conn, harness, relpath, st, "ok", None)
         pending += 1
         if not _insert_parsed(conn, file_id, harness, parsed):
@@ -1778,6 +2000,8 @@ def _ingest_files(
             )
         parsed_count += 1
     conn.commit()
+    for (harness, shape), (n, relpath) in sorted(unknown.items()):
+        print(f"coverage: {harness} {shape} unknown x{n} (e.g. {relpath})", file=sys.stderr)
     print(
         f"ingest: parsed={parsed_count} unchanged={unchanged} errors={errors}"
         f" duplicates={duplicates} removed={len(stale)}"
@@ -1998,6 +2222,27 @@ def cmd_fts(args) -> int:
         return 75
 
 
+def cmd_coverage(args) -> int:
+    """Parse every raw file, writing nothing, and print each shape with its count and its
+    COVERAGE status; 1 when a shape is unknown."""
+    dest_root = resolve_dest(args.dest)
+    totals: Counter = Counter()
+    for harness, path in iter_raw_files(dest_root):
+        try:
+            parsed = PARSERS[harness](path, path.relative_to(dest_root).as_posix())
+        except Exception as e:  # the same files ingest records as errors
+            print(f"error: {path}: {e!r}", file=sys.stderr)
+            continue
+        for shape, n in parsed.shapes.items():
+            totals[(harness, shape)] += n
+    unknown = 0
+    for (harness, shape), n in sorted(totals.items()):
+        status = COVERAGE[harness].get(shape, "UNKNOWN")
+        unknown += status == "UNKNOWN"
+        print(f"{harness}\t{shape}\t{n}\t{status}")
+    return 1 if unknown else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Export agent transcripts on-device and index them."
@@ -2051,6 +2296,12 @@ def main(argv: list[str] | None = None) -> int:
     p_fts = sub.add_parser("fts", help="rebuild the full-text index in one pass")
     p_fts.add_argument("--dest", help="cache root")
     p_fts.set_defaults(func=cmd_fts)
+
+    p_coverage = sub.add_parser(
+        "coverage", help="list every record shape in the cache and whether it is parsed"
+    )
+    p_coverage.add_argument("--dest", help="cache root")
+    p_coverage.set_defaults(func=cmd_coverage)
 
     args = ap.parse_args(argv)
     return args.func(args)
