@@ -1204,6 +1204,19 @@ def _claude_user(uuid: str, text: str) -> dict:
     }
 
 
+def test_a_record_torn_mid_file_costs_only_that_record(tmp_path, capsys):
+    """A full disk cuts a record short with no newline; the next append lands on the
+    same line. The fragment is dropped, the glued record and the rest of the file kept."""
+    first, torn, glued, last = (json.dumps(_claude_user(u, u)) for u in ("m1", "m2", "m3", "m4"))
+    path = tmp_path / "s.jsonl"
+    path.write_text(f"{first}\n{torn[:40]}{glued}\n{last}\n")
+
+    parsed = tr.parse_claude(path, "s.jsonl")
+
+    assert [m.native_id for m in parsed.messages] == ["m1", "m3", "m4"]
+    assert "torn: " in capsys.readouterr().err
+
+
 def _claude_block_row(uuid: str, parent: str, msg_id: str, block: dict, usage: dict) -> dict:
     """One row of a multi-block API response: Claude Code writes a row per content
     block, each repeating the response's message.id and usage."""

@@ -478,7 +478,8 @@ def export_sources(
 # 8: `raw` is no longer stored; sessions carry a content `fingerprint`.
 # 9: the fingerprint hashes parsed fields, so a workflow agent's two logs are one session.
 #    dsh session.v4 tool results (message-level toolCallId) get their text and links.
-PARSER_VERSION = 9
+# 10: a record torn mid-file costs only that record, not the whole file.
+PARSER_VERSION = 10
 
 # Migrations keyed on PRAGMA user_version (SQLITE-008). MIGRATIONS[0] is the
 # schema as of 0.6.3, idempotent for a database that already has it.
@@ -844,14 +845,41 @@ def _finalize(session: Session, messages: list[Message]) -> ParsedFile:
 def _json_lines(path: Path) -> list[str]:
     """Non-empty lines split on newline only — never str.splitlines(), which also
     breaks on U+2028 and friends that appear inside JSON strings. A final line that
-    is not valid JSON is a write torn by a crash and is dropped, as for dsh."""
+    is not valid JSON is a write torn by a crash and is dropped, as for dsh.
+
+    A torn write mid-file (the disk filled, so a record landed without its tail or
+    newline) leaves the next append glued to the fragment on one line. The fragment
+    is dropped and the intact record after it kept, with a `torn:` warning, so one
+    lost record never costs the whole session."""
     lines = [line for line in path.read_text().split("\n") if line.strip()]
     if lines:
         try:
             json.loads(lines[-1])
         except json.JSONDecodeError:
             lines.pop()
-    return lines
+    kept = []
+    for n, line in enumerate(lines, 1):
+        try:
+            json.loads(line)
+            kept.append(line)
+            continue
+        except json.JSONDecodeError:
+            pass
+        rest = None
+        for i in range(1, len(line)):
+            if line[i] != "{":
+                continue
+            try:
+                json.loads(line[i:])
+            except json.JSONDecodeError:
+                continue
+            rest = line[i:]
+            break
+        print(f"torn: {path} line {n}: dropped a {len(line) - len(rest or '')}-char"
+              f" fragment{', kept the record after it' if rest else ''}", file=sys.stderr)
+        if rest:
+            kept.append(rest)
+    return kept
 
 
 def _session_start_contexts(att) -> list[str]:

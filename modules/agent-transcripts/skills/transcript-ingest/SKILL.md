@@ -63,6 +63,11 @@ skills.
   to parse: those are recorded with `files.status = 'error'`, listed on stderr, and
   counted in an `errors: N files failed to parse` line. It exits **1** when the run
   itself failed and **75** when another run holds the lock.
+- **Torn records.** A write cut short by a full disk or a crash leaves a record without its
+  tail; the harness's next append then lands on the same line. Ingest drops that fragment,
+  keeps the record glued after it and the rest of the file, and prints a
+  `torn: <file> line N` warning, so one lost record never drops the whole session. A torn
+  final line is dropped the same way.
 
 ## Schema summary
 
