@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ sys.path.insert(0, str(MODULE / "skills/transcript-sweep"))
 sys.path.insert(0, str(MODULE / "skills/transcript-review"))
 import findings as fi  # noqa: E402
 import review as rv  # noqa: E402
+import signals as sg  # noqa: E402
 import transcripts as tr  # noqa: E402
 
 
@@ -66,6 +68,7 @@ class Index:
     def close(self):
         if self.conn is not None:
             self.conn.commit()
+            tr._update_signals(self.conn)  # what ingest does after inserting sessions
             self.conn.close()
             self.conn = None
 
@@ -243,6 +246,203 @@ def test_queue_warns_and_keeps_going_without_a_findings_store(index, tmp_path, c
     captured = capsys.readouterr()
     assert json.loads(captured.out)["native_id"] == "lonely"
     assert "no findings.db" in captured.err
+
+
+# The queue before session_signals, kept verbatim as the oracle the stored signals must match.
+def message_scan_queue(conn, dest, *, threshold, sample, seed, harnesses, since, unreviewed):
+    where, params = ["s.kind = 'main'"], []
+    if since:
+        where.append("s.started_at >= ?")
+        params.append(since)
+    if harnesses:
+        where.append("s.harness IN (%s)" % ",".join("?" for _ in harnesses))
+        params += list(harnesses)
+    clause = " AND ".join(where)
+
+    sessions = conn.execute(
+        f"SELECT s.id, s.harness, s.native_id, s.started_at FROM sessions s WHERE {clause}"
+        " ORDER BY s.id",
+        params,
+    ).fetchall()
+    by_id = {row[0]: row for row in sessions}
+    if not by_id:
+        return []
+
+    counts = dict(conn.execute(
+        f"SELECT m.session_id, count(*) FROM messages m JOIN sessions s ON s.id = m.session_id"
+        f" WHERE {clause} GROUP BY m.session_id",
+        params,
+    ).fetchall())
+
+    # "ends on the user" means the user said something last, not that the harness appended a
+    # system-reminder to the session; strip first and require a non-empty remainder.
+    ends_on_user: set[int] = set()
+    for session_id, role, text in conn.execute(
+        f"SELECT m.session_id, m.role, m.text FROM messages m"
+        f" JOIN sessions s ON s.id = m.session_id"
+        f" JOIN (SELECT session_id, max(ord) AS mo FROM messages GROUP BY session_id) x"
+        f"   ON x.session_id = m.session_id AND x.mo = m.ord"
+        f" WHERE {clause}",
+        params,
+    ):
+        if role == "user" and sg.human_text(text or "", by_id[session_id][1]):
+            ends_on_user.add(session_id)
+
+    # Short user turns only: a correction is a sentence, not a briefing. The length bound
+    # keeps this from pulling whole transcripts into memory; boilerplate is stripped first
+    # because a two-word correction can arrive glued to a 4 KB system-reminder.
+    corrections: dict[int, str] = {}
+    for session_id, text in conn.execute(
+        f"SELECT m.session_id, m.text FROM messages m JOIN sessions s ON s.id = m.session_id"
+        f" WHERE {clause} AND m.role = 'user' AND length(m.text) <= 8000",
+        params,
+    ):
+        if session_id in corrections:
+            continue
+        clean = sg.human_text(text or "", by_id[session_id][1])
+        if clean and len(clean) < sg.SHORT_USER and sg.CORRECTION_RE.search(clean):
+            corrections[session_id] = rv.one_line(clean, 60)
+
+    issues: Counter = Counter()
+    reviewed: set[tuple[str, str]] = set()
+    fdb = rv.findings_path(dest)
+    if fdb.exists():
+        fconn = sqlite3.connect(f"file:{fdb}?mode=ro", uri=True)
+        try:
+            for harness, native_id, total in fconn.execute(
+                "SELECT harness, native_id, sum(count) FROM sweep_flags"
+                " WHERE severity = 'issue' GROUP BY harness, native_id"
+            ):
+                issues[(harness, native_id)] = total or 0
+            reviewed = {
+                (h, n) for h, n in fconn.execute(
+                    "SELECT DISTINCT harness, native_id FROM review_flags"
+                )
+            }
+        finally:
+            fconn.close()
+    else:
+        print(
+            f"warning: no findings.db at {fdb}; run the transcript-sweep skill first — "
+            "the issue-count criterion is skipped",
+            file=sys.stderr,
+        )
+
+    out = []
+    for session_id, harness, native_id, started_at in sessions:
+        if unreviewed and (harness, native_id) in reviewed:
+            continue
+        why, detail = [], {}
+        issue_count = issues.get((harness, native_id), 0)
+        if issue_count > threshold:
+            why.append(f"issues={issue_count}")
+        if session_id in ends_on_user:
+            why.append("ends-on-user")
+        if session_id in corrections:
+            why.append("correction")
+            detail["correction"] = corrections[session_id]
+        if not why and rv.sampled(seed, harness, native_id, sample):
+            why.append("sample")
+        if not why:
+            continue
+        out.append({
+            "harness": harness,
+            "native_id": native_id,
+            "started_at": started_at,
+            "messages": counts.get(session_id, 0),
+            "issues": issue_count,
+            "why": ",".join(why),
+            **detail,
+        })
+    out.sort(key=lambda r: (-r["issues"], r["started_at"] or "", r["native_id"]))
+    return out
+
+
+@pytest.fixture
+def mixed_index(index, store):
+    """One session per queue rule and per edge the stored signals must reproduce."""
+    hot = index.session("hot")
+    index.call(hot, "Bash", '{"command": "x"}', is_error=1, result="boom")
+    index.user(index.session("ends"), "please fix the build")
+    reminder = index.session("reminder")
+    index.user(reminder, "fix it")
+    index.user(reminder, "<system-reminder>\nbackground task finished\n</system-reminder>")
+    corrected = index.session("corrected", started_at="2026-07-01T00:00:00Z")
+    index.user(corrected, "<system-reminder>\nx\n</system-reminder>\nno, stop doing that")
+    index.user(corrected, "that is wrong again")  # only the first correction is shown
+    index.assistant(corrected, "sorry")
+    buried = index.session("buried")  # a correction past the 8000-char bound is not read
+    index.user(buried, "<system-reminder>" + "x" * 9000 + "</system-reminder>\nstop")
+    index.assistant(buried, "ok")
+    briefing = index.session("briefing")
+    index.user(briefing, "do not stop until it is done. " + "context " * 100)
+    index.assistant(briefing, "ok")
+    dsh = index.session("dsh1", harness="dsh", started_at="2026-07-02T00:00:00Z")
+    index.user(dsh, "Current runtime context.\nyou are in /w")
+    pi = index.session("pi1", harness="pi")
+    index.user(pi, "no, use the other file")
+    index.user(index.session("sub", kind="subagent"), "no, wrong")
+    index.session("empty")
+    for n in range(12):
+        index.assistant(index.session("s%02d" % n), "hello")
+    index.close()
+    sweep_flag(store, "claude", "hot", count=3)
+    sweep_flag(store, "pi", "pi1", count=1)
+    sweep_flag(store, "claude", "ends", kind="long_result", severity="potential", count=7)
+    conn, run_id = store
+    conn.execute(
+        "INSERT INTO review_flags (run_id, harness, native_id, category, present, confidence,"
+        " created_at) VALUES (?, 'claude', 'ends', 'tool_misuse', 0, 'low', 'now')",
+        (run_id,),
+    )
+    conn.commit()
+    return index.root
+
+
+QUEUE_OPTIONS = {
+    "defaults": {},
+    "sampled": {"sample": 0.5, "seed": 3},
+    "everything": {"sample": 1.0},
+    "threshold": {"threshold": 2},
+    "harness": {"harnesses": ["dsh", "pi"]},
+    "since": {"since": "2026-06-15T00:00:00Z"},
+    "unreviewed": {"unreviewed": True},
+}
+
+
+@pytest.mark.parametrize("options", QUEUE_OPTIONS.values(), ids=QUEUE_OPTIONS.keys())
+def test_queue_from_stored_signals_matches_the_message_scan(mixed_index, options):
+    kw = {"threshold": 0, "sample": 0.0, "seed": 0, "harnesses": None, "since": None,
+          "unreviewed": False, **options}
+    conn = rv.connect(mixed_index)
+    try:
+        expected = message_scan_queue(conn, mixed_index, **kw)
+        assert expected  # every option set selects something, so the comparison is real
+        assert rv.queue_candidates(conn, mixed_index, **kw) == expected
+    finally:
+        conn.close()
+
+
+def test_queue_refuses_an_index_whose_signals_are_another_version(index, tmp_path):
+    index.user(index.session("s"), "no, wrong")
+    index.close()
+    conn = sqlite3.connect(tmp_path / "transcripts.db")
+    with conn:
+        conn.execute("UPDATE session_signals SET signals_version = ?", (sg.SIGNALS_VERSION - 1,))
+    conn.close()
+
+    with pytest.raises(SystemExit, match="run the transcript-ingest skill"):
+        rv.main(["--dest", str(tmp_path), "queue"])
+
+
+def test_queue_refuses_an_index_built_before_session_signals(index, tmp_path):
+    index.close()
+    conn = sqlite3.connect(tmp_path / "transcripts.db")
+    conn.execute("DROP TABLE session_signals")
+    conn.close()
+
+    with pytest.raises(SystemExit, match="run the transcript-ingest skill"):
+        rv.main(["--dest", str(tmp_path), "queue"])
 
 
 # ----------------------------------------------------------------------- view

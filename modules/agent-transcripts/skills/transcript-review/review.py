@@ -24,10 +24,12 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "transcript-ingest"))
+from signals import SIGNALS_VERSION, strip_boilerplate  # noqa: E402  sibling, shared with ingest
+
 DEFAULT_DEST_NAME = "agent-transcripts"
 SKILL = "transcript-review"
 QUOTE_MAX = 200
-SHORT_USER = 300  # a correction is a short turn; a long one is a new instruction
 CONFIDENCES = ("low", "medium", "high")
 # A session's final report is what an unverified_claim is judged against, and a subagent
 # delivers it as tool-call arguments — the 60-char args cap turned justified reports into
@@ -74,46 +76,6 @@ CATEGORIES = tuple(RUBRIC)
 # A finding that fits no category is stored under this category and is never counted in
 # the category rates — it is a cue for the next category, not a category itself.
 UNCLASSIFIED = "__unclassified__"
-
-# Injected text that is not the user talking. Learned by reading the live index: on claude
-# and dsh roughly half of all "user" characters are one of these. Each entry is
-# (label, harness or "*", regex); a match is replaced by `[stripped: <label>]`.
-# Block forms come first; the `.*` forms run to the end of the message, which is how the
-# harness appends them. Tune here, not in the renderer.
-BOILERPLATE = (
-    ("system-reminder", "*", re.compile(r"<system-reminder>.*?</system-reminder>", re.S)),
-    ("system-reminder", "*", re.compile(r"<system-reminder>.*", re.S)),  # truncated block
-    ("task-notification", "claude",
-     re.compile(r"<task-notification>.*?</task-notification>", re.S)),
-    ("task-notification", "claude", re.compile(r"<task-notification>.*", re.S)),
-    ("slash-command", "claude",
-     re.compile(r"<command-(name|message|args)>.*?</command-\1>", re.S)),
-    ("local-command-output", "claude",
-     re.compile(r"<local-command-(stdout|stderr|caveat)>.*?</local-command-\1>", re.S)),
-    ("skill-body", "claude", re.compile(r"^Base directory for this skill:.*", re.S | re.M)),
-    ("hook-output", "claude", re.compile(
-        r"^(?:Stop|SubagentStop|PreToolUse|PostToolUse|PreCompact|SessionStart|SessionEnd|"
-        r"UserPromptSubmit|Notification)\s+hook\s+(?:feedback|error|success|output|blocked)\b.*",
-        re.S | re.M)),
-    ("background-task", "claude",
-     re.compile(r"^\[SYSTEM NOTIFICATION - NOT USER INPUT\].*", re.S | re.M)),
-    ("compact-summary", "claude",
-     re.compile(r"^This session is being continued from a previous conversation.*", re.S | re.M)),
-    ("runtime-context", "dsh", re.compile(r"^Current runtime context\..*", re.S | re.M)),
-    ("checkpoint", "dsh",
-     re.compile(r"^This is an automatically generated checkpoint.*", re.S | re.M)),
-    ("background-subagent", "dsh",
-     re.compile(r"^Background subagent \S+ (?:finished|reported)\b.*", re.S | re.M)),
-    ("background-job", "dsh", re.compile(r"^background job \S+ .*", re.S | re.M)),
-    ("goal-blocked", "dsh", re.compile(r"<goal_blocked>.*?</goal_blocked>", re.S)),
-)
-
-# A short user turn that matches this is the user pulling the reins.
-CORRECTION_RE = re.compile(
-    r"\bno,|\bstop\b|\bwrong\b|\bagain\b|\bI said\b|\bdon['’]t\b|\bundo\b|\brevert\b",
-    re.I,
-)
-
 
 # ------------------------------------------------------------------- plumbing
 
@@ -179,26 +141,6 @@ def normalize(text: str) -> str:
     return " ".join((text or "").split())
 
 
-# -------------------------------------------------------------- boilerplate
-
-
-def human_text(text: str, harness: str) -> str:
-    """What is left of a user turn once the harness's injected blocks are removed."""
-    clean, _ = strip_boilerplate(text or "", harness)
-    return re.sub(r"\[stripped: [^\]]+\]", "", clean).strip()
-
-
-def strip_boilerplate(text: str, harness: str) -> tuple[str, int]:
-    """Replace injected blocks with `[stripped: label]`. Returns (text, blocks stripped)."""
-    stripped = 0
-    for label, scope, pattern in BOILERPLATE:
-        if scope not in ("*", harness):
-            continue
-        text, n = pattern.subn(f"[stripped: {label}]", text or "")
-        stripped += n
-    return text, stripped
-
-
 # ----------------------------------------------------------------- sessions
 
 
@@ -254,49 +196,25 @@ def queue_candidates(conn, dest, *, threshold, sample, seed, harnesses, since, u
         params += list(harnesses)
     clause = " AND ".join(where)
 
+    # Ingest stores each main session's signals (SIGNALS_VERSION rules) after it inserts the
+    # session, so the queue reads one row per session instead of scanning messages.
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_signals'"
+    ).fetchone() or conn.execute(
+        "SELECT 1 FROM session_signals WHERE signals_version != ? LIMIT 1", (SIGNALS_VERSION,)
+    ).fetchone():
+        raise SystemExit(
+            f"the index has no session signals at version {SIGNALS_VERSION}; run the "
+            "transcript-ingest skill (ingest) first"
+        )
     sessions = conn.execute(
-        f"SELECT s.id, s.harness, s.native_id, s.started_at FROM sessions s WHERE {clause}"
-        " ORDER BY s.id",
+        f"SELECT s.harness, s.native_id, s.started_at, g.message_count,"
+        f" g.ends_on_user, g.correction FROM sessions s"
+        f" JOIN session_signals g ON g.session_id = s.id WHERE {clause} ORDER BY s.id",
         params,
     ).fetchall()
-    by_id = {row[0]: row for row in sessions}
-    if not by_id:
+    if not sessions:
         return []
-
-    counts = dict(conn.execute(
-        f"SELECT m.session_id, count(*) FROM messages m JOIN sessions s ON s.id = m.session_id"
-        f" WHERE {clause} GROUP BY m.session_id",
-        params,
-    ).fetchall())
-
-    # "ends on the user" means the user said something last, not that the harness appended a
-    # system-reminder to the session; strip first and require a non-empty remainder.
-    ends_on_user: set[int] = set()
-    for session_id, role, text in conn.execute(
-        f"SELECT m.session_id, m.role, m.text FROM messages m"
-        f" JOIN sessions s ON s.id = m.session_id"
-        f" JOIN (SELECT session_id, max(ord) AS mo FROM messages GROUP BY session_id) x"
-        f"   ON x.session_id = m.session_id AND x.mo = m.ord"
-        f" WHERE {clause}",
-        params,
-    ):
-        if role == "user" and human_text(text or "", by_id[session_id][1]):
-            ends_on_user.add(session_id)
-
-    # Short user turns only: a correction is a sentence, not a briefing. The length bound
-    # keeps this from pulling whole transcripts into memory; boilerplate is stripped first
-    # because a two-word correction can arrive glued to a 4 KB system-reminder.
-    corrections: dict[int, str] = {}
-    for session_id, text in conn.execute(
-        f"SELECT m.session_id, m.text FROM messages m JOIN sessions s ON s.id = m.session_id"
-        f" WHERE {clause} AND m.role = 'user' AND length(m.text) <= 8000",
-        params,
-    ):
-        if session_id in corrections:
-            continue
-        clean = human_text(text or "", by_id[session_id][1])
-        if clean and len(clean) < SHORT_USER and CORRECTION_RE.search(clean):
-            corrections[session_id] = one_line(clean, 60)
 
     issues: Counter = Counter()
     reviewed: set[tuple[str, str]] = set()
@@ -324,18 +242,18 @@ def queue_candidates(conn, dest, *, threshold, sample, seed, harnesses, since, u
         )
 
     out = []
-    for session_id, harness, native_id, started_at in sessions:
+    for harness, native_id, started_at, messages, ends_on_user, correction in sessions:
         if unreviewed and (harness, native_id) in reviewed:
             continue
         why, detail = [], {}
         issue_count = issues.get((harness, native_id), 0)
         if issue_count > threshold:
             why.append(f"issues={issue_count}")
-        if session_id in ends_on_user:
+        if ends_on_user:
             why.append("ends-on-user")
-        if session_id in corrections:
+        if correction is not None:
             why.append("correction")
-            detail["correction"] = corrections[session_id]
+            detail["correction"] = one_line(correction, 60)
         if not why and sampled(seed, harness, native_id, sample):
             why.append("sample")
         if not why:
@@ -344,7 +262,7 @@ def queue_candidates(conn, dest, *, threshold, sample, seed, harnesses, since, u
             "harness": harness,
             "native_id": native_id,
             "started_at": started_at,
-            "messages": counts.get(session_id, 0),
+            "messages": messages,
             "issues": issue_count,
             "why": ",".join(why),
             **detail,

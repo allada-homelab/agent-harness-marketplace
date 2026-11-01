@@ -111,6 +111,11 @@ skills.
   `schema_version`, `parser_version`, `built_at`; and the full-text index's state:
   `fts_max_id` (the highest message id it covers) and `fts_dirty` (`1` after a failed
   update).
+- `session_signals` — one row per main session, what `transcript-review`'s `queue` ranks
+  by: `message_count`, `ends_on_user`, and `correction` (the first short correcting user
+  turn, boilerplate stripped). Every `ingest` fills the rows its new sessions lack; the
+  rules and their `signals_version` live in `signals.py`, and a version change recomputes
+  every row from the stored messages without re-parsing a file.
 
 `text` holds text blocks only (no tool arguments, no thinking). Re-parsing a file deletes
 its sessions first, so rows never duplicate. A file that is no longer in the raw set loses
