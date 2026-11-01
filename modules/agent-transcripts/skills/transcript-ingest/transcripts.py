@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import signals  # sibling, stdlib only: the review rules review.py renders with
+
 HARNESSES = ("claude", "pi", "dsh")
 DEFAULT_DEST_NAME = "agent-transcripts"
 
@@ -561,6 +563,14 @@ MIGRATIONS: list[list[str]] = [
         "DROP TRIGGER messages_fts_ad",
         "DROP TRIGGER messages_fts_au",
     ],
+    # v7: what `review.py queue` needs per main session, stored once by ingest so the
+    # queue reads one row per session instead of every message (see _update_signals).
+    [
+        "CREATE TABLE session_signals ("
+        " session_id INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,"
+        " signals_version INTEGER NOT NULL, message_count INTEGER NOT NULL,"
+        " ends_on_user INTEGER NOT NULL, correction TEXT)",
+    ],
 ]
 
 
@@ -662,6 +672,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_signals (
+    session_id      INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    signals_version INTEGER NOT NULL,
+    message_count   INTEGER NOT NULL,
+    ends_on_user    INTEGER NOT NULL,
+    correction      TEXT
 );
 """
 
@@ -1574,9 +1591,80 @@ def _fts_add_new(conn) -> None:
     print(f"timing: fts_batch={time.monotonic() - t0:.1f}s", file=sys.stderr)
 
 
+def _update_signals(conn) -> int:
+    """Store `session_signals` for every main session without a current row; returns how
+    many were computed.
+
+    One path for a full build, an incremental run and a SIGNALS_VERSION change: a re-parsed
+    or removed file's sessions lose their rows through the cascade, a stale version's rows
+    are deleted here, and whatever main session is left without a row is computed from its
+    stored messages.
+    """
+    with conn:
+        conn.execute(
+            "DELETE FROM session_signals WHERE signals_version != ?", (signals.SIGNALS_VERSION,)
+        )
+        conn.execute(
+            "CREATE TEMP TABLE signal_targets (id INTEGER PRIMARY KEY, harness TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO signal_targets SELECT s.id, s.harness FROM sessions s"
+            " LEFT JOIN session_signals g ON g.session_id = s.id"
+            " WHERE s.kind = 'main' AND g.session_id IS NULL"
+        )
+        harness = dict(conn.execute("SELECT id, harness FROM signal_targets"))
+        counts = dict(conn.execute(
+            "SELECT m.session_id, count(*) FROM messages m"
+            " JOIN signal_targets t ON t.id = m.session_id GROUP BY m.session_id"
+        ))
+        # "Ends on the user" means the user said something last, not that the harness
+        # appended a system-reminder to the session; strip first and require a remainder.
+        ends_on_user: set[int] = set()
+        for session_id, role, text in conn.execute(
+            "SELECT m.session_id, m.role, m.text FROM messages m"
+            " JOIN (SELECT m.session_id, max(m.ord) AS mo FROM messages m"
+            "       JOIN signal_targets t ON t.id = m.session_id GROUP BY m.session_id) x"
+            "   ON x.session_id = m.session_id AND x.mo = m.ord"
+        ):
+            if role == "user" and signals.human_text(text or "", harness[session_id]):
+                ends_on_user.add(session_id)
+        # Short user turns only: a correction is a sentence, not a briefing. The length
+        # bound keeps whole transcripts out of memory; boilerplate is stripped first
+        # because a two-word correction can arrive glued to a 4 KB system-reminder.
+        corrections: dict[int, str] = {}
+        for session_id, text in conn.execute(
+            "SELECT m.session_id, m.text FROM messages m"
+            " JOIN signal_targets t ON t.id = m.session_id"
+            " WHERE m.role = 'user' AND length(m.text) <= 8000 ORDER BY m.id"
+        ):
+            if session_id in corrections:
+                continue
+            clean = signals.human_text(text or "", harness[session_id])
+            if (clean and len(clean) < signals.SHORT_USER
+                    and signals.CORRECTION_RE.search(clean)):
+                corrections[session_id] = clean
+        conn.executemany(
+            "INSERT INTO session_signals (session_id, signals_version, message_count,"
+            " ends_on_user, correction) VALUES (?, ?, ?, ?, ?)",
+            [
+                (sid, signals.SIGNALS_VERSION, counts.get(sid, 0),
+                 int(sid in ends_on_user), corrections.get(sid))
+                for sid in harness
+            ],
+        )
+        conn.execute("DROP TABLE signal_targets")
+    return len(harness)
+
+
 def _post_ingest(dest_root: Path, db_path: Path, result: IngestResult) -> None:
-    """FTS merge and `injected` annotation for the database at `db_path`, after any
-    run that parsed files."""
+    """Session signals after every run (a SIGNALS_VERSION change parses no file); FTS
+    merge and `injected` annotation for the database at `db_path` after a run that
+    parsed files."""
+    t0 = time.monotonic()
+    conn = _connect(db_path)
+    computed = _update_signals(conn)
+    conn.close()
+    print(f"timing: signals={time.monotonic() - t0:.1f}s sessions={computed}", file=sys.stderr)
     if not result.parsed:
         return
     # Each incremental FTS batch adds a segment; a merge keeps searches fast.

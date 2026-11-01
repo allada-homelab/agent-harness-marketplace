@@ -30,6 +30,8 @@ uv run --script ./review.py queue --unreviewed --limit 20
 ```
 
 Add `--harness claude`, `--harness pi` or `--harness dsh` to limit it to one harness.
+The queue reads per-session signals that ingest stores; if it refuses with "run the
+transcript-ingest skill", run that skill's `ingest` and ask again.
 
 Each row is one candidate session with a `why`: `issues=N` (the sweep found that many),
 `ends-on-user` (the last turn is the user's, so it may be unfinished), `correction` (a short

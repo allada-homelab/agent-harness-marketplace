@@ -1539,6 +1539,12 @@ def _content(root: Path) -> dict[str, list[tuple]]:
             f" {key.format('t.result_message_id')}, is_error, harness"
             " FROM tool_calls t ORDER BY 1, 2",
         ),
+        "session_signals": _rows(
+            conn,
+            "SELECT s.harness, s.native_id, g.signals_version, g.message_count,"
+            " g.ends_on_user, g.correction FROM session_signals g"
+            " JOIN sessions s ON s.id = g.session_id ORDER BY 1, 2",
+        ),
     }
     conn.close()
     return out
@@ -1633,6 +1639,54 @@ def test_a_removed_files_words_leave_the_full_text_index(cache):
     path.unlink()
     tr.ingest(cache, rebuild=False)
     assert _fts_hits(cache, "aardvark") == 0
+
+
+def _signals(root: Path) -> dict[str, tuple]:
+    """native_id -> (signals_version, message_count, ends_on_user, correction)."""
+    conn = tr.open_db(root)
+    rows = conn.execute(
+        "SELECT s.native_id, g.signals_version, g.message_count, g.ends_on_user, g.correction"
+        " FROM session_signals g JOIN sessions s ON s.id = g.session_id"
+    ).fetchall()
+    conn.close()
+    return {r[0]: r[1:] for r in rows}
+
+
+def test_ingest_stores_signals_for_main_sessions_only(cache):
+    tr.ingest(cache, rebuild=False)
+    conn = tr.open_db(cache)
+    main = {r[0] for r in conn.execute("SELECT native_id FROM sessions WHERE kind = 'main'")}
+    conn.close()
+    assert set(_signals(cache)) == main
+
+
+def test_an_incrementally_reparsed_file_gets_fresh_signals(cache):
+    path = _pi_session(cache / "raw/pi/host/default/zz.jsonl", "aardvark")
+    tr.ingest(cache, rebuild=False)
+    assert _signals(cache)["zz"] == (tr.signals.SIGNALS_VERSION, 1, 1, None)
+
+    _pi_session(path, "that again")  # a new size, so the run sees a changed file
+    tr.ingest(cache, rebuild=False)
+    assert _signals(cache)["zz"] == (tr.signals.SIGNALS_VERSION, 1, 1, "say that again")
+
+
+def test_a_removed_files_session_loses_its_signals(cache):
+    path = _pi_session(cache / "raw/pi/host/default/zz.jsonl", "aardvark")
+    tr.ingest(cache, rebuild=False)
+    path.unlink()
+    tr.ingest(cache, rebuild=False)
+    assert "zz" not in _signals(cache)
+
+
+def test_a_signals_version_change_recomputes_every_row_without_reparsing(cache, monkeypatch):
+    tr.ingest(cache, rebuild=False)
+    before = _signals(cache)
+    monkeypatch.setattr(tr.signals, "SIGNALS_VERSION", tr.signals.SIGNALS_VERSION + 1)
+
+    assert tr.ingest(cache, rebuild=False).parsed == 0
+    assert _signals(cache) == {
+        native_id: (tr.signals.SIGNALS_VERSION, *row[1:]) for native_id, row in before.items()
+    }
 
 
 def test_a_failed_full_text_batch_marks_the_index_dirty_and_the_run_succeeds(
