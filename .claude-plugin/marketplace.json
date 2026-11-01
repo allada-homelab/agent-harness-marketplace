@@ -72,9 +72,9 @@
     },
     {
       "name": "best-practices",
-      "description": "Library of domain best-practices skills with stable, citable rule IDs (containers, uv, Python, FastAPI, databases, repo hygiene, Go, gRPC, Claude Code configuration and prompts) plus the containers-audit interactive scan-and-fix workflow and the authoring tools for adding rules.",
+      "description": "Library of domain best-practices skills with stable, citable rule IDs (containers, uv, Python, FastAPI, databases, repo hygiene, Go, gRPC, QNAP QPKG packaging, Claude Code configuration and prompts) plus the containers-audit interactive scan-and-fix workflow and the authoring tools for adding rules.",
       "category": "development",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "source": "./modules/best-practices"
     },
     {

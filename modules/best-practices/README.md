@@ -18,6 +18,7 @@ command: `/best-practices:containers-audit` on Claude Code,
 | [`repo-best-practices`](skills/repo-best-practices/) | Repository hygiene — pre-commit, Dependabot, secret scanning, task-runner/CI parity, CODEOWNERS, GitHub Actions hardening (`REPO-`) |
 | [`go-best-practices`](skills/go-best-practices/) | Go — layout, errors, concurrency, `net/http`, security, modules, quality, testing (`GO-`) |
 | [`grpc-best-practices`](skills/grpc-best-practices/) | gRPC — proto design, error model, deadlines, streaming, interceptors, security, tooling, performance (`GRPC-`) |
+| [`qpkg-best-practices`](skills/qpkg-best-practices/) | QNAP QPKG packages — QDK build and metadata, static binaries for x86_64/ARM models, service scripts, install/upgrade/uninstall, QTS integration, signing and patching vendor packages (`QPKG-`) |
 | [`claude-code-best-practices`](skills/claude-code-best-practices/) | Claude Code configuration — CLAUDE.md, rules, skills, subagents, hooks and permissions, output styles, plugins, MCP — and API prompts for current Claude models, plus a review procedure (`CC-`, `PROMPT-`) |
 | [`meta-best-practices`](skills/meta-best-practices/) | Format spec for the library — rule IDs, severity, entry structure, authoring tools |
 | [`containers-audit`](skills/containers-audit/) | Interactive scan of Dockerfile / compose / devcontainer files against the containers rules, with per-finding approval of every fix |
@@ -65,7 +66,7 @@ portable skill contract on top and does not run it.
 
 Rule prefixes in use: `DOCKER`, `DEVC`, `COMPOSE`, `BUILDX`, `SEC`, `UV`
 (containers), `UVP` (uv), `PY` (python), `FAPI` (fastapi), `GO` (go), `GRPC`
-(grpc), `CC` and `PROMPT` (claude-code). `SKILL` is retired (published
+(grpc), `QPKG` (qpkg), `CC` and `PROMPT` (claude-code). `SKILL` is retired (published
 only in best-practices 0.5.0); do not reuse its numbers. `FE` is reserved for a future `frontend-best-practices`.
 
 ## Provenance

@@ -222,3 +222,20 @@ Should NOT activate:
 - "Which ruff rules should I enable?" (→ python-best-practices).
 - "Cache uv in CI" (→ uv-best-practices).
 
+## qpkg-best-practices
+
+Should activate:
+
+- "Package this Rust server as a QNAP qpkg"
+- "Why does my QPKG start again after reboot when I disabled it?"
+- "Review my qpkg.cfg and package_routines"
+- "My app's config is overwritten every time I upgrade the QPKG"
+- "Cross-compile for an ARM QNAP NAS"
+- "How do I patch a file inside QuObjects without breaking it?"
+- "Unpack this .qpkg so I can look inside"
+- "What's QPKG-016?" (rule-ID match)
+
+Should NOT activate:
+
+- "Run this app in Container Station with docker compose" (→ containers-best-practices).
+- QNAP NAS administration with no packaging involved (RAID, shares, firmware updates).
