@@ -500,7 +500,7 @@ _Use when working with Python projects — `.py` files, `pyproject.toml` (withou
 
 ## qpkg-best-practices
 
-_Use when building, packaging, debugging or modifying a QNAP QPKG for QTS or QuTS hero — qpkg.cfg, package_routines, the QDK qbuild tool, a QPKG service (init) script, qpkg.conf, App Center install, upgrade and uninstall behavior, code signing, cross-compiling a server binary for x86_64 or ARM QNAP NAS models, or unpacking and patching a vendor .qpkg. Covers the QPKG- rule family. Container packaging lives in containers-best-practices._
+_Use when building, packaging, debugging or modifying a QNAP QPKG for QTS or QuTS hero — qpkg.cfg, package_routines, the QDK qbuild tool, a QPKG service (init) script, qpkg.conf, App Center install, upgrade and uninstall behavior, code signing, cross-compiling a server binary for x86_64 or ARM QNAP NAS models, or unpacking and patching a vendor .qpkg, or checking a QPKG build tree section by section against these rules. Covers the QPKG- rule family. Container packaging lives in containers-best-practices._
 
 | ID | Summary |
 |---|---|
@@ -511,6 +511,12 @@ _Use when building, packaging, debugging or modifying a QNAP QPKG for QTS or QuT
 | [`QPKG-005`](skills/qpkg-best-practices/references/build.md#qpkg-005) | Set `QTS_MINI_VERSION`; set `QTS_MAX_VERSION` only for a known break. |
 | [`QPKG-006`](skills/qpkg-best-practices/references/build.md#qpkg-006) | Check the built package with `qbuild --query` before release. |
 | [`QPKG-007`](skills/qpkg-best-practices/references/build.md#qpkg-007) | Bundle your runtime; never require QNAP's Python, Python3, JRE or MariaDB QPKGs, or Optware. |
+| [`QPKG-040`](skills/qpkg-best-practices/references/build.md#qpkg-040) | Declare QPKG requirements and conflicts in `QPKG_REQUIRE` / `QPKG_CONFLICT`; a requirement counts only when installed and enabled. |
+| [`QPKG-041`](skills/qpkg-best-practices/references/build.md#qpkg-041) | End qbuild hook scripts (setup, pre-build, post-build, teardown) with `return`, never `exit`; they are sourced. |
+| [`QPKG-042`](skills/qpkg-best-practices/references/build.md#qpkg-042) | Exclude `.git` and build leftovers with `--exclude`; qbuild excludes only `.svn`. |
+| [`QPKG-043`](skills/qpkg-best-practices/references/build.md#qpkg-043) | Keep the release `qbuild` options in the repository (`QDK_*` in `qpkg.cfg`), not typed per build or kept only in the per-user `.qdkrc`. |
+| [`QPKG-044`](skills/qpkg-best-practices/references/build.md#qpkg-044) | Name icons `<QPKG_NAME>.gif` (64×64), `_gray.gif` (64×64) and `_80.gif` (80×80); other names are silently dropped. |
+| [`QPKG-045`](skills/qpkg-best-practices/references/build.md#qpkg-045) | Iterate on `package_routines` by rerunning `sh qinstall.sh` from an extracted build on a test NAS. |
 | [`QPKG-008`](skills/qpkg-best-practices/references/binaries.md#qpkg-008) | Ship statically linked (musl) binaries; QTS glibc is old (2.21, some models 2.17). |
 | [`QPKG-009`](skills/qpkg-best-practices/references/binaries.md#qpkg-009) | Treat kernel page size as a build input on ARM: `getconf PAGESIZE` on the target, and no allocator built for 4 KiB pages. |
 | [`QPKG-010`](skills/qpkg-best-practices/references/binaries.md#qpkg-010) | Check ARM ELF `LOAD` segment alignment with `readelf -lW` against the largest target page size. |
@@ -531,6 +537,9 @@ _Use when building, packaging, debugging or modifying a QNAP QPKG for QTS or QuT
 | [`QPKG-025`](skills/qpkg-best-practices/references/lifecycle.md#qpkg-025) | Escape runtime values in `PKG_*_REMOVE` blocks as `\$VAR`; they are expanded at build time. |
 | [`QPKG-026`](skills/qpkg-best-practices/references/lifecycle.md#qpkg-026) | Uninstall removes exactly what the package added outside its `.qpkg` dir, and says whether user data survives. |
 | [`QPKG-027`](skills/qpkg-best-practices/references/lifecycle.md#qpkg-027) | A fresh install is enabled and started by default; set `SYS_QPKG_SERVICE_ENABLED=FALSE` when the service needs setup first. |
+| [`QPKG-046`](skills/qpkg-best-practices/references/lifecycle.md#qpkg-046) | Put each step in the hook that runs at the right moment: `pkg_init` → `pkg_check_requirement` → `pkg_pre_install` → `pkg_install` → `pkg_post_install`. |
+| [`QPKG-047`](skills/qpkg-best-practices/references/lifecycle.md#qpkg-047) | Migrate a changed shipped config in `pkg_init` and record its new MD5 with `set_qpkg_config`, so the user's file is not replaced and saved as `.qdksave`. |
+| [`QPKG-048`](skills/qpkg-best-practices/references/lifecycle.md#qpkg-048) | Use the installer's `SYS_*_PATH` / `get_share_path` for shares and `is_less` / `is_greater` for versions; never hard-code share paths or compare versions as strings. |
 | [`QPKG-028`](skills/qpkg-best-practices/references/integration.md#qpkg-028) | Declare the web UI with `QPKG_WEBUI`, `QPKG_WEB_PORT` and the proxy fields; keep `QPKG_DESKTOP_APP="0"` unless the UI tolerates an iframe. |
 | [`QPKG-029`](skills/qpkg-best-practices/references/integration.md#qpkg-029) | Set `QPKG_VOLUME_SELECT` deliberately so a large app does not land on the system volume. |
 | [`QPKG-030`](skills/qpkg-best-practices/references/integration.md#qpkg-030) | Choose default ports outside QNAP's published port list and make them configurable. |

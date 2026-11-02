@@ -1,7 +1,8 @@
 ---
 name: qpkg-best-practices
-description: Use when building, packaging, debugging or modifying a QNAP QPKG for QTS or QuTS hero — qpkg.cfg, package_routines, the QDK qbuild tool, a QPKG service (init) script, qpkg.conf, App Center install, upgrade and uninstall behavior, code signing, cross-compiling a server binary for x86_64 or ARM QNAP NAS models, or unpacking and patching a vendor .qpkg. Covers the QPKG- rule family. Container packaging lives in containers-best-practices.
-user-invocable: false
+description: Use when building, packaging, debugging or modifying a QNAP QPKG for QTS or QuTS hero — qpkg.cfg, package_routines, the QDK qbuild tool, a QPKG service (init) script, qpkg.conf, App Center install, upgrade and uninstall behavior, code signing, cross-compiling a server binary for x86_64 or ARM QNAP NAS models, or unpacking and patching a vendor .qpkg, or checking a QPKG build tree section by section against these rules. Covers the QPKG- rule family. Container packaging lives in containers-best-practices.
+user-invocable: true
+argument-hint: "[path]"
 ---
 
 # QPKG best practices
@@ -33,9 +34,46 @@ Activate when any of these are true:
 2. For each rule you intend to apply or flag, open the corresponding `references/` file and read **only that rule's entry** — they're keyed by ID.
 3. Cite the rule ID when you explain a change to the user (e.g. "Moving the data dir out of `.qpkg` — QPKG-021").
 
+## Checking a package
+
+Invoked by name (`/qpkg-best-practices [path]`), check the QPKG build tree at
+the path given — the current directory when none is — one section at a time.
+
+1. **Find the tree.** Locate `qpkg.cfg`, `package_routines`, the service
+   script `QPKG_SERVICE_PROGRAM` names (normally `shared/<name>.sh`),
+   `icons/`, the architecture directories, any qbuild hook scripts, the
+   command CI builds with, and any `.qpkg` under `build/`. With no
+   `qpkg.cfg`, say so and stop.
+2. **Walk the sections below in order.** For each one, open its reference
+   file and check every rule in it against the inputs its **Check** line
+   names. Mark each rule:
+   - **pass** — cite the `file:line` that satisfies it;
+   - **fail** — cite the `file:line` and give the fix from the rule's **How**;
+   - **n/a** — say why, usually the rule's **When NOT to apply**;
+   - **needs-judgment** — the files cannot decide it; ask the question.
+3. **Stay static.** Read files and run read-only inspectors (`file`,
+   `readelf`); use `qbuild --query` or `--extract` only on a package built
+   from this tree, never on anyone else's (QPKG-036). Never install or run a
+   `.qpkg`, and edit nothing until the user picks fixes from the report.
+4. **Report per section**: a table of rule ID · result · evidence, then the
+   fails ordered by impact (data loss and security first).
+
+The QDK 2.0 Reference Manual (2010) and QDK Cookbook (2011) by Michael
+Nordström, linked from QNAP's
+[QPKG Development Guidelines](https://www.qnap.com/en/how-to/tutorial/article/qpkg-development-guidelines),
+are the origin of much of this rule set; the current QDK guide supersedes
+both. Every Cookbook recipe maps to a rule: faster builds → QPKG-045;
+unknown config files, external config files, configs created at install →
+QPKG-022; `.qdksave` files → QPKG-047; disabled service restarted at reboot
+→ QPKG-012; options repeated at every build → QPKG-043; repository meta
+files in the package → QPKG-042; Optware dependencies (official or not) →
+QPKG-007, QPKG-040; symbolic link when enabled → QPKG-014, QPKG-015;
+per-architecture extra files → QPKG-041, QPKG-004; run-time data directory
+→ QPKG-021.
+
 ## Rules — Build and metadata
 
-See [`references/build.md`](./references/build.md).
+See [`references/build.md`](./references/build.md). **Check:** `qpkg.cfg`, the tree layout and `icons/`, qbuild hook scripts, the build command CI runs, and a `.qpkg` you built if one exists.
 
 - **QPKG-001** — Choose a native QPKG or a Container Station app on purpose; a native package earns its cost only for host integration, small footprint, or a model with no container support.
 - **QPKG-002** — Set `QPKG_NAME` (≤20 chars), `QPKG_VER` (≤10 chars, dotted numeric) and `QPKG_AUTHOR` with no whitespace.
@@ -44,10 +82,16 @@ See [`references/build.md`](./references/build.md).
 - **QPKG-005** — Set `QTS_MINI_VERSION`; set `QTS_MAX_VERSION` only for a known break.
 - **QPKG-006** — Check the built package with `qbuild --query` before release.
 - **QPKG-007** — Bundle your runtime; never require QNAP's Python, Python3, JRE or MariaDB QPKGs, or Optware.
+- **QPKG-040** — Declare QPKG requirements and conflicts in `QPKG_REQUIRE` / `QPKG_CONFLICT`; a requirement counts only when installed and enabled.
+- **QPKG-041** — End qbuild hook scripts (setup, pre-build, post-build, teardown) with `return`, never `exit`; they are sourced.
+- **QPKG-042** — Exclude `.git` and build leftovers with `--exclude`; qbuild excludes only `.svn`.
+- **QPKG-043** — Keep the release `qbuild` options in the repository (`QDK_*` in `qpkg.cfg`), not typed per build or kept only in the per-user `.qdkrc`.
+- **QPKG-044** — Name icons `<QPKG_NAME>.gif` (64×64), `_gray.gif` (64×64) and `_80.gif` (80×80); other names are silently dropped.
+- **QPKG-045** — Iterate on `package_routines` by rerunning `sh qinstall.sh` from an extracted build on a test NAS.
 
 ## Rules — Binaries for QNAP hardware
 
-See [`references/binaries.md`](./references/binaries.md).
+See [`references/binaries.md`](./references/binaries.md). **Check:** native binaries in the architecture directories (`file`, `readelf -lW`) and the script that builds or downloads them.
 
 - **QPKG-008** — Ship statically linked (musl) binaries; QTS glibc is old (2.21, some models 2.17).
 - **QPKG-009** — Treat kernel page size as a build input on ARM: `getconf PAGESIZE` on the target, and no allocator built for 4 KiB pages.
@@ -56,7 +100,7 @@ See [`references/binaries.md`](./references/binaries.md).
 
 ## Rules — Service script
 
-See [`references/service.md`](./references/service.md).
+See [`references/service.md`](./references/service.md). **Check:** the service script `QPKG_SERVICE_PROGRAM` names, and `qpkg.cfg` for `QPKG_TIMEOUT`.
 
 - **QPKG-012** — Guard `start` (and only `start`) with the template's `Enable` check from `qpkg.conf`.
 - **QPKG-013** — Implement `start`, `stop`, `restart` and `remove`; uninstall calls `stop` then `remove`.
@@ -70,7 +114,7 @@ See [`references/service.md`](./references/service.md).
 
 ## Rules — Install, upgrade and uninstall
 
-See [`references/lifecycle.md`](./references/lifecycle.md).
+See [`references/lifecycle.md`](./references/lifecycle.md). **Check:** `package_routines` (every `pkg_*` hook and `PKG_*_REMOVE` block) and the `QPKG_CONFIG` entries in `qpkg.cfg`.
 
 - **QPKG-021** — Keep mutable data in hook-created dirs, and data that must outlive the package on a share, never in shipped files.
 - **QPKG-022** — List every shipped config file in `QPKG_CONFIG` so upgrades keep user edits (`.qdksave` / `.qdkorig`).
@@ -79,10 +123,13 @@ See [`references/lifecycle.md`](./references/lifecycle.md).
 - **QPKG-025** — Escape runtime values in `PKG_*_REMOVE` blocks as `\$VAR`; they are expanded at build time.
 - **QPKG-026** — Uninstall removes exactly what the package added outside its `.qpkg` dir, and says whether user data survives.
 - **QPKG-027** — A fresh install is enabled and started by default; set `SYS_QPKG_SERVICE_ENABLED=FALSE` when the service needs setup first.
+- **QPKG-046** — Put each step in the hook that runs at the right moment: `pkg_init` → `pkg_check_requirement` → `pkg_pre_install` → `pkg_install` → `pkg_post_install`.
+- **QPKG-047** — Migrate a changed shipped config in `pkg_init` and record its new MD5 with `set_qpkg_config`, so the user's file is not replaced and saved as `.qdksave`.
+- **QPKG-048** — Use the installer's `SYS_*_PATH` / `get_share_path` for shares and `is_less` / `is_greater` for versions; never hard-code share paths or compare versions as strings.
 
 ## Rules — System integration
 
-See [`references/integration.md`](./references/integration.md).
+See [`references/integration.md`](./references/integration.md). **Check:** the web, volume and port fields in `qpkg.cfg`, and logging and cron handling in the service script and `package_routines`.
 
 - **QPKG-028** — Declare the web UI with `QPKG_WEBUI`, `QPKG_WEB_PORT` and the proxy fields; keep `QPKG_DESKTOP_APP="0"` unless the UI tolerates an iframe.
 - **QPKG-029** — Set `QPKG_VOLUME_SELECT` deliberately so a large app does not land on the system volume.
@@ -92,7 +139,7 @@ See [`references/integration.md`](./references/integration.md).
 
 ## Rules — Security and vendor packages
 
-See [`references/security.md`](./references/security.md).
+See [`references/security.md`](./references/security.md). **Check:** the whole tree for credentials and file modes, signing fields in `qpkg.cfg`, and any vendor package the project patches.
 
 - **QPKG-033** — Never depend on `autorun.sh` or silently edit system init or cron state.
 - **QPKG-034** — Plan for signature enforcement: unsigned packages are blocked by default and `QNAP_CODE_SIGNING` works only inside QNAP's pipeline.

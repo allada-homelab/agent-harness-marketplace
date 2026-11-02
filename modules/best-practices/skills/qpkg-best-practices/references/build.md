@@ -10,9 +10,15 @@
 - QPKG-005 — Set `QTS_MINI_VERSION`; set `QTS_MAX_VERSION` only for a known break
 - QPKG-006 — Check the built package with `qbuild --query` before release
 - QPKG-007 — Bundle your runtime; never require QNAP's language QPKGs
+- QPKG-040 — Declare requirements and conflicts in `QPKG_REQUIRE` / `QPKG_CONFLICT`
+- QPKG-041 — End qbuild hook scripts with `return`, never `exit`
+- QPKG-042 — Exclude VCS and build leftovers from the data archive
+- QPKG-043 — Keep the release `qbuild` options in the repository
+- QPKG-044 — Name icons `<QPKG_NAME>.gif`, `_80.gif` and `_gray.gif`
+- QPKG-045 — Iterate on `package_routines` by rerunning `qinstall.sh` on a test NAS
 <!-- /toc -->
 
-Detailed entries for `QPKG-001..QPKG-007`. Each follows the four-part
+Detailed entries for `QPKG-001..QPKG-007` and `QPKG-040..QPKG-045`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape. "QDK guide" means
 `docs/QDK-Developer-Guide.md` in [qnap-dev/QDK](https://github.com/qnap-dev/QDK)
 (QDK 2.5.3, 2026-09).
@@ -211,3 +217,197 @@ A static binary (QPKG-008) avoids the question entirely.
 
 **When NOT to apply.** A package that is an add-on for another QPKG (a plugin
 for a specific app) should declare that app in `QPKG_REQUIRE`.
+
+---
+
+## QPKG-040 — Declare requirements and conflicts in `QPKG_REQUIRE` / `QPKG_CONFLICT`
+
+**What.** A package that needs another QPKG installed and enabled, or that
+must not coexist with one, says so in `qpkg.cfg` with `QPKG_REQUIRE` and
+`QPKG_CONFLICT` instead of a hand-written check. Each entry is a package name
+with an optional comparison (`=`, `!=`, `<`, `>`, `<=`, `>=`) and version;
+entries are comma-separated. `|` separates alternatives inside one
+`QPKG_REQUIRE` entry and is not allowed in `QPKG_CONFLICT`. Set
+`QPKG_REQUIRE_MSG` when the raw list would read badly in the error.
+
+**Why.** `check_requirements` in `qinstall.sh` evaluates both fields before
+`pkg_pre_install` runs, so an unmet requirement stops the install before the
+old service is stopped or any file is written, and the user gets a QTS
+notification naming the missing package. A requirement counts only when the
+package is installed **and** enabled (`is_qpkg_enabled`), so a disabled
+dependency fails the check too. A hand-rolled test in a later hook runs after
+the old version was already stopped. The `OPT/<name>` form from the QDK 2.0
+manual and Cookbook ("QPKG depends on Optware packages") installs Optware
+packages, which is dead (QPKG-007).
+
+**How.**
+
+```sh
+# qpkg.cfg
+QPKG_REQUIRE="Entware >= 1.0, nginx | apache"
+QPKG_REQUIRE_MSG="Entware 1.0 or later, and either nginx or Apache"
+QPKG_CONFLICT="myapp-legacy"
+```
+
+**When NOT to apply.** A dependency that is not a QPKG (a mounted share, a
+firmware feature) goes in `pkg_check_requirement` (QPKG-046). Start-order
+needs are `Dependency=` (QPKG-018), a separate field QTS reads.
+
+---
+
+## QPKG-041 — End qbuild hook scripts with `return`, never `exit`
+
+**What.** Setup, pre-build, post-build and teardown scripts (`--setup`,
+`--pre-build`, `--post-build`, `--teardown`, or `QDK_SETUP`, `QDK_PRE_BUILD`,
+`QDK_POST_BUILD`, `QDK_TEARDOWN`) report failure with a non-zero `return` or
+`err_msg`, and success with `return 0`. They never call `exit`. A pre-build
+script that edits `qpkg.cfg` undoes the edit in its post-build script.
+
+**Why.** `qbuild` runs these scripts with `.` (source), not as child
+processes (`bin/qbuild`, QDK 2.5.3), so an `exit` ends `qbuild` itself:
+remaining architectures are not built and teardown never runs (QDK 2.0
+manual, "Build Scripts"). A non-zero return makes `qbuild` stop with
+"pre-build script returned error". The Cookbook recipe "Different extra
+architecture files shall be included" appends `QDK_EXTRA_FILE` to `qpkg.cfg`
+per architecture; without the matching post-build cleanup the next
+architecture's package also carries the previous one's file.
+
+**How.**
+
+```sh
+# prebuild.sh — $1 is the architecture (empty for the generic build), $2 its dir
+[ -z "$1" ] && return 0
+make -C src ARCH="$1" || return 1
+cp src/out/myapp "$2/bin/" || return 1
+return 0
+```
+
+```sh
+qbuild --strict --pre-build prebuild.sh
+```
+
+**When NOT to apply.** Per-architecture files that already exist belong in
+the architecture directories (QPKG-004), which needs no hook script at all.
+
+---
+
+## QPKG-042 — Exclude VCS and build leftovers from the data archive
+
+**What.** Build with `--exclude` (or `QDK_RSYNC_EXCLUDE` /
+`QDK_RSYNC_EXCLUDE_FROM`) for `.git`, editor and build leftovers, and test
+fixtures in the package tree, and check the listing of the built data archive
+for them.
+
+**Why.** `qbuild` copies `shared/` and the architecture directories with
+`rsync --exclude=.svn` and nothing else (`sync_files` in `bin/qbuild`, QDK
+2.5.3); the 2011 Cookbook recipe "Source code repository meta files are
+included in package" was written for Subversion. A `.git` directory inside
+the tree ships to every NAS with its full history, which can include removed
+secrets; the same leak in images is SEC-013 in `containers-best-practices`.
+
+**How.**
+
+```sh
+qbuild --strict --exclude .git --exclude '*.swp' --exclude tests/
+# or once, in qpkg.cfg (qbuild sources it):
+# QDK_RSYNC_EXCLUDE="--exclude=.git --exclude=*.swp --exclude=tests/"
+```
+
+Check the result on a package you built yourself (QPKG-036 for anyone
+else's): `qbuild --extract build/myapp_1.4.2_x86_64.qpkg out/` then
+`tar -tzf out/data.tar.gz | grep -E '(^|/)\.git(/|$)'` must print nothing.
+
+**When NOT to apply.** A package tree kept outside the repository, assembled
+by CI from build outputs only, has nothing to exclude.
+
+---
+
+## QPKG-043 — Keep the release `qbuild` options in the repository
+
+**What.** The options a release build needs (`--strict`, excludes, build
+scripts, build dir) live in the repository: as `QDK_*` variables in
+`qpkg.cfg`, or in one checked-in build script CI runs. A `~/.qdkrc` section
+(`qbuild -s <section>`) is for options specific to one machine.
+
+**Why.** Options typed by hand on every build get forgotten, and the package
+built without `--strict` or the excludes still installs (QPKG-003,
+QPKG-042). The Cookbook recipe "Same options have to be repeated at every
+build" moves them to a `~/.qdkrc` section, but that file is per user and
+absent in CI, so two builders of the same commit get different packages.
+`qbuild` sources `qpkg.cfg` after it parses its options (`bin/qbuild`), so
+`QDK_*` values set there apply to every build and override both `~/.qdkrc`
+and the command line (QDK 2.0 manual, "QDK Variables"). Put only values no
+build should change there.
+
+**How.**
+
+```sh
+# qpkg.cfg
+QDK_STRICT="TRUE"
+QDK_BUILD_DIR="build"
+QDK_RSYNC_EXCLUDE="--exclude=.git --exclude=tests/"
+```
+
+```ini
+# ~/.qdkrc — per-machine only
+[myapp]
+QDK_ROOT_DIR=/share/dev/myapp
+```
+
+**When NOT to apply.** One-off experimental builds can pass options on the
+command line.
+
+---
+
+## QPKG-044 — Name icons `<QPKG_NAME>.gif`, `_80.gif` and `_gray.gif`
+
+**What.** The `icons/` directory holds exactly `${QPKG_NAME}.gif` (64×64,
+shown when enabled), `${QPKG_NAME}_gray.gif` (64×64, shown when disabled) and
+`${QPKG_NAME}_80.gif` (80×80, the details dialog). `.png` with the same base
+names is also accepted.
+
+**Why.** `add_icons` in `bin/qbuild` copies only files with those exact
+names; anything else in `icons/` is silently skipped, and the package
+installs with QDK's default icons. Because the names include `QPKG_NAME`,
+renaming the package without renaming the icons drops them the same way.
+Sizes are from the QDK 2.0 manual (`QDK_DATA_DIR_ICONS`).
+
+**How.**
+
+```sh
+ls icons/
+# myapp.gif  myapp_80.gif  myapp_gray.gif
+file icons/* | grep -E '64 x 64|80 x 80'
+```
+
+**When NOT to apply.** A command-line-only package that never appears in App
+Center's list can accept the defaults.
+
+---
+
+## QPKG-045 — Iterate on `package_routines` by rerunning `qinstall.sh` on a test NAS
+
+**What.** While developing install hooks, extract a built package on a test
+NAS, edit `package_routines` there, and rerun `sh qinstall.sh` from that
+directory instead of rebuilding for each change. Copy the final hooks back to
+the source tree and rebuild before release.
+
+**Why.** Each rebuild recompresses the whole data archive and reassembles the
+package, which is slow for large payloads (Cookbook, "Faster build process
+during development"). `qinstall.sh` reads `qpkg.cfg`, `package_routines` and
+`./data.tar.gz` from the current directory (`shared/scripts/qinstall.sh`),
+so the extracted directory is a complete installer.
+
+**How.**
+
+```sh
+# on a test NAS, as admin, with a package you built
+qbuild --extract myapp_1.4.2_x86_64.qpkg /share/dev/myapp-x
+cd /share/dev/myapp-x
+vi package_routines
+sh qinstall.sh
+```
+
+**When NOT to apply.** Never on a NAS with data you care about: this is a
+real install or upgrade, run as root. Never on a package you did not build
+(QPKG-036).
