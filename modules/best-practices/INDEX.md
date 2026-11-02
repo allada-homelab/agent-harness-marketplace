@@ -514,7 +514,7 @@ _Use when building, packaging, debugging or modifying a QNAP QPKG for QTS or QuT
 | [`QPKG-040`](skills/qpkg-best-practices/references/build.md#qpkg-040) | Declare QPKG requirements and conflicts in `QPKG_REQUIRE` / `QPKG_CONFLICT`; a requirement counts only when installed and enabled. |
 | [`QPKG-041`](skills/qpkg-best-practices/references/build.md#qpkg-041) | End qbuild hook scripts (setup, pre-build, post-build, teardown) with `return`, never `exit`; they are sourced. |
 | [`QPKG-042`](skills/qpkg-best-practices/references/build.md#qpkg-042) | Exclude `.git` and build leftovers with `--exclude`; qbuild excludes only `.svn`. |
-| [`QPKG-043`](skills/qpkg-best-practices/references/build.md#qpkg-043) | Keep the release `qbuild` options in the repository (`QDK_*` in `qpkg.cfg`), not typed per build or only in `~/.qdkrc`. |
+| [`QPKG-043`](skills/qpkg-best-practices/references/build.md#qpkg-043) | Keep the release `qbuild` options in the repository (`QDK_*` in `qpkg.cfg`), not typed per build or kept only in the per-user `.qdkrc`. |
 | [`QPKG-044`](skills/qpkg-best-practices/references/build.md#qpkg-044) | Name icons `<QPKG_NAME>.gif` (64×64), `_gray.gif` (64×64) and `_80.gif` (80×80); other names are silently dropped. |
 | [`QPKG-045`](skills/qpkg-best-practices/references/build.md#qpkg-045) | Iterate on `package_routines` by rerunning `sh qinstall.sh` from an extracted build on a test NAS. |
 | [`QPKG-008`](skills/qpkg-best-practices/references/binaries.md#qpkg-008) | Ship statically linked (musl) binaries; QTS glibc is old (2.21, some models 2.17). |
