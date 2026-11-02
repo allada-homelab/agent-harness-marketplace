@@ -234,6 +234,7 @@ Should activate:
 - "How do I patch a file inside QuObjects without breaking it?"
 - "Unpack this .qpkg so I can look inside"
 - "What's QPKG-016?" (rule-ID match)
+- "/qpkg-best-practices ./myapp" (check a build tree section by section)
 
 Should NOT activate:
 

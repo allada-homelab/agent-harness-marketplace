@@ -10,9 +10,12 @@
 - QPKG-025 — Escape runtime values in `PKG_*_REMOVE` blocks
 - QPKG-026 — Uninstall removes exactly what the package added
 - QPKG-027 — Know that a fresh install is enabled and started
+- QPKG-046 — Put each install step in the hook that runs at the right moment
+- QPKG-047 — Migrate a changed shipped config in `pkg_init` with `set_qpkg_config`
+- QPKG-048 — Use the installer's share variables and version helpers
 <!-- /toc -->
 
-Detailed entries for `QPKG-021..QPKG-027`. Each follows the four-part
+Detailed entries for `QPKG-021..QPKG-027` and `QPKG-046..QPKG-048`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape. Hooks live in
 `package_routines`; the installer is `shared/scripts/qinstall.sh` in
 [qnap-dev/QDK](https://github.com/qnap-dev/QDK). "QDK guide" means its
@@ -211,3 +214,114 @@ pkg_pre_install() {
 
 **When NOT to apply.** A package that starts safely with defaults, as most
 should, can keep the default.
+
+---
+
+## QPKG-046 — Put each install step in the hook that runs at the right moment
+
+**What.** Each `package_routines` hook does only the work that belongs at
+its point in the installer's fixed order:
+
+1. `pkg_init` — adopt or migrate config files (`add_qpkg_config`,
+   `set_qpkg_config`; QPKG-022, QPKG-047). Nothing is stopped yet.
+2. `pkg_check_requirement` — checks `QPKG_REQUIRE` cannot express
+   (QPKG-040); abort with `err_log` (QPKG-024).
+3. `pkg_pre_install` — the old service is stopped and `$SYS_QPKG_DIR`
+   exists; back up or migrate data (QPKG-023).
+4. `pkg_install` — new files and restored configs are in place; create
+   runtime directories (QPKG-021).
+5. `pkg_post_install` — the package is registered in `qpkg.conf`; set
+   extra `qpkg.conf` fields such as `Dependency` (QPKG-018).
+
+The service starts after all of them, only if the package ends up enabled
+(QPKG-027).
+
+**Why.** `main` in `qinstall.sh` (QDK 2.5.3) runs `init` → `check_requirements`
+→ `pre_install` → `install` → `post_install` → `set_qpkg_status`, the same
+order as the QDK 2.0 manual's "Order of Execution". A check placed in
+`pkg_pre_install` runs after the old version was stopped, so a failed check
+leaves the user's running service down. `register_qpkg` runs between
+`pkg_install` and `pkg_post_install` and rewrites every `qpkg.conf` field that
+`qpkg.cfg` declares (`Version`, `Web_Port`, `Install_Path` and about forty
+more), so a hook that sets one of those earlier is silently overwritten. Config bookkeeping after `pkg_init` is too
+late: `store_config` compares checksums at the start of the pre-install phase.
+
+**How.**
+
+```sh
+pkg_init()              { add_qpkg_config etc/myapp.conf 0; }
+pkg_check_requirement() { [ -d "$SYS_PUBLIC_PATH" ] || err_log "Public share not found"; }
+pkg_pre_install()       { :; }   # see QPKG-023 for an upgrade backup
+pkg_install()           { $CMD_MKDIR -p "$SYS_QPKG_DIR/data"; }
+pkg_post_install()      { $CMD_SETCFG "$QPKG_NAME" Dependency "Entware" -f "$SYS_QPKG_CONFIG_FILE"; }
+```
+
+**When NOT to apply.** Never. A hook the package does not need is simply
+left undefined.
+
+---
+
+## QPKG-047 — Migrate a changed shipped config in `pkg_init` with `set_qpkg_config`
+
+**What.** When a new version changes a config file listed in `QPKG_CONFIG`
+and the user may have edited the old one, `pkg_init` applies the needed
+change to the installed file (idempotently) and records the new shipped
+file's MD5 with `set_qpkg_config FILE MD5`.
+
+**Why.** At upgrade, QDK keeps an installed config only when the user never
+edited it, or when the old and new shipped files are identical. Otherwise it
+replaces the user's file with the new default and saves theirs as
+`.qdksave`, so the user's settings silently stop applying (QDK 2.0 manual,
+`QPKG_CONFIG`; Cookbook, ".qdksave files are created at upgrade"). Recording
+the new MD5 tells the installer the installed file is current. It must happen
+in `pkg_init`, before `store_config` compares checksums (QPKG-046).
+
+**How.**
+
+```sh
+pkg_init() {
+    f="$SYS_QPKG_DIR/etc/myapp.conf"
+    [ -f "$f" ] || return 0
+    $CMD_GREP -q '^max_upload=' "$f" || $CMD_ECHO 'max_upload=512M' >> "$f"
+    set_qpkg_config etc/myapp.conf 6d7fce9fee47aa94118b5b6e47267f03   # md5 of the new shipped file
+}
+```
+
+Compute the MD5 in the build (`md5sum shared/etc/myapp.conf`) and substitute
+it in a pre-build script (QPKG-041) so it cannot go stale.
+
+**When NOT to apply.** When the new default should replace the user's file,
+let QDK do it and tell users in the release notes to compare with
+`.qdksave`.
+
+---
+
+## QPKG-048 — Use the installer's share variables and version helpers
+
+**What.** In `package_routines`, find system shares with the installer's
+`SYS_*_PATH` variables (`SYS_PUBLIC_PATH`, `SYS_DOWNLOAD_PATH`,
+`SYS_MULTIMEDIA_PATH`, `SYS_WEB_PATH`, …) or `get_share_path SHARE VAR`,
+and compare versions with `is_less`, `is_greater`, `is_equal` and the other
+QDK helpers. Never hard-code `/share/Public` or a volume path, and never
+compare versions as strings.
+
+**Why.** Share names and locations differ between NAS models, volumes and
+firmware: `init_share_settings` reads the names from
+`/etc/config/def_share.info` and the paths from `smb.conf`
+(`qinstall.sh`), so `/share/Public` can be missing or point at another volume.
+A string test such as `[ "$OLD" \< "1.10.0" ]` puts `1.9.0` after `1.10.0`; the
+helpers compare the major, minor and build parts numerically (QDK 2.0 manual,
+"Package Specific Installation Functions").
+
+**How.**
+
+```sh
+pkg_pre_install() {
+    get_share_path Multimedia MEDIA || err_log "Multimedia share not found"
+    OLD=$($CMD_GETCFG "$QPKG_NAME" Version -d "" -f "$SYS_QPKG_CONFIG_FILE")
+    [ -n "$OLD" ] && is_less "$OLD" 1.10.0 && migrate_db_v1   # migrate_db_v1: defined in package_routines
+}
+```
+
+**When NOT to apply.** The service script runs outside the installer, where
+these helpers do not exist; there use `getcfg` directly (QPKG-014).
