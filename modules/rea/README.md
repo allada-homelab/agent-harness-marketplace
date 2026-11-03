@@ -14,9 +14,15 @@ directory at `/analysis`), because a committed `mcp.json` is not viable here:
   homelab REA endpoint cannot be committed (the repo forbids private/RFC1918
   paths and hostnames in publishable content).
 
-So the skill gives the exact commands — decompile a function, inspect a binary's
-layout, extract Go metadata, search/xref/trace — and how to read the Evidence
-output. See `skills/rea/SKILL.md` for the full command reference.
+So the skill is structured as a process, not a command dump: `skills/rea/SKILL.md`
+is the thin entrypoint (identify the target type, inventory, baseline,
+reconstruct, verify, record) with per-type depth in `references/` — native
+Ghidra (`native-ghidra.md`), Python bytecode (`python-bytecode.md`), Go
+(`go-binaries.md`), JS/Electron (`js-electron.md`), and the cross-cutting
+provenance/verification rules (`workflow.md`). A module
+`agents/python-module-reconstructor.md` carries the reconstruction brief once,
+so a decompile project fans out to workers without re-writing the prompt. See
+`skills/rea/SKILL.md` for the entrypoint.
 
 Not for Claude Code: this module ships no `.claude-plugin/plugin.json` and no
 marketplace entry.

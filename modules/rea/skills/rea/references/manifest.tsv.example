@@ -1,0 +1,5 @@
+module	status	bytes	notes
+pkg/obj/diskfile.py	MATCH	48932	reconstructed from disassembly; structure-verified under bundled 3.11
+pkg/common/utils.py	PARTIAL	21707	pycdc baseline only — truncated at first unsupported opcode
+pkg/common/middleware/qauth.py	verified	6648	reconstructed; ast.parse OK; TODO(verify) in 1 function
+pkg/__init__.py	broken	32	does not parse — needs reconstruction (pycdc garbled lambda)
