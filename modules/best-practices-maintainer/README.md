@@ -4,7 +4,8 @@ Maintainer tooling for the [`best-practices`](../best-practices/) library. The
 library ships the rules; this module rebuilds them from each tool's own docs at
 a pinned release, so a rule traces to a quoted source and not to memory.
 
-Claude Code only (`harness: [claude]`): the sweep is a Workflow script.
+Runs on Claude Code (the Workflow tool) and on pi and dsh (the harness layer's
+`run_workflow` bridge, where every child runs on the fleet's large model).
 
 ## `/uv-rules-sweep [tag]`
 
@@ -31,3 +32,4 @@ Claude Code only (`harness: [claude]`): the sweep is a Workflow script.
 ## Install
 
 Claude Code: `/plugin install best-practices-maintainer@agent-harness-marketplace`.
+pi and dsh: through the fleet's `modules.tsv` row.

@@ -14,6 +14,12 @@ const { repo, tag, sha, shards, topics, rulesDir, outDir } = args
 const SRC = `the uv source checkout at ${repo} (tag ${tag}, commit ${sha})`
 const UV = `uvx --from uv==${tag} uv`
 
+// pi and dsh run a workflow through a bridge that starts at most 24 children and
+// resolves every later agent() to null, which would silently drop the assembler.
+const VERIFIERS = 4
+const children = shards.length + topics.length + VERIFIERS + 1
+if (children > 24) throw new Error(`uv-rules-sweep: ${children} children exceed the 24-child workflow cap; raise TARGET_LINES in shards.py`)
+
 const EXTRACT = {
   type: 'object',
   required: ['sections', 'items'],
@@ -172,10 +178,8 @@ const items = extracted.flatMap((r, i) => (r ? r.items.map((it, j) => ({ ...it, 
 const sections = extracted.filter(Boolean).flatMap(r => r.sections)
 log(`${items.length} candidate items from ${sections.length} sections`)
 
-const perTopic = await pipeline(
-  topics,
-  topic => agent(
-    `You judge the \`${topic}\` topic of the uv rule set against ${SRC}.
+const judged = await parallel(topics.map(topic => () => agent(
+  `You judge the \`${topic}\` topic of the uv rule set against ${SRC}.
 
 Existing rules: ${rulesDir}/references/${topic}.md, indexed in ${rulesDir}/SKILL.md. Read both.
 Candidates (JSON):
@@ -191,30 +195,36 @@ ${JSON.stringify(items.filter(it => it.topic === topic))}
 3. For every rule in ${topic}.md, report in \`existing\` whether the docs at this tag support it, contradict it, or are silent. Silent is not wrong: the rule may rest on another source.
 4. Set needs_live_check on any keep, update or new verdict whose correctness depends on runtime behavior (a default, a flag's effect, preview vs stable, an error), and give check_command: the exact shell command that would show it, written with \`uv\`.
 Give verdict ids as ${topic}-1, ${topic}-2, …. Do not edit any file.`,
-    { label: `judge:${topic}`, phase: 'Judge', schema: JUDGE, model: 'opus' },
-  ),
-  async (judged, topic) => {
-    const claims = judged ? judged.verdicts.filter(v => v.needs_live_check && v.verdict !== 'reject') : []
-    const checked = claims.length ? await agent(
-      `Live-check these claims against uv ${tag} itself.
+  { label: `judge:${topic}`, phase: 'Judge', schema: JUDGE, model: 'opus' },
+)))
+const failed = topics.filter((t, i) => !judged[i])
+if (failed.length) log(`judge failed for: ${failed.join(', ')} — those topics are missing from the ledger`)
 
-Run uv only as \`${UV} …\`, inside a fresh directory under ${outDir}/live/${topic}/ (create it) — never inside a git repository you did not create there.
+// Live checks are batched across topics so a run stays inside the bridges' child cap.
+const claims = judged.flatMap((j, i) => (j ? j.verdicts.filter(v => v.needs_live_check && v.verdict !== 'reject').map(v => ({ ...v, topic: topics[i] })) : []))
+const batches = Array.from({ length: Math.min(VERIFIERS, claims.length) }, (_, b) => claims.filter((_, k) => k % VERIFIERS === b))
+const verified = await parallel(batches.map((batch, b) => () => agent(
+  `Live-check these claims against uv ${tag} itself.
+
+Run uv only as \`${UV} …\`, inside a fresh directory under ${outDir}/live/batch-${b}/ (create it) — never inside a git repository you did not create there.
 Claims (JSON):
-${JSON.stringify(claims.map(v => ({ verdict_id: v.id, title: v.title, rationale: v.rationale, change: v.change, check_command: v.check_command })))}
+${JSON.stringify(batch.map(v => ({ verdict_id: v.id, title: v.title, rationale: v.rationale, change: v.change, check_command: v.check_command })))}
 
 For each claim:
 - Run the command, adapting it when needed, and quote the relevant output. For preview vs stable, quote the warning uv prints, or state that it printed none. A real preview feature names its flag, e.g. "pass --preview-features <name>".
 - outcome: confirmed, refuted or inconclusive. Never confirm from documentation alone.
 - introduced_in / introduced_date: the earliest uv release with the feature (or its stabilization), from ${repo}/CHANGELOG.md and ${repo}/changelogs/*.md. For a [tool.uv] setting key, confirm by checking \`git -C ${repo} show <tag>:uv.schema.json\` across \`git -C ${repo} tag --sort=v:refname\`. Null when it predates the changelogs.
 Do not edit any file outside ${outDir}/live/.`,
-      { label: `verify:${topic}`, phase: 'Verify', schema: VERIFY, model: 'sonnet' },
-    ) : { checks: [] }
-    return { topic, judged, checks: checked ? checked.checks : null }
-  },
-)
-
-const failed = topics.filter((t, i) => !perTopic[i] || !perTopic[i].judged)
-if (failed.length) log(`judge failed for: ${failed.join(', ')} — those topics are missing from the ledger`)
+  { label: `verify:${b + 1}`, phase: 'Verify', schema: VERIFY, model: 'sonnet' },
+)))
+const checks = new Map(verified.filter(Boolean).flatMap(v => v.checks).map(c => [c.verdict_id, c]))
+const unchecked = claims.filter(c => !checks.has(c.id)).map(c => c.id)
+if (unchecked.length) log(`live checks missing for: ${unchecked.join(', ')} — marked inconclusive`)
+const perTopic = topics.map((topic, i) => ({
+  topic,
+  judged: judged[i],
+  checks: claims.filter(c => c.topic === topic).map(c => checks.get(c.id) ?? { verdict_id: c.id, outcome: 'inconclusive', note: 'no verifier result' }),
+}))
 
 phase('Assemble')
 const ledger = await agent(

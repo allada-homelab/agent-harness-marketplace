@@ -81,7 +81,7 @@
       "name": "best-practices-maintainer",
       "description": "Maintainer tooling for the best-practices library: rebuild the uv rule set from uv's own docs at a pinned release with a multi-agent extract, judge and live-check workflow.",
       "category": "development",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "source": "./modules/best-practices-maintainer"
     },
     {
