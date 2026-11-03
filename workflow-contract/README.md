@@ -91,7 +91,7 @@ Name the workflow once and tell the model which tool runs it per harness: the
 Workflow tool with `${CLAUDE_PLUGIN_ROOT}/workflows/<name>.workflow.js` on Claude,
 `run_workflow` with `<module>:<name>` on pi and dsh, and a plain sequential
 fallback when neither exists. A skill that hard-requires the Workflow tool is
-Claude-only and must be scoped `harness: [claude]`;
-`modules/best-practices-maintainer` is the in-tree example. `bin/lint-workflows.py`
-checks it, and its behaviour is pinned by `tests/test_lint_workflows.py` against
-fixtures.
+Claude-only and must be scoped `harness: [claude]`.
+`modules/best-practices-maintainer` is the in-tree example of a portable one.
+`bin/lint-workflows.py` checks it, and its behaviour is pinned by
+`tests/test_lint_workflows.py` against fixtures.
