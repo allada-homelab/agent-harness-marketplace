@@ -475,8 +475,10 @@ def test_render_missing_override_is_usage_error(run, good_page):
     assert "ARTIFACTS_CHROME=/nonexistent/chrome does not exist" in r.stdout + r.stderr
 
 
-needs_chrome = pytest.mark.skipif(artifactctl.find_chrome(os.environ, shutil.which, sys.platform) is None,
-                                  reason="no Chrome installed")
+# Opt-in: headless renders are the slow tail of bin/check.sh locally; CI sets the variable.
+needs_chrome = pytest.mark.skipif(not os.environ.get("ARTIFACTS_RENDER_TESTS")
+                                  or artifactctl.find_chrome(os.environ, shutil.which, sys.platform) is None,
+                                  reason="set ARTIFACTS_RENDER_TESTS=1 with Chrome installed")
 
 
 @needs_chrome
