@@ -107,7 +107,7 @@ modules:
       tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized
       results or sessions in the findings store beside it.
 - name: artifacts
-  version: 0.1.7
+  version: 0.1.8
   kinds:
   - skills
   - dsh-plugin
@@ -548,7 +548,7 @@ modules:
     command: true
     summary: Use whenever a task will change files in a git repository.
 - name: rea
-  version: 0.1.0
+  version: 0.2.0
   kinds:
   - skills
   - dsh-plugin
@@ -568,9 +568,10 @@ modules:
     - ghidra
     - go
     - native-binary
+    - python-bytecode
     - reverse-engineering
-    command: false
-    summary: Reverse-engineer a binary with REA (Reverse Engineer Anything).
+    command: true
+    summary: Reverse-engineer a compiled target with REA (Reverse Engineer Anything).
 - name: sleep-guard
   version: 0.1.0
   kinds:

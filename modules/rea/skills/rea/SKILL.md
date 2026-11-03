@@ -1,8 +1,10 @@
 ---
 name: rea
-description: Reverse-engineer a binary with REA (Reverse Engineer Anything). Use when the task is understanding what a compiled program, library, firmware or Go/JS/APK target does — decompiling a function to C, reading a binary's layout, tracing calls, or extracting Go build metadata. REA runs as a container image; this skill gives the exact commands to drive its Ghidra provider and read its Evidence output.
+description: Reverse-engineer a compiled target with REA (Reverse Engineer Anything). Use when the task is understanding what a binary, library, firmware, Go binary, JS/Electron app or Python bytecode (.pyc) target does — decompiling native functions to C, reading binary layout, tracing references, extracting Go build metadata, or recovering Python source from bytecode. REA's Ghidra provider decompiles native code only; this skill covers target-type selection first, then the exact REA commands, the CPython marshal/dis technique for bytecode, and the provenance/verification discipline that keeps reconstructed source trustworthy.
+user-invocable: true
+argument-hint: "[target — a binary, an app directory, or a .pyc module]"
 harness: [pi, dsh]
-tags: [reverse-engineering, ghidra, decompile, native-binary, go]
+tags: [reverse-engineering, ghidra, decompile, native-binary, go, python-bytecode]
 ---
 
 # REA (Reverse Engineer Anything)
@@ -13,6 +15,67 @@ module it runs as the published container image `ghcr.io/allada-homelab/rea`
 (pinned REA 6.8.0 with Ghidra 12.1.4 headless and a full JDK 25). The image has
 no `curl` and runs as a non-root user, so run every REA command through `docker
 run` with the target directory mounted, and check readiness first.
+
+## How to use this plugin
+
+What you get: this one skill plus one worker agent
+(`rea:python-module-reconstructor`). The skill triggers automatically when the
+task matches — decompile, reverse-engineer, "what does this binary do" — or
+explicitly with `/rea [target]` (pi/dsh).
+
+The workflow, in order:
+
+1. **Read this file only — then stop.** This file is the map; the depth lives in
+   the reference files. Do not read all of them: read only the one for your
+   target type (see Contents below).
+2. **Confirm what you have.** Run `rea doctor --provider ghidra`, then
+   `rea inspect` on the target. REA/Ghidra decompiles native code only — the
+   target type decides the whole approach.
+3. **Read the matching reference** (Contents below) and follow its technique.
+   For Python bytecode, dispatch the reconstructor agent for module-by-module
+   work instead of re-writing the brief yourself (see "Reconstructing a Python
+   bytecode target").
+4. **Track evidence as you go.** Write the manifest and notes into the analyzed
+   repo (see `./references/workflow.md`) — findings belong to the project, not
+   to this session.
+
+Everything runs through the container (no local REA install). Mount the target
+directory at `/analysis`; the file must be readable by uid 1000 — the
+container's non-root user.
+
+## Contents — read only what you need
+
+| Reference | When to read it |
+|---|---|
+| `./references/workflow.md` | any run that decompiles more than one file — phases, manifest, verification, progress tracking |
+| `./references/python-bytecode.md` | `.pyc`/`.pyo` targets (the REA skill does not decompile these; this is the CPython technique) |
+| `./references/native-ghidra.md` | ELF/PE/Mach-O binaries, APK native libraries |
+| `./references/go-binaries.md` | Go binaries (metadata first, then the native workflow for functions) |
+| `./references/js-electron.md` | JS/Electron apps (static reconstruction + native add-ons) |
+| `./references/manifest.tsv.example` | the per-module provenance template, once you start a batch |
+
+## Organize the work
+
+Decompilation is a pipeline, not one command. Run it in phases and record
+evidence at each step — the write-up is only as trustworthy as the manifest
+that supports it.
+
+1. **Identify the target type.** One `rea doctor` and one `rea inspect` tell you
+   what you have. A bundled app (a QPKG, an appliance image) may mix several
+   types: list the files first and handle each type with its own reference.
+2. **Inventory.** Enumerate every target file: native libraries, bundled
+   interpreters, `.pyc` trees, archives. Identify test artifacts
+   (`test/`, `tests/`, `unit/`, `test_*.py`, `*_test.py`, fixtures) and
+   deprioritize them — production modules first, tests last or not at all.
+3. **Pick the approach per type** — the reference for your target.
+4. **Baseline + provenance.** Run a batch pass with per-module `timeout` and
+   record statuses in a `MANIFEST.tsv` (see `./references/manifest.tsv.example`).
+   Never start manual reconstruction without knowing what the baseline produced.
+5. **Reconstruct.** Do the hard modules yourself, or fan out with the module's
+   reconstructor agent — give each worker disjoint module sets and the exact
+   interpreter invocation.
+6. **Verify and record.** Re-verify every module after reconstruction, rewrite
+   the manifest, and write the notes/report into the analyzed repo.
 
 ## Run one command against a target
 
@@ -61,6 +124,26 @@ docker run --rm -v "$PWD:/analysis" ghcr.io/allada-homelab/rea:latest \
 
 Use `--format json` (or `--filter-output <key>` and `--full-output`) to get a
 machine-readable result; default output is the human-readable Evidence envelope.
+
+## Reconstructing a Python bytecode target
+
+For a Python target, REA itself is not the tool — the authoritative
+disassembler is the CPython interpreter that produced the bytecode. The full
+technique (marshal/dis recipe, decompiler caveats, upstream matching,
+verification) is in `./references/python-bytecode.md`; read it before touching a
+`.pyc`.
+
+For module-by-module reconstruction, fan out with the module's reconstructor
+agent instead of re-writing the brief every time:
+
+- **pi and dsh**: `delegate_agent` with `agent_type` set to
+  `rea:python-module-reconstructor`. On pi the tool is inactive until this skill
+  is invoked; if it is missing, run `/agents` once.
+- **No delegation tool at all**: do it yourself, using
+  `./../../agents/python-module-reconstructor.md` as your brief.
+
+Every child sees none of this conversation: give it the module list with output
+paths, the bundled interpreter path, and any upstream reference paths.
 
 ## Reading the output
 
