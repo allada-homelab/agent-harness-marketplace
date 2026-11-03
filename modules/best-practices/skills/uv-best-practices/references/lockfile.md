@@ -11,9 +11,11 @@
 - UVP-015 — `uv lock --check` and `uv sync --check` validate different things; compose, don't substitute
 - UVP-070 — Use `uv lock --upgrade-group <group>` to refresh one group in isolation
 - UVP-075 — Set a relative `exclude-newer` as a resolver-side release cooldown
+- UVP-086 — Scope pre-releases with `prerelease-package`, not a global `prerelease = "allow"`
 <!-- /toc -->
 
-Detailed entries for `UVP-010..UVP-019`. Each follows the four-part
+Detailed entries for `UVP-010..UVP-015`, `UVP-070`, `UVP-075` and
+`UVP-086`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 Citations point at the [uv sync docs](https://docs.astral.sh/uv/concepts/projects/sync/)
@@ -135,7 +137,7 @@ explicitly.
 
 ```bash
 uv lock --upgrade-package requests          # only requests + its transitives
-uv lock --upgrade-package "requests>=2.32"  # bump and tighten in one shot
+uv lock --upgrade-package "requests<3"      # upgrade within a bound; pyproject.toml unchanged
 ```
 
 over:
@@ -163,17 +165,25 @@ uv lock --upgrade-package fastapi
 git add uv.lock
 git commit -m "Bump fastapi to latest"
 
-# Bump and tighten the floor at the same time
-uv add 'fastapi>=0.110'   # updates pyproject + lock
+# Raise the floor in pyproject.toml and move the lock to the latest match
+uv add 'fastapi>=0.110' --upgrade-package fastapi
 
 # Scheduled refresh — accept all updates that pass tests
 uv lock --upgrade
 # review the diff in PR; reviewers should be the deps team, not feature reviewers
 ```
 
+A constraint edit alone (`uv add 'fastapi>=0.110'` without
+`--upgrade-package`) moves the locked version only if the old version
+no longer satisfies the new constraint
+([managing dependencies](https://docs.astral.sh/uv/concepts/projects/dependencies/#changing-dependencies)).
+
 Important: the lockfile is **not** invalidated by upstream releases.
 Running `uv sync --locked` doesn't auto-discover newer versions. You
-explicitly choose when to refresh.
+explicitly choose when to refresh. The same holds for a Git dependency
+on a branch: uv keeps the commit SHA in `uv.lock` until `--upgrade` or
+`--upgrade-package <name>` is passed
+([upgrading locked package versions](https://docs.astral.sh/uv/concepts/projects/sync/#upgrading-locked-package-versions)).
 
 **When NOT to apply.** Initial scaffolding of a project, where the
 lockfile is empty and the first `uv lock` legitimately resolves
@@ -187,38 +197,52 @@ everything. After that, targeted is the default.
 editor to "just tweak a version" or "remove a transitive you don't
 want."
 
-**Why.** Three failure modes:
+**Why.** The uv docs say `uv.lock` "is managed by uv and should not be
+edited manually"
+([project layout](https://docs.astral.sh/uv/concepts/projects/layout/#the-lockfile)).
+Two failure modes:
 
-1. **Hash mismatches.** Each lockfile entry includes content hashes. Editing a version string without updating the hash causes `uv sync` to fail with "hash verification failed" — or worse, with some package managers, silently install the old version because the hash doesn't match the new one.
+1. **The lock stops parsing.** Each entry records the version together with its wheel and sdist file names and hashes. Changing a version string by hand leaves those out of step, and every command that reads the lock (`uv sync`, `uv lock --check`, `uv run`) fails with "Failed to parse `uv.lock`" until the edit is reverted or the lock is regenerated.
 2. **Dependency-graph inconsistency.** The lockfile encodes the *resolved* dependency graph — which version of A satisfies B's constraint, which version of B was picked given C's. Editing one entry doesn't update the others; the graph becomes internally inconsistent.
-3. **uv silently regenerates.** When uv detects tampering it can't recover from, it regenerates the lockfile from `pyproject.toml`. Your edit vanishes without an obvious error message.
 
-If you need a specific transitive version pinned, do it correctly in
-`pyproject.toml`:
+If you need a specific transitive version pinned, do it in
+`pyproject.toml` and re-lock.
 
-**How.**
+**How.** Bound a direct dependency in `[project] dependencies`. Bound
+or pin a transitive one with `constraint-dependencies`: a constraint
+only narrows the versions uv may pick, and adds no dependency of its
+own
+([dependency constraints](https://docs.astral.sh/uv/concepts/resolution/#dependency-constraints)).
 
 ```toml
 # pyproject.toml — pin via constraint, not via lockfile edit
 [project]
 dependencies = [
   "fastapi",
-  "pydantic>=2.5,<2.6",      # pinning pydantic explicitly
+  "pydantic>=2.5,<2.6",      # bound a direct dependency
 ]
 
-# alternative: use uv's resolver overrides for transitive pins
 [tool.uv]
-override-dependencies = [
-  "starlette==0.36.3",        # force a specific version
+constraint-dependencies = [
+  "starlette<0.37",           # bound a transitive dependency
 ]
 ```
 
 Then `uv lock` to regenerate. The lockfile is always derived; the
 project file is always the source of truth.
 
+Use `override-dependencies` only as a last resort, when you *know* a
+dependency's metadata is wrong (for example, an upper bound that is too
+strict). An override replaces every declared requirement on that
+package, including your own direct one, so it can widen bounds and
+hide a real incompatibility
+([dependency overrides](https://docs.astral.sh/uv/concepts/resolution/#dependency-overrides)).
+With `override-dependencies = ["anyio==3.0.0"]`, uv 0.13.7 locks anyio
+3.0.0 even when `[project] dependencies` asks for `anyio>=4`.
+
 **When NOT to apply.** Never. There's no legitimate reason to hand-edit
 `uv.lock`. If you think there is, the right answer is in
-`pyproject.toml` or `[tool.uv]` overrides.
+`pyproject.toml` or `[tool.uv]` constraints.
 
 ---
 
@@ -255,13 +279,30 @@ it in CI as a build artifact:
 ```
 
 If you *must* commit `requirements.txt` (some CI gate insists), then
-generate it in a pre-commit hook and have CI verify the committed
-version matches a freshly-generated one:
+generate it with the `uv-export` hook from
+[astral-sh/uv-pre-commit](https://docs.astral.sh/uv/guides/integration/pre-commit/)
+and have CI verify the committed version matches a freshly-generated
+one. The hook's default arguments are `--frozen
+--output-file=requirements.txt --quiet`
+([.pre-commit-hooks.yaml](https://github.com/astral-sh/uv-pre-commit/blob/0.13.7/.pre-commit-hooks.yaml)).
+Setting `args` replaces them, so repeat them and add the flags the CI
+check uses:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.13.7  # pin a release tag
+    hooks:
+      - id: uv-export
+        args: [--frozen, --no-hashes, --no-dev, --output-file=requirements.txt, --quiet]
+```
 
 ```bash
-# CI check
-uv export --format requirements.txt --no-hashes --no-dev -o /tmp/requirements.txt
-diff requirements.txt /tmp/requirements.txt || \
+# CI check — run the hook's exact command in place; the file's header
+# records the command line, so a different command or output path never matches
+uv export --frozen --no-hashes --no-dev --output-file=requirements.txt --quiet
+git diff --exit-code requirements.txt || \
   { echo "requirements.txt is stale; run 'uv export'"; exit 1; }
 ```
 
@@ -394,6 +435,12 @@ cooldown in the resolver, so every path to a new version honours it.
 A fixed date (`"2026-09-01"`) does the same job but has to be bumped
 by hand, so it becomes a stale cap nobody remembers to move.
 
+The two cooldowns must match. If the bot's is shorter, it opens
+upgrade PRs to versions that `uv lock` cannot select yet. uv's
+[Dependabot](https://docs.astral.sh/uv/guides/integration/dependabot/#dependency-cooldown)
+and [Renovate](https://docs.astral.sh/uv/guides/integration/renovate/#dependency-cooldown)
+guides recommend setting the bot's cooldown to the same window.
+
 **How.**
 
 ```toml
@@ -404,7 +451,39 @@ exclude-newer = "7 days"
 exclude-newer-package = { cryptography = "2026-10-03T00:00:00Z" }
 ```
 
-What uv writes to the lockfile (uv 0.12.18):
+To exempt a package from the cooldown entirely, use `false` instead of
+a date (uv>=0.9.25): `exclude-newer-package = { cryptography = false }`.
+
+Match the bot to the window. For `exclude-newer = "7 days"`, set
+Dependabot's `cooldown.default-days: 7` (REPO-002), or Renovate's
+`minimumReleaseAge: "1 week"`:
+
+```json5
+// renovate.json5
+{
+  packageRules: [{ matchDatasources: ["pypi"], minimumReleaseAge: "1 week" }],
+}
+```
+
+A global `exclude-newer` needs the PEP 700 `upload-time` field on every
+file. A file from an index that does not provide it is treated as
+unavailable
+([reproducible resolutions](https://docs.astral.sh/uv/concepts/resolution/#reproducible-resolutions)).
+PyPI provides it; many private indexes do not. Opt such an index out,
+or give it its own window. This per-index setting is
+`uv>=0.11.5 (preview: index-exclude-newer)`: uv 0.13.7 prints
+"Setting `exclude-newer` on configured indexes is experimental" when a
+package resolves through that index, unless you pass
+`--preview-features index-exclude-newer`.
+
+```toml
+[[tool.uv.index]]
+name = "internal"
+url = "https://internal.example.com/simple"
+exclude-newer = false   # or its own window, e.g. "1 day"
+```
+
+What uv writes to the lockfile (uv 0.13.7):
 
 ```toml
 [options]
@@ -421,7 +500,48 @@ a config edit that wasn't re-locked.
 **When NOT to apply.** When a project has to adopt same-day releases
 (for example, it is the first consumer of a sibling package published
 from the same CI run). Exempt that package with `exclude-newer-package`
-rather than dropping the cooldown. Not needed for a project whose
-dependencies are all internal and served from a trusted private index.
+rather than dropping the cooldown. For a trusted private index that
+does not publish upload times, opt that index out with
+`[[tool.uv.index]] exclude-newer = false` instead of dropping the
+global cooldown.
+
+---
+
+## UVP-086 — Scope pre-releases with `prerelease-package`, not a global `prerelease = "allow"`
+
+**Requires.** uv>=0.12.1
+
+**What.** When one dependency needs a pre-release, allow it for that
+package only with `[tool.uv] prerelease-package = { <name> = "allow" }`.
+Don't set the global `prerelease = "allow"`.
+
+**Why.** With `prerelease = "allow"`, uv considers pre-releases for
+every package without preferring stable versions first
+([pre-release handling](https://docs.astral.sh/uv/concepts/resolution/#pre-release-handling)).
+A transitive dependency then locks to its newest alpha or release
+candidate, even though nothing in the project asked for it. For example,
+a project that depends only on `djangorestframework`, locked with
+`prerelease = "allow"` and `exclude-newer = "2023-09-25T00:00:00Z"`,
+gets `django` 5.0a1. With the package-scoped setting, it gets `django`
+4.2.5. The default, `if-necessary`, already falls back to a pre-release
+when no stable version satisfies the constraints.
+
+**How.**
+
+```toml
+# pyproject.toml
+[tool.uv]
+prerelease-package = { foo = "allow" }
+```
+
+uv prefers the versions already in `uv.lock`. Narrowing the setting
+does not remove pre-releases that the global `allow` already locked.
+Re-lock them with `uv lock --upgrade-package <name>`, or with
+`uv lock --upgrade`.
+
+**When NOT to apply.** A project that tests against the next release of
+its whole stack on purpose, for example a scheduled pre-release CI job.
+There, pass `--prerelease allow` on that job's command line instead of
+committing it to `[tool.uv]`.
 
 ---

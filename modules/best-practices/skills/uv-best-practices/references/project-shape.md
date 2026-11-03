@@ -14,9 +14,13 @@
 - UVP-016 — Declare mutually-exclusive extras/groups with `[tool.uv] conflicts`
 - UVP-063 — Set `[tool.uv] add-bounds` to control how `uv add` writes constraints
 - UVP-064 — Bound lockfile platform scope with `environments` / `required-environments`
+- UVP-090 — Never embed credentials in git or direct-URL dependencies
+- UVP-091 — Declare `[tool.uv] cache-keys` for build inputs outside `pyproject.toml`, and keep `pyproject.toml` in the list
+- UVP-092 — Put uv settings at the workspace root, in one file
 <!-- /toc -->
 
-Detailed entries for `UVP-001..UVP-008` and `UVP-016`. Each follows
+Detailed entries for `UVP-001..UVP-008`, `UVP-016`, `UVP-063`,
+`UVP-064` and `UVP-090..UVP-092`. Each follows
 the four-part **What / Why / How / When NOT to apply** shape.
 
 Citations point at the [uv concepts docs](https://docs.astral.sh/uv/concepts/projects/)
@@ -130,9 +134,9 @@ share nothing is fine too: uv's own example builds `dev` from disjoint
 
 **Why.** An upper bound on `requires-python` is *strongly* user-hostile:
 
-- **Users on a newer Python get a hard install failure.** `pip install myapp` on Python 3.13 errors with "package requires Python <3.13" — even though your code would have worked fine. There's no override.
-- **Transitive blast radius.** When *your* project is a dependency of someone else's, your upper bound caps theirs too. A single capped dep can lock an entire transitive tree to an obsolete Python.
-- **It rarely buys what people think it does.** People add `<4.0` "for safety" — but the resolver already only picks dep versions compatible with whatever Python is actually running. Capping `requires-python` doesn't add safety; it just blocks future Pythons.
+- **It does not stop use on a newer Python.** Adding an upper bound to a project that had none does not prevent it from being used on a too-recent Python: instead of failing, a resolver picks an older release without the bound ([uv resolver internals](https://docs.astral.sh/uv/reference/internals/resolver/#requires-python)). Users on the newer Python silently get your stale release instead of your fix.
+- **uv ignores it on dependencies.** When your package is someone else's dependency, uv considers only the lower bound of its `requires-python`: `>=3.8, <4` is treated as `>=3.8` ([uv resolution docs](https://docs.astral.sh/uv/concepts/resolution/#universal-resolution)). The cap protects nobody who installs with uv.
+- **It rarely buys what people think it does.** People add `<4.0` "for safety", but uv locks one universal resolution for the whole declared `requires-python` range, not just the Python that is running, so the cap makes nothing safer; it only blocks future Pythons for tools that honor it.
 
 The argument *for* an upper bound is sometimes "I haven't tested 3.14
 yet." That belongs in a CHANGELOG note or a CI matrix, not in
@@ -150,13 +154,19 @@ requires-python = ">=3.12"          # good
 ```
 
 If you discover your package genuinely doesn't work on a new Python,
-release a patch version that *capse the broken dependency*, not
+release a patch version that *caps the broken dependency*, not
 `requires-python`.
 
-**When NOT to apply.** A platform with a hard runtime version (AWS
-Lambda runtime, App Engine standard) pins the Python version
-externally. Even then, pin via deploy config / `.python-version`
-(UVP-050), not `requires-python`.
+**When NOT to apply.** An application (never a library) that deploys
+to exactly one Python minor version may pin it, e.g.
+`requires-python = "==3.13.*"`. This is the one upper bound uv
+honors: it prunes wheels outside the range (e.g. `cp312`, `cp314`)
+from `uv.lock` in a post-processing step, without changing the
+resolution itself
+([uv resolver internals](https://docs.astral.sh/uv/reference/internals/resolver/#requires-python)).
+A platform with a hard runtime version (AWS Lambda runtime, App Engine
+standard) that you don't want to bake into the project can instead pin
+via deploy config / `.python-version` (UVP-050).
 
 ---
 
@@ -167,10 +177,18 @@ declare a normal PEP 508 spec in `[project.dependencies]` and the
 source override in `[tool.uv.sources]`. Don't put `git+https://...`
 or `file://...` URLs directly in `[project.dependencies]`.
 
-**Why.** Two real failures:
-
-1. **`uv export --format requirements.txt` breaks.** When you (or a downstream consumer) need a requirements.txt for compatibility (UVP-061), `uv export` can't represent a raw git URL inside `[project.dependencies]` portably across tools — different installers interpret `git+https://...` slightly differently. Sources resolve to standard `name==version` lines in export.
-2. **`pip install` of the published package picks up the git URL as a dependency.** Anyone who installs your published wheel from PyPI inherits a hard dep on git + network access at install time. `[tool.uv.sources]` is uv-specific metadata and *doesn't ship in the wheel*; the published package depends only on the normalized spec.
+**Why.** A raw URL in `[project.dependencies]` goes into the built
+wheel's metadata as a URL dependency, and uv refuses URL dependencies
+that come from registry packages
+([uv resolver internals](https://docs.astral.sh/uv/reference/internals/resolver/#url-dependencies)),
+so a consumer cannot install the published package with uv. Everyone
+else who installs it inherits a hard dependency on git and network
+access to that URL. `[tool.uv.sources]` is read only by uv
+([uv docs — dependency sources](https://docs.astral.sh/uv/concepts/projects/dependencies/#dependency-sources))
+and is not written into the built metadata: a wheel built from a
+project with `helper = { path = "../helper" }` carries only
+`Requires-Dist: helper`. Check that the package also resolves without
+the sources with `uv build --no-sources` (UVP-026).
 
 **How.**
 
@@ -201,12 +219,16 @@ sibling-pkg = { workspace = true }
 ```
 
 **When NOT to apply.** Throwaway prototypes that won't be published
-and won't be exported — a raw `git+https://...` is shorter. Don't do
-this in anything that ships.
+— a raw `git+https://...` is shorter. Don't do this in anything that
+ships. If contributors also develop with another tool, that tool
+ignores `[tool.uv.sources]`, so the source must be re-declared in its
+own format.
 
 ---
 
 ## UVP-005 — `uv init --lib` for libraries, bare `uv init` for apps (packaged since 0.12.0); `--no-package` for a flat layout
+
+**Requires.** uv>=0.12.0
 
 **What.** Pick the layout intentionally:
 
@@ -279,10 +301,11 @@ needs `pydantic==1.x` and member B needs `pydantic==2.x`, uv
 environments. The resolution error is loud but the fix is
 "un-workspace your repo," which is a major refactor.
 
-Two other ways workspaces silently hurt:
+Three other ways workspaces silently hurt:
 
 1. **`requires-python` becomes the intersection.** uv resolves the whole workspace against the *strictest* member's floor. Adding a new member with `requires-python = ">=3.13"` silently raises the floor on every existing member that was happy with 3.10 — including their tests and CI.
 2. **`default-groups` is workspace-wide.** Each member can't have its own. If one member has heavy dev deps and another is lean, both pay the cost.
+3. **Undeclared imports pass.** uv can't stop one member from importing a package that only another member declares ([uv workspaces docs](https://docs.astral.sh/uv/concepts/projects/workspaces/#when-not-to-use-workspaces)). The member's tests pass in the shared venv, then it breaks when installed alone or published. Catch it by running each member's tests after `uv sync --package <member>`, which installs only that member and its own dependencies: an import of a sibling's dependency then fails with `ModuleNotFoundError`.
 
 **How — when a workspace is right.**
 
@@ -387,8 +410,9 @@ CI runners, and production images causes silent resolver-behavior
 differences:
 
 1. **Resolver bug fixes change which versions get picked.** uv ships fast — multiple resolver fixes per minor release. A developer on uv 0.7 and a CI runner on uv 0.5 can produce different `uv.lock` outputs from the same `pyproject.toml`. The diff looks like "someone ran `uv lock` and bumped things they didn't intend to" but it's actually two different resolvers disagreeing.
-2. **Newer config fields are silently ignored on old binaries.** A project that adopts `[tool.uv] conflicts` (UVP-016, requires 0.5.3) or PEP 751 export (requires 0.6.15) "works" on an older uv because the binary skips fields it doesn't understand. The failure is downstream — a conflict isn't enforced, a feature flag has no effect — and very hard to trace back to the version skew.
+2. **Newer config fields are dropped on old binaries with only a warning.** A project that adopts a `[tool.uv]` field newer than the running binary hits an unknown field. uv prints ``warning: Failed to parse `pyproject.toml` during settings discovery``, drops the settings it reads at that stage and carries on with exit 0 (on uv 0.13.7, an `exclude-newer` in the same table stopped taking effect), so the warning is easy to miss in CI. The failure is downstream — a conflict isn't enforced, a setting has no effect — and hard to trace back to the version skew. `required-version` itself is still enforced in that case.
 3. **CI cache from one uv version installed by another.** Mixing uv versions across cache writers and readers occasionally surfaces hash mismatches or "stale cache entry" errors that vanish after `uv cache prune`.
+4. **Minor releases may break.** uv bumps the minor version for breaking changes ([uv versioning policy](https://docs.astral.sh/uv/reference/policies/versioning/)), including `uv.lock` schema bumps that older uv rejects. A floor-only range doesn't stop a contributor on a newer minor from writing a lock an older one can't read; pin the exact uv version CI installs as well (UVP-080).
 
 `required-version` makes the floor explicit and machine-checkable.
 Bump it as you adopt features that require newer uv.
@@ -520,7 +544,8 @@ array can hold multiple independent conflict sets.
 
 In a workspace, all members share one lockfile, so extras in *different*
 members can conflict too. Declare those in the root `pyproject.toml` with
-the `package` key (stable; uv 0.13.5 locks it with no preview warning):
+the `package` key. The `{ package, extra }` and `{ package, group }`
+forms are stable; uv 0.13.7 locks them with no preview warning:
 
 ```toml
 [tool.uv]
@@ -532,8 +557,14 @@ conflicts = [
 ]
 ```
 
-`{ package = "member1" }` with no `extra` names that member's own
-`[project.dependencies]`.
+`{ package = "member1" }` with no `extra` or `group` names that
+member's own `[project.dependencies]`. That bare form is still a preview
+feature (`package-conflicts`): `uv lock` warns
+"Declaring conflicts for packages (`package = ...`) is experimental
+and may change without warning" until you pass
+`--preview-features package-conflicts` or set
+`preview-features = ["package-conflicts"]`, and its behavior may
+change in any release.
 
 **When NOT to apply.** Extras / groups that *can* coexist — the
 common case. Adding entries to `conflicts` for compatible extras
@@ -585,8 +616,16 @@ current machine doesn't need them (catch gaps early).
 **Why.** Without `environments`, uv builds a universal lock spanning
 every platform in `requires-python`'s range — bloat for a service that
 only ships on Linux x86-64. Without `required-environments`, a Linux CI
-job won't notice that a dependency has no macOS-arm64 wheel until someone
-deploys there and the install fails, instead of CI catching it.
+job won't notice that a wheel-only dependency (no sdist, like PyTorch)
+has no macOS-arm64 wheel until someone deploys there and the install
+fails, instead of CI catching it.
+
+Three traps in writing the markers
+([uv resolution docs](https://docs.astral.sh/uv/concepts/resolution/#required-environments)):
+
+1. **`environments` entries must be disjoint.** `sys_platform == 'darwin'` and `sys_platform == 'linux'` are fine; `sys_platform == 'darwin'` and `python_version >= '3.9'` overlap, and `uv lock` fails with `error: Supported environments must be disjoint`.
+2. **Pin a macOS baseline with `==`, not a range.** In `required-environments`, a `platform_release >= '24.0.0'` range can be satisfied by a wheel that supports only a newer macOS. Use `platform_release == '24.0.0'` (Darwin 24 = macOS 15) to require coverage at the baseline; wheels for newer releases are still kept in the lock.
+3. **Markers can't express libc.** To require Linux wheels that run on an older glibc or on musl, add `minimum-libc-version` (`uv>=0.12.17 (preview: minimum-libc-version)`) alongside a `required-environments` entry per Linux architecture. A libc you omit is not required. Without `preview-features = ["minimum-libc-version"]`, `uv lock` warns that the setting is experimental.
 
 **How.**
 
@@ -601,11 +640,148 @@ required-environments = [
   "sys_platform == 'darwin' and platform_machine == 'arm64'",
   "sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
+
+# and require Linux wheels that run on glibc 2.31 (preview)
+[tool.uv]
+preview-features = ["minimum-libc-version"]
+required-environments = [
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
+minimum-libc-version = { glibc = "2.31" }
 ```
 
 **When NOT to apply.** Don't set `environments` on a *published library*
 — contributors on any platform need a universal lock. Use it for
 apps/services with a known deploy target; reach for `required-environments`
 when CI and production run on different platforms.
+
+---
+
+## UVP-090 — Never embed credentials in git or direct-URL dependencies
+
+**What.** A git or direct-URL dependency in `pyproject.toml` carries
+no user, password or token in its URL. Credentials come from outside
+the project: SSH keys or a git credential helper for git, and a
+`.netrc` file or the uv credentials store (`uv auth login`) for a
+`package @ https://...` URL. Index credentials are covered by UVP-025.
+
+**Why.** `pyproject.toml` and `uv.lock` are committed and shipped.
+`uv add` strips credentials from a git URL unless you pass `--raw`
+([uv docs — Git credentials](https://docs.astral.sh/uv/concepts/authentication/git/#persistence-of-credentials)),
+but it *does* persist credentials in a direct URL, because there is no
+other place to put them
+([uv docs — HTTP credentials](https://docs.astral.sh/uv/concepts/authentication/http/#persistence-of-credentials)).
+On uv 0.13.7, `uv add 'pkg @ https://<user>:<token>@host/pkg-1.0-py3-none-any.whl'`
+writes `pkg = { url = "https://<user>:<token>@host/..." }` into
+`[tool.uv.sources]` with the token in clear text, while the same
+credentials on a `git+https://` URL are stripped. A hand-edited URL is never
+stripped. The token then lives in git history, in every clone, and in
+any sdist built from the project.
+
+**How.** Write the URL without credentials and let uv find them:
+
+```toml
+[tool.uv.sources]
+internal-lib = { git = "ssh://git@github.com/myorg/internal-lib", tag = "v1.2.3" }  # SSH key
+vendor-pkg = { url = "https://files.example.com/vendor_pkg-1.0-py3-none-any.whl" }
+```
+
+```bash
+uv auth login files.example.com   # or a ~/.netrc entry; uv reads both for direct URLs
+```
+
+A reviewer can check a project with one grep; every hit is a user or
+token in an HTTP(S) URL and needs a look:
+
+```bash
+grep -nE 'https?://[^/@" ]+@' pyproject.toml uv.lock
+```
+
+**When NOT to apply.** Never. A credential in a committed file is
+leaked; rotate it, even after you remove it. A bare SSH user
+(`ssh://git@github.com/...`) is not a credential.
+
+---
+
+## UVP-091 — Declare `[tool.uv] cache-keys` for build inputs outside `pyproject.toml`, and keep `pyproject.toml` in the list
+
+**What.** When a packaged project's metadata or build output depends
+on inputs other than `pyproject.toml`, `setup.py` and `setup.cfg` — a
+`dynamic` version from git (setuptools-scm, hatch-vcs), dependencies
+read from a requirements file, or compiled sources — list those inputs
+in `[tool.uv] cache-keys`. Setting `cache-keys` replaces the defaults,
+so keep `{ file = "pyproject.toml" }` in the list.
+
+**Why.** By default uv rebuilds and reinstalls a local project (e.g.
+an editable install) only when `pyproject.toml`, `setup.py` or
+`setup.cfg` changes, or when a `src` directory is added or removed
+([uv docs — dynamic metadata](https://docs.astral.sh/uv/concepts/cache/#dynamic-metadata)).
+Anything else goes stale silently. With setuptools reading
+dependencies from `requirements.txt`, adding `anyio` to that file and
+running `uv sync` printed `Requirement already installed` and never
+installed `anyio`; after adding the file to `cache-keys`, the next
+`uv sync` rebuilt the metadata and installed it. The workaround
+people reach for, `--reinstall`, has to be remembered on every change.
+
+**How.**
+
+```toml
+[tool.uv]
+# version from setuptools-scm / hatch-vcs: rebuild on every commit (add tags = true if tags feed the version)
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true } }]
+
+# dependencies read from a requirements file
+# cache-keys = [{ file = "pyproject.toml" }, { file = "requirements.txt" }]
+```
+
+`uv init --build-backend maturin` or `scikit-build-core` already
+writes `cache-keys` for common source file types
+([uv docs — creating a project](https://docs.astral.sh/uv/concepts/projects/init/));
+extend that list rather than replacing it. `cache-keys` affects only
+the project whose `pyproject.toml` declares it, so in a workspace set
+it in each member that needs it.
+
+**When NOT to apply.** A project with static metadata and no compiled
+code: an editable install already sees source edits, and the defaults
+cover the files that change its metadata. A project with no build
+system is never built, so there is nothing to cache.
+
+---
+
+## UVP-092 — Put uv settings at the workspace root, in one file
+
+**What.** In a workspace, keep `[tool.uv]` settings in the root
+`pyproject.toml`. Members keep only per-project fields such as
+`[tool.uv.sources]`, `package` and `cache-keys`. Don't put both a
+`uv.toml` and a `[tool.uv]` table in the same directory.
+
+**Why.** Settings in the wrong place silently do nothing:
+
+- **Member settings are ignored.** uv begins its configuration search at the workspace root and ignores configuration in members ([uv docs — configuration files](https://docs.astral.sh/uv/concepts/configuration-files/)). On uv 0.13.7, a member's `required-version = "==0.1.0"` let `uv lock` exit 0, and a member's `constraint-dependencies` or `override-dependencies` pinning `iniconfig==1.1.1` still locked `iniconfig` 2.3.1. No warning in either case.
+- **Some settings are read only from the root `pyproject.toml`.** `override-dependencies`, `build-constraint-dependencies` and `exclude-dependencies` are never read from `uv.toml` ([uv settings reference](https://docs.astral.sh/uv/reference/settings/#override-dependencies)). On uv 0.13.7, `override-dependencies` in a root `uv.toml` was ignored without a warning.
+- **`uv.toml` shadows `[tool.uv]`.** When both are present in one directory, uv reads `uv.toml` and ignores the adjacent `[tool.uv]` table. uv 0.13.7 does warn here (``Found both a `uv.toml` file and a `[tool.uv]` section in an adjacent `pyproject.toml` ``) and lists the ignored fields.
+
+**How.**
+
+```toml
+# pyproject.toml at the workspace root
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv]
+required-version = ">=0.13"
+constraint-dependencies = ["urllib3>=2"]
+```
+
+```toml
+# packages/api/pyproject.toml: per-project fields only
+[tool.uv.sources]
+models = { workspace = true }
+```
+
+**When NOT to apply.** A project that is not a workspace has one
+`pyproject.toml`, so its settings are already at the root. The
+`uv.toml` precedence rule still applies to it.
 
 ---

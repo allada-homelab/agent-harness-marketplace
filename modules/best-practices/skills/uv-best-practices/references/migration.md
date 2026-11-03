@@ -9,15 +9,16 @@
 - UVP-074 — Generate a CycloneDX SBOM with `uv export --format cyclonedx1.5`
 <!-- /toc -->
 
-Detailed entries for `UVP-060..UVP-062`. Covers migrating to uv from
+Detailed entries for `UVP-060..UVP-062` and `UVP-074`. Covers migrating to uv from
 pip / poetry / pdm / hatch, the `uv export` escape hatch for
-downstream consumers that need `requirements.txt`, and the newer
-`pylock.toml` (PEP 751) export format.
+downstream consumers that need `requirements.txt`, the newer
+`pylock.toml` (PEP 751) export format, and CycloneDX SBOM export.
 
 Citations point at
 [Astral's `migrate-to-uv` tool](https://github.com/astral-sh/migrate-to-uv),
 the
 [Rippling migration write-up](https://www.rippling.com/blog/rippling-migration-to-uv-from-poetry-python-dependency-management-at-scale),
+[uv's pip migration guide](https://docs.astral.sh/uv/guides/migration/pip-to-project/),
 and
 [uv export docs](https://docs.astral.sh/uv/concepts/projects/export/).
 
@@ -90,6 +91,34 @@ through staging before merging. The Rippling write-up describes
 running the old and new environments in parallel for a period to
 catch differences.
 
+**Manual path for pip / pip-tools** (uv's own
+[pip migration guide](https://docs.astral.sh/uv/guides/migration/pip-to-project/#importing-requirements-files);
+uv's docs do not mention `migrate-to-uv`). Import the unpinned `.in`
+files, and pass the old compiled `.txt` files as constraints with `-c`
+so the versions do not move. Without `-c`, uv solves the `.in` file
+again and picks new versions: the same drift as above.
+
+```bash
+uv init
+
+# runtime deps; the old pins become constraints for the new uv.lock
+uv add -r requirements.in -c requirements.txt
+
+# dev deps: strip `-r requirements.in` include lines first,
+# or the base deps also land in the dev group
+sed '/^-r /d' requirements-dev.in | uv add --dev -r - -c requirements-dev.txt
+
+# any other group
+uv add -r requirements-docs.in -c requirements-docs.txt --group docs
+```
+
+Platform-specific compiled files (`requirements-win.txt` and so on)
+have no markers, so they conflict as constraints. Add the markers
+first with `uv pip compile requirements.in -o requirements-win.txt
+--python-platform windows --no-strip-markers`, then pass each file
+with its own `-c`. Diff the resolved versions as in step 3 before
+committing.
+
 **When NOT to apply.** Brand-new projects use `uv init` directly,
 not the migration tool. The migration tool is for *existing*
 projects with a non-uv lockfile/manifest.
@@ -104,10 +133,15 @@ generate it from the lockfile via `uv export` as a build artifact —
 don't commit it.
 
 ```bash
-uv export --format requirements.txt \
+# dependency-only artifact (e.g. a Lambda layer)
+uv export --locked --format requirements.txt \
   --no-hashes \
   --no-dev \
   --no-emit-project \
+  -o requirements.txt
+
+# bundle that includes the project itself (e.g. a Lambda zip)
+uv export --locked --format requirements.txt --no-dev --no-editable \
   -o requirements.txt
 ```
 
@@ -139,7 +173,7 @@ jobs:
       - uses: astral-sh/setup-uv@<sha> # v8.1.0
       - name: Export requirements for Lambda layer
         run: |
-          uv export \
+          uv export --locked \
             --format requirements.txt \
             --no-hashes \
             --no-dev \
@@ -154,15 +188,17 @@ jobs:
 ```
 
 If your CI gate or organization *insists* on a committed
-`requirements.txt`, verify it matches the lockfile-generated version
-on every PR:
+`requirements.txt`, generate it with `--no-header` and verify it
+matches the lockfile-generated version on every PR. The default
+header records the full command, including the `-o` path, so an
+export to a different path never compares equal:
 
 ```yaml
+# committed with: uv export --locked --format requirements.txt --no-hashes --no-dev --no-header -o requirements.txt
 - name: Check requirements.txt is current
   run: |
-    uv export --format requirements.txt --no-hashes --no-dev \
-      -o /tmp/requirements.txt
-    diff requirements.txt /tmp/requirements.txt || \
+    uv export --locked --format requirements.txt --no-hashes --no-dev --no-header \
+      | diff requirements.txt - || \
       { echo "requirements.txt is stale; regenerate with 'uv export'"; exit 1; }
 ```
 
@@ -171,6 +207,8 @@ copy is committed.
 
 Flag rationale:
 
+- `--locked` — Fail when `uv.lock` is out of date with `pyproject.toml` ("The lockfile at `uv.lock` needs to be updated, but `--locked` was provided."). With `--frozen`, as in uv's [Lambda guide](https://docs.astral.sh/uv/guides/integration/aws-lambda/), a stale lock is exported as-is with no error; use `--frozen` only after a separate `uv lock --check` gate.
+- `--no-editable` — Needed when the export includes the project. Without it the project line is `-e .`, an editable install that does not work in a zip or layer; with it the line is `.`.
 - `--no-hashes` — Lambda layer install via `pip install -r` doesn't need hash verification (the wheel is already trusted via the lockfile); hashes make the file noisy.
 - `--no-dev` — Strip dev-group deps from the export. Critical: without this, `pytest` and friends ship to production.
 - `--no-emit-project` — Don't include the project itself as a `-e .` line. Lambda layer / deploy artifacts install the project separately.
@@ -204,7 +242,7 @@ artifact for consumers.
 
 1. **Standard TOML, hashes mandatory.** Every entry has a content hash, package source URL, and Python/platform markers. `requirements.txt` has all of this as ad-hoc text the consumer's tool has to parse heuristically; `pylock.toml` is a real schema you can validate.
 2. **Multi-Python / multi-platform in one file.** A single `pylock.toml` can express "on Linux+3.12 use these versions, on macOS+3.13 use those." `requirements.txt` requires one file per target or messy marker syntax. For libraries / CLIs distributed across platforms, this is significant.
-3. **Tool-neutral by design.** pip 25.1+ installs from `pylock.toml`. Other resolvers (Poetry, PDM) are adopting it. uv's own export round-trips correctly. The format is no longer "the uv format" or "the pip format" — it's *the* format, when downstream tooling has caught up.
+3. **Tool-neutral by design.** pip 26.1+ installs from `pylock.toml` via `pip install -r pylock.toml` (experimental in pip; pip 25.1 added only the `pip lock` writer, and pip ≤26.0 rejects the file as an invalid requirements file). Other resolvers (Poetry, PDM) are adopting it. uv's own export round-trips correctly. The format is no longer "the uv format" or "the pip format" — it's *the* format, when downstream tooling has caught up.
 
 The blocker in 2026 is still **adoption gaps in deploy targets**:
 
@@ -213,7 +251,7 @@ The blocker in 2026 is still **adoption gaps in deploy targets**:
 - Older self-hosted private registries / proxies that read requirements files.
 
 For *those* targets, UVP-061 (`requirements.txt`) is still correct.
-For modern targets — `pip install` ≥ 25.1, Nix's Python infra, most
+For modern targets — `pip install` ≥ 26.1, Nix's Python infra, most
 new tooling — `pylock.toml` is preferred.
 
 Critically, **do not replace `uv.lock` with `pylock.toml`**. The PEP
@@ -228,11 +266,11 @@ for git deps, workspace member topology). A round-trip
 # .github/workflows/deploy.yml — pylock-aware target
 - name: Export pylock.toml for deploy
   run: |
-    uv export --format pylock.toml \
+    uv export --locked --format pylock.toml \
       --no-dev \
       --no-emit-project \
       -o pylock.toml
-- name: Install into deploy artifact via pip ≥25.1
+- name: Install into deploy artifact via pip ≥26.1
   run: |
     pip install --target ./package -r pylock.toml
 ```
@@ -246,23 +284,25 @@ For platforms still on `requirements.txt`, generate both as needed:
   run: uv export --format requirements.txt --no-hashes --no-dev -o requirements.txt
 ```
 
-`pylock.toml` from `uv export` includes hashes by default (PEP 751
-requires them); there's no `--no-hashes` equivalent because removing
-hashes would violate the spec.
+`pylock.toml` from `uv export` always includes hashes. uv 0.13.7
+accepts `--no-hashes` with `--format pylock.toml`, but the output
+still has every hash, so do not rely on the flag here.
 
-If you must commit a `pylock.toml` (some CI gates), verify it matches
-the lockfile on every PR:
+If you must commit a `pylock.toml` (some CI gates), generate it with
+`--no-header` (the default header records the `-o` path) and verify
+it matches the lockfile on every PR:
 
 ```yaml
+# committed with: uv export --locked --format pylock.toml --no-dev --no-header -o pylock.toml
 - name: Check pylock.toml is current
   run: |
-    uv export --format pylock.toml --no-dev -o /tmp/pylock.toml
-    diff pylock.toml /tmp/pylock.toml || \
+    uv export --locked --format pylock.toml --no-dev --no-header \
+      | diff pylock.toml - || \
       { echo "pylock.toml is stale; regenerate with 'uv export'"; exit 1; }
 ```
 
 **When NOT to apply.** Deploy targets that don't yet understand
-`pylock.toml` — Lambda, older PaaS, anything pinned to a pre-25.1
+`pylock.toml` — Lambda, older PaaS, anything pinned to a pre-26.1
 pip. For those, stay on UVP-061 (`requirements.txt`) until the
 target catches up.
 
@@ -274,7 +314,7 @@ target catches up.
 
 **What.** Since uv 0.9.11, `uv export --format cyclonedx1.5` emits a
 CycloneDX v1.5 Software Bill of Materials from the resolved lockfile.
-It is still **experimental** in uv 0.13.5: without
+It is still **experimental** in uv 0.13.7: without
 `--preview-features sbom-export` it warns that the format "may change
 without warning". This is
 distinct from `pylock.toml` (UVP-062): a lockfile is for *reproducible

@@ -8,13 +8,18 @@
 - UVP-022 — Set `UV_PROJECT_ENVIRONMENT` to an absolute path scoped to one project
 - UVP-023 — Configure `default-groups` deliberately
 - UVP-024 — PEP 723 inline scripts: manage deps with `uv add --script`, lock with `uv lock --script`
-- UVP-025 — Use `[[tool.uv.index]]` named indexes; mark private indexes `explicit = true`
+- UVP-025 — Use named `[[tool.uv.index]]` entries, keep the `first-index` strategy, and keep credentials out of the URL
 - UVP-066 — `uv run --with` builds an ephemeral overlay; add `--no-project --isolated` for true isolation
 - UVP-068 — Use `--active` to make uv respect an activated venv
 - UVP-077 — In a workspace, `uv sync --all-packages` installs every member; bare `uv sync` does not
+- UVP-082 — Behind a TLS-intercepting proxy, trust the corporate CA with `system-certs`; never commit `allow-insecure-host`
+- UVP-083 — Augment build dependencies with `extra-build-dependencies` instead of `no-build-isolation-package`
+- UVP-084 — Do not `uv pip install` into a project environment
+- UVP-085 — Keyring index auth needs `keyring-provider = "subprocess"` and a `keyring` on PATH, installed from public PyPI
 <!-- /toc -->
 
-Detailed entries for `UVP-020..UVP-025`. Covers production sync
+Detailed entries for `UVP-020..UVP-025`, `UVP-066`, `UVP-068`, `UVP-077`
+and `UVP-082..UVP-085`. Covers production sync
 patterns, `uv run` vs venv activation, `UV_PROJECT_ENVIRONMENT`,
 `default-groups` configuration, PEP 723 inline scripts, and named
 indexes via `[[tool.uv.index]]`.
@@ -292,7 +297,7 @@ typos in the format produce confusing errors). And — critically —
 PEP 723 scripts run in an **isolated environment that ignores the
 surrounding project's lockfile**:
 
-1. **Project deps are invisible inside the script env.** If `analyze.py` lives at the root of a uv project with `httpx` in `[project.dependencies]`, `uv run --script analyze.py` still won't have httpx available unless `analyze.py`'s inline block declares it. This is by design (scripts are portable; they should work checked out alone) but trips up users who expect "run script in this project" semantics. For project-aware execution use `uv run analyze.py` *without* `--script`.
+1. **Project deps are invisible inside the script env.** If `analyze.py` lives at the root of a uv project with `httpx` in `[project.dependencies]`, `uv run analyze.py` still won't have httpx available unless `analyze.py`'s inline block declares it. Dropping `--script` does not change this: "Scripts that declare inline metadata are automatically executed in environments isolated from the project" ([run docs](https://docs.astral.sh/uv/concepts/projects/run/#running-scripts)), and "the `--no-project` flag is not required" ([scripts guide](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies)). This is by design (scripts are portable; they should work checked out alone) but trips up users who expect "run script in this project" semantics. For project-aware execution, remove the `# /// script` block or make the script a `[project.scripts]` entry point.
 2. **No lockfile by default.** `uv run --script` happily re-resolves on every cold cache, mirroring the `uvx <tool>` footgun (UVP-041). Pin the script's deps with `uv lock --script analyze.py`, which produces a sibling `analyze.py.lock` file. Commit the lockfile if the script is shared.
 3. **Editing the metadata by hand drifts from intent.** `uv add --script` writes the spec uv expects to read back; hand-edits ("oh, I'll just tighten the version") often work but occasionally break the field encoding.
 
@@ -327,8 +332,36 @@ uv run --script analyze.py
 uv lock --script analyze.py --upgrade-package httpx
 ```
 
+To make a script executable, give it the documented shebang above its
+inline block, then `chmod +x analyze.py` and run `./analyze.py`
+([scripts guide](https://docs.astral.sh/uv/guides/scripts/#using-a-shebang-to-create-an-executable-file)):
+
+```python
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["httpx>=0.27"]
+# ///
+```
+
+If the repo uses Renovate, list each inline-metadata script in the
+`pep723` manager's `managerFilePatterns`: Renovate cannot detect them,
+so their dependencies otherwise never get update PRs. Renovate also does
+not update the script's `.lock` file, so re-run `uv lock --script` by
+hand after it bumps one
+([Renovate guide](https://docs.astral.sh/uv/guides/integration/renovate/#inline-script-metadata)):
+
+```json5
+// renovate.json5
+{
+  pep723: {
+    managerFilePatterns: ["scripts/**/*.py"],
+  },
+}
+```
+
 For a script that genuinely needs to import the surrounding project,
-**don't use `--script`** — make the script a project entry point
+**don't give it inline metadata** — make it a project entry point
 (`src/myapp/scripts/analyze.py` + a `[project.scripts]` entry) and
 invoke via `uv run analyze`.
 
@@ -340,38 +373,38 @@ replacement.
 
 ---
 
-## UVP-025 — Use `[[tool.uv.index]]` named indexes; mark private indexes `explicit = true`
+## UVP-025 — Use named `[[tool.uv.index]]` entries, keep the `first-index` strategy, and keep credentials out of the URL
 
 **What.** Configure additional package indexes — internal company
 registries, PyTorch's CUDA wheel host, the TestPyPI staging
-registry — via `[[tool.uv.index]]` blocks in `pyproject.toml`, **not**
-via deprecated `--index-url` / `--extra-index-url` flags or
-`[tool.uv] index-url` / `extra-index-url`. For private indexes, set
-`explicit = true` so packages only resolve there when pinned via
-`[tool.uv.sources]`.
+registry — via named `[[tool.uv.index]]` blocks in `pyproject.toml`,
+**not** via the legacy `[tool.uv] index-url` / `extra-index-url`
+settings (the settings schema marks both "(Deprecated: use `index`
+instead.)"), the `--index-url` / `--extra-index-url` flags (uv 0.13.7
+`--help` marks them deprecated in favour of `--default-index` /
+`--index`), or `UV_INDEX_URL` / `UV_EXTRA_INDEX_URL`. Leave
+`index-strategy` at its `first-index` default. Use `explicit = true`
+on an index that should serve only the packages you route to it via
+`[tool.uv.sources]` (e.g. a PyTorch wheel index). Keep the index URL
+free of credentials and supply them per install context.
 
 ```toml
 [[tool.uv.index]]
-name = "internal"
+name = "internal"                # named: enables UV_INDEX_INTERNAL_* credentials
 url = "https://pypi.corp.example/simple"
-explicit = true                  # packages must opt in via [tool.uv.sources]
-
-[[tool.uv.index]]
-name = "pypi"
-url = "https://pypi.org/simple"
-default = true
-
-[tool.uv.sources]
-internal-lib = { index = "internal" }
+# first-index: a package found here is never taken from PyPI
 ```
 
 See the [uv indexes docs](https://docs.astral.sh/uv/concepts/indexes/).
 
-**Why.** Three real failure modes from the older / unsafe shapes:
+**Why.** Four real failure modes:
 
-1. **Dependency confusion via `--extra-index-url`.** When two indexes both serve a package named `internal-lib` — one your real internal one, one a public-PyPI squat — uv's default `index-strategy = "first-index"` picks the first match. With `--extra-index-url` (no `explicit`), the resolver checks *all* indexes for *every* package, so a typo or a typosquatter can serve your "private" package from public PyPI. This is the [pytosquatting attack class](https://pytosquatting.overtag.dk/) that hit PyTorch's nightly index in 2023. `explicit = true` forces a `[tool.uv.sources]` pin: the index is only consulted for packages you've explicitly routed there.
-2. **`index-strategy = "unsafe-best-match"` defeats `first-index` safety.** The strategy controls how uv picks between versions across indexes. The default (`first-index`) stops at the first index that has the package; `unsafe-best-match` searches *all* indexes and picks the highest version. The latter brings back the dependency-confusion vector — a higher version on public PyPI overrides a pinned lower version on your internal. The name is honest: it's unsafe. Never set this for private-index setups.
-3. **Deprecated `--index-url` / `[tool.uv] index-url` is ambiguous about precedence.** Newer `[[tool.uv.index]]` blocks have clear ordering (top-to-bottom, with `default = true` marking the fallback). The old single-field form silently overrides PyPI as the default; mixed configs (some old, some new) produce surprising resolution.
+1. **Dependency confusion is what `first-index` prevents — keep it.** Under the default strategy, a package that exists on an index listed before PyPI (whether from `[[tool.uv.index]]`, `--index` or `--extra-index-url`) is "_always_ installed from that internal index, and never from PyPI" ([indexes docs](https://docs.astral.sh/uv/concepts/indexes/#searching-across-multiple-indexes)), which is the defence against the [`torchtriton` attack](https://pytorch.org/blog/compromised-nightly-dependency/) of December 2022. In uv 0.13.7, with an internal flat index serving `six` 0.0.1, `uv lock --upgrade` kept `six` 0.0.1 from the internal index although PyPI has 1.17.0. The residual risk is a package that is *missing* from the internal index: uv then falls through to PyPI, where anyone can register that name.
+2. **`index-strategy = "unsafe-best-match"` brings dependency confusion back.** `unsafe-best-match` selects the best version from all indexes combined; the docs warn it "exposes users to the risk of 'dependency confusion' attacks". In the same project, `uv lock --upgrade --index-strategy unsafe-best-match` moved `six` from the internal 0.0.1 to PyPI's 1.17.0 — exactly what a squatter publishing a higher version on PyPI exploits. Never set it for private-index setups.
+3. **`default = true` on any index removes PyPI as the fallback.** PyPI is only the default until another entry claims `default = true` (or `--default-index` is passed); `--index-url` is the legacy spelling of the same thing. In uv 0.13.7, a project whose only index was a `default = true` internal index failed `uv add idna` with "idna was not found in the package registry". Set it on a private index only when that index proxies everything you need.
+4. **Credentials do not travel with the project.** "Credentials are _never_ stored in the `uv.lock` file", and `uv add` does not persist credentials attached to an index URL into `pyproject.toml` or `uv.lock` ([HTTP authentication docs](https://docs.astral.sh/uv/concepts/authentication/http/#persistence-of-credentials)), so every install context — CI, Docker, each developer — needs its own source: environment variables, netrc, keyring or `uv auth`. The environment-variable form only works for a *named* index and only when the variable name matches it: `UV_INDEX_<NAME>_USERNAME` / `_PASSWORD`, where `<NAME>` is the index `name` uppercased with non-alphanumeric characters replaced by `_` (`internal-proxy` → `UV_INDEX_INTERNAL_PROXY_PASSWORD`). Also: uv first tries a request without credentials, and an index that forwards unauthenticated requests to PyPI (e.g. GitLab) never fails it, so uv never sends credentials unless the index sets `authenticate = "always"` ([indexes docs](https://docs.astral.sh/uv/concepts/indexes/#using-credential-providers)).
+
+The legacy `index-url` / `extra-index-url` forms follow the same priority rules (`--index-url` is an unnamed `default = true` entry, `--extra-index-url` an unnamed `--index`), but uv 0.13.7 prints no warning for them — a project with both in `[tool.uv]` locked silently — so a reviewer has to catch them. Being unnamed, they also cannot be targeted by `[tool.uv.sources]` or `UV_INDEX_<NAME>_*` credentials.
 
 **How.**
 
@@ -385,16 +418,15 @@ default = true                   # fallback for everything not pinned
 
 [[tool.uv.index]]
 name = "internal"
-url = "https://pypi.corp.example/simple"
-explicit = true                  # never auto-consulted; opt-in only
+url = "https://pypi.corp.example/simple"   # no credentials in the URL
+# authenticate = "always"                  # only if the index forwards anonymous requests to PyPI
 
 [[tool.uv.index]]
 name = "pytorch-cu121"
 url = "https://download.pytorch.org/whl/cu121"
-explicit = true
+explicit = true                  # serves only packages routed here below
 
 [tool.uv.sources]
-internal-models = { index = "internal" }
 torch = { index = "pytorch-cu121" }
 
 # Strategy: keep the safe default. Do NOT set:
@@ -402,8 +434,14 @@ torch = { index = "pytorch-cu121" }
 # index-strategy = "unsafe-best-match"   # disables dep-confusion protection
 ```
 
+Migrate legacy settings: `[tool.uv] index-url = "…"` becomes a named
+`[[tool.uv.index]]` entry with `default = true`; each `extra-index-url`
+becomes a named `[[tool.uv.index]]` entry; on the CLI use
+`--default-index` / `--index`.
+
 Authentication for private indexes goes through environment variables
-that match the index name:
+derived from the index name (`internal` → `INTERNAL`; `internal-proxy`
+→ `INTERNAL_PROXY`):
 
 ```bash
 export UV_INDEX_INTERNAL_USERNAME="${INTERNAL_USER}"
@@ -411,6 +449,7 @@ export UV_INDEX_INTERNAL_PASSWORD="${INTERNAL_TOKEN}"
 ```
 
 In CI, set those via the runner's secret store; never commit credentials.
+For keyring-based providers, see UVP-085.
 On a developer machine, `uv auth login` (uv 0.8.15+) stores them once
 instead; read the secret from stdin so it stays out of shell history:
 
@@ -521,5 +560,174 @@ uv run --all-packages pytest             # keeps the members installed while run
 **When NOT to apply.** Workspaces whose root depends on every member
 already get them all from bare `uv sync`. Per-member CI jobs use
 `--package` instead (UVP-069).
+
+---
+
+## UVP-082 — Behind a TLS-intercepting proxy, trust the corporate CA with `system-certs`; never commit `allow-insecure-host`
+
+**Requires.** uv>=0.11.0
+
+**What.** When a corporate proxy re-signs HTTPS traffic, make uv trust
+the corporate root through the operating system's certificate store:
+`system-certs = true` in `uv.toml`, `UV_SYSTEM_CERTS=true`, or
+`--system-certs`. If you must point uv at a bundle instead, give
+`SSL_CERT_FILE` / `SSL_CERT_DIR` a *complete* PEM bundle (public roots
+plus the corporate CA). Do not add `allow-insecure-host` to
+`pyproject.toml`, `uv.toml` or CI.
+
+**Why.** `allow-insecure-host` turns verification off for those hosts;
+the settings schema warns it "bypasses SSL verification and could
+expose you to MITM attacks". `SSL_CERT_FILE` / `SSL_CERT_DIR` fail the
+other way: when set, they "**override** the default certificate source
+entirely — only the provided certificates will be trusted. If a
+configured file or directory does not exist or contains no valid
+certificates, no default certificates will be trusted", and DER-encoded
+files are not supported
+([certificates docs](https://docs.astral.sh/uv/concepts/authentication/certificates/#custom-certificates)).
+In uv 0.13.7, `SSL_CERT_FILE` pointing at a missing file made a
+`uv pip install` against pypi.org fail with `invalid peer certificate:
+UnknownIssuer`. A bundle holding only the corporate CA breaks every
+host the proxy does not intercept in the same way.
+
+**How.**
+
+```toml
+# uv.toml (or ~/.config/uv/uv.toml on a managed workstation)
+system-certs = true
+```
+
+```bash
+# CI runner or container image whose OS store already holds the corporate CA
+export UV_SYSTEM_CERTS=true
+```
+
+Below uv 0.11.0 the same switch is spelled `--native-tls` /
+`UV_NATIVE_TLS` (deprecated in 0.11.0 with identical behaviour).
+
+**When NOT to apply.** Machines without an intercepting proxy: uv's
+bundled Mozilla roots are the default and need no setting. A
+throwaway local index on `localhost` with a self-signed certificate may
+use `allow-insecure-host` on the command line, never in committed
+config.
+
+---
+
+## UVP-083 — Augment build dependencies with `extra-build-dependencies` instead of `no-build-isolation-package`
+
+**Requires.** uv>=0.10.0
+
+**What.** When a source distribution fails to build because its build
+backend needs a package it does not declare (`cython`, `torch`), add
+that package to the build's isolated environment with
+`[tool.uv.extra-build-dependencies]` rather than disabling build
+isolation for it with `no-build-isolation-package`.
+
+**Why.** The uv docs recommend "augmenting the build dependencies
+rather than disabling build isolation entirely, as the latter approach
+requires that the build dependencies are installed in the project
+environment _prior_ to installing the package itself, which can lead to
+more complex installation steps, the inclusion of extraneous packages
+in the project environment, and difficulty in reproducing the project
+environment in other contexts"
+([build isolation docs](https://docs.astral.sh/uv/concepts/projects/config/#build-isolation)).
+With `no-build-isolation-package`, `cython` and `setuptools` become
+runtime dependencies of your project only so that one package can be
+built.
+
+**How.**
+
+```toml
+[project]
+dependencies = ["cchardet", "deepspeed", "torch"]
+
+[tool.uv.extra-build-dependencies]
+cchardet = ["cython"]
+# build against the same torch the project installs
+deepspeed = [{ requirement = "torch", match-runtime = true }]
+```
+
+**When NOT to apply.** Projects below uv 0.10.0, where
+`extra-build-dependencies` is a preview feature. Packages whose build
+must see the project environment itself rather than a pinned build
+dependency; disable isolation for those and declare their build
+dependencies explicitly.
+
+---
+
+## UVP-084 — Do not `uv pip install` into a project environment
+
+**What.** In a uv project (a `pyproject.toml` with `uv.lock`), add
+packages with `uv add`, a dependency group, or a one-off `uv run --with`
+/ `uvx` — not with `uv pip install` into `.venv`.
+
+**Why.** The docs say "It is _not_ recommended to modify the project
+environment manually, e.g., with `uv pip install`"
+([project layout docs](https://docs.astral.sh/uv/concepts/projects/layout/#the-project-environment)).
+The package is not in `uv.lock`, so it is invisible to every other
+machine, and it vanishes unevenly: `uv sync` is exact by default and
+removes packages "not selected for installation"
+([sync docs](https://docs.astral.sh/uv/concepts/projects/sync/#handling-of-extraneous-packages)),
+while `uv run` "does not remove extraneous packages"
+([projects guide](https://docs.astral.sh/uv/guides/projects/#running-commands)).
+In uv 0.13.7, `six` installed with `uv pip install` was still importable
+under `uv run` but gone after the next `uv sync` — so code works on the
+machine that ran the install and fails in CI.
+
+**How.**
+
+```bash
+uv add six                          # runtime dependency, locked
+uv add --dev ipdb                   # dev-only tool, locked
+uv run --with rich python report.py # one-off, never touches .venv
+```
+
+**When NOT to apply.** Environments that are not uv projects (a plain
+venv managed with `uv venv` + `uv pip`). Inside a project, a quick
+throwaway experiment is fine if you accept that the next `uv sync`
+removes it.
+
+---
+
+## UVP-085 — Keyring index auth needs `keyring-provider = "subprocess"` and a `keyring` on PATH, installed from public PyPI
+
+**What.** To authenticate to a private index through a keyring plugin
+(Google Artifact Registry, AWS CodeArtifact, Azure Artifacts), set
+`keyring-provider = "subprocess"` (or `UV_KEYRING_PROVIDER=subprocess`),
+put a `keyring` executable on `PATH`, and install `keyring` with its
+plugin from public PyPI as a uv tool. Do not declare `keyring` or the
+plugin as a project dependency.
+
+**Why.** Keyring lookup is off by default (`disabled` is the default
+provider), and `subprocess` is the only other mode: "The 'subprocess'
+keyring provider invokes the `keyring` command to fetch credentials. uv
+does not support additional keyring provider types at this time"
+([HTTP authentication docs](https://docs.astral.sh/uv/concepts/authentication/http/#keyring-providers)).
+A plugin installed without the setting is never consulted, and auth
+fails. The plugin cannot come from the index it authenticates against:
+"Because these two packages are required to authenticate to Artifact
+Registry, they must be pre-installed from a source other than Artifact
+Registry"
+([Google guide](https://docs.astral.sh/uv/guides/integration/google/#authenticate-with-keyring-and-keyringsgoogle-artifactregistry-auth)).
+As a project dependency it would be fetched by the very sync that needs
+it, so a clean CI runner cannot bootstrap.
+
+**How.**
+
+```bash
+# Pre-install keyring and the plugin from public PyPI
+uv tool install keyring --with keyrings.google-artifactregistry-auth
+
+export UV_KEYRING_PROVIDER=subprocess
+export UV_INDEX_PRIVATE_REGISTRY_USERNAME=oauth2accesstoken   # username the plugin expects
+```
+
+`tool.uv.keyring-provider = "subprocess"` in `pyproject.toml` or
+`uv.toml` does the same as the variable. The `keyring` CLI needs a
+username in the URL; the vendor guides name it (`oauth2accesstoken` for
+Artifact Registry, `aws` for CodeArtifact).
+
+**When NOT to apply.** Indexes that accept a static token: pass it with
+`UV_INDEX_<NAME>_PASSWORD` or `uv auth login` (UVP-025) and skip
+keyring entirely.
 
 ---
