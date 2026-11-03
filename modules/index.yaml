@@ -553,7 +553,7 @@ modules:
     - native-binary
     - python-bytecode
     - reverse-engineering
-    command: false
+    command: true
     summary: Reverse-engineer a compiled target with REA (Reverse Engineer Anything).
 - name: sleep-guard
   version: 0.1.0
