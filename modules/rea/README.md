@@ -16,7 +16,11 @@ directory at `/analysis`), because a committed `mcp.json` is not viable here:
 
 So the skill gives the exact commands — decompile a function, inspect a binary's
 layout, extract Go metadata, search/xref/trace — and how to read the Evidence
-output. See `skills/rea/SKILL.md` for the full command reference.
+output. It also starts with target-type selection (REA is native-only), and
+covers non-native targets: Python bytecode reconstruction via the CPython
+`marshal`/`dis` technique, upstream-source matching for forks, and the
+provenance/verification discipline that keeps reconstructed source trustworthy.
+See `skills/rea/SKILL.md` for the full command reference.
 
 Not for Claude Code: this module ships no `.claude-plugin/plugin.json` and no
 marketplace entry.
