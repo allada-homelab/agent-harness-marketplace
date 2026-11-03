@@ -17,7 +17,9 @@ import artifactctl  # noqa: E402
 TEMPLATES = sorted((SKILL / "templates").glob("*.html"))
 SIZE_BUDGET = 30 * 1024
 CHROME = artifactctl.find_chrome(os.environ, shutil.which, sys.platform)
-needs_chrome = pytest.mark.skipif(CHROME is None, reason="no Chrome installed")
+# Opt-in: headless renders are the slow tail of bin/check.sh locally; CI sets the variable.
+needs_chrome = pytest.mark.skipif(not os.environ.get("ARTIFACTS_RENDER_TESTS") or CHROME is None,
+                                  reason="set ARTIFACTS_RENDER_TESTS=1 with Chrome installed")
 
 
 def test_templates_exist():

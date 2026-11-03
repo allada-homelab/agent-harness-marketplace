@@ -41,6 +41,8 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
       - name: bin/check.sh
         run: CHECK_BASE=origin/main ./bin/check.sh
+        env:
+          ARTIFACTS_RENDER_TESTS: "1"  # the Chrome render tests are opt-in; CI keeps them
 
   smoke:
     runs-on: ubuntu-latest
