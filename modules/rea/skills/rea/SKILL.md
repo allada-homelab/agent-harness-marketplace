@@ -154,6 +154,20 @@ carries evidence. Then:
 - Record the verification scope in the write-up: "all N non-test modules parse"
   means nothing if the reader cannot tell which N.
 
+### Prioritize production modules over test files
+
+A decompile-all sweep covers test files too, but they are the lowest-value
+output: tests describe expected behavior, not shipped logic, and their source of
+truth is often upstream (or they are trivial). By default:
+
+- identify test artifacts first (`test/`, `tests/`, `unit/`, `test_*.py`,
+  `*_test.py`, fixtures) and schedule them **last**;
+- if the analysis targets behavior, a bug, or a data path, skip them entirely
+  until the production modules are reconstructed and verified — and check with
+  the user before spending a pass on them;
+- decompile tests only when the user asks, or when they are the only way to
+  confirm an API contract the production code depends on.
+
 ### Upstream matching — the largest time saver for a fork
 
 If the bytecode is a fork of an open-source project (a QNAP S3 server forking
