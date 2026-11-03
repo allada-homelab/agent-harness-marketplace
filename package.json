@@ -16,7 +16,8 @@
   "pi": {
     "skills": [
       "modules/*/skills/*",
-      "!modules/dual-agent-pr-review/**"
+      "!modules/dual-agent-pr-review/**",
+      "!modules/best-practices-maintainer/**"
     ]
   },
   "scripts": {
