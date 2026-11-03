@@ -10,9 +10,12 @@
 - UVP-028 — Run `uv audit` in CI to scan the lockfile for known vulnerabilities
 - UVP-065 — Run `uv audit` with SARIF output and centralize ignores in `[tool.uv.audit]`
 - UVP-069 — Enumerate workspace members with `uv workspace list` in monorepo CI
+- UVP-080 — Pin the uv version CI installs; never install latest
+- UVP-081 — Authenticate private GitHub git dependencies in CI with a PAT secret and `gh auth setup-git`
 <!-- /toc -->
 
-Detailed entries for `UVP-028` and `UVP-030..UVP-039`. Covers GitHub
+Detailed entries for `UVP-028`, `UVP-030..UVP-033`, `UVP-065`, `UVP-069`,
+`UVP-080` and `UVP-081`. Covers GitHub
 Actions integration, lockfile-driven vulnerability auditing,
 caching strategy, lockfile enforcement in CI, and cross-filesystem
 mount issues (GitLab, Docker).
@@ -135,13 +138,25 @@ If you must use `actions/cache` manually (non-GitHub CI, or for an
 expert reason), use this key shape:
 
 ```yaml
-key: uv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
-restore-keys: |
-  uv-${{ runner.os }}-${{ matrix.python-version }}-
+- uses: actions/cache@<sha>
+  with:
+    path: /tmp/.uv-cache            # with UV_CACHE_DIR=/tmp/.uv-cache on the job
+    key: uv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
+    restore-keys: |
+      uv-${{ runner.os }}-${{ matrix.python-version }}-
+# ... sync, run tests ...
+- run: uv cache prune --ci          # last step, before the cache is saved
 ```
 
 `runner.os` matters because wheel ABIs differ by OS. `matrix.python-version`
 matters because Python ABI changes between minor versions.
+
+Whatever persists the cache — `setup-uv` with `prune-cache: true`, a
+manual `actions/cache`, or a GitLab `after_script` (UVP-033) — run
+`uv cache prune --ci` at the end of the job. It removes pre-built wheels
+and unzipped source distributions, which are often faster to re-download,
+and keeps the wheels built from source, which are expensive to rebuild
+([uv cache docs](https://docs.astral.sh/uv/concepts/cache/#caching-in-continuous-integration)).
 
 **When NOT to apply.** Self-hosted runners with no network access —
 caching is moot because there's nothing to cache against. In that
@@ -276,11 +291,17 @@ common case for macOS / Linux dev machines). Don't set
 `UV_LINK_MODE=copy` there — clone/hardlink is faster, and the warning
 won't fire.
 
+Never pick `symlink` as the cross-filesystem fix. Symlink mode ties
+every installed package to files in the cache, so clearing the cache
+(`uv cache clean`) breaks all installed packages; uv's own
+[`link-mode` setting docs](https://docs.astral.sh/uv/reference/settings/#link-mode)
+discourage it. Use `copy`.
+
 ---
 
 ## UVP-028 — Run `uv audit` in CI to scan the lockfile for known vulnerabilities
 
-**Requires.** uv>=0.10.10 (preview: audit-command)
+**Requires.** uv>=0.11.3 (preview: audit-command)
 
 **What.** `uv audit` queries the
 [OSV vulnerability database](https://osv.dev/) (default) for every
@@ -303,6 +324,9 @@ uv audit --locked --preview-features audit-command --output-format sarif   # Git
 uv audit --locked --preview-features audit-command --no-dev                # skip the dev group
 uv audit --locked --preview-features audit-command --ignore GHSA-xxxx-yyyy-zzzz  # accepted risk
 ```
+
+`--ignore`, `--ignore-until-fixed` and `[tool.uv.audit]` need uv 0.11.3;
+`--output-format json` needs 0.11.15 and `sarif` needs 0.11.22.
 
 **Why.** A lockfile pinned today drifts into vulnerability over time —
 PyPI publishes a CVE on `requests==2.31.0`, but your locked version
@@ -417,7 +441,7 @@ gate.
 **What.** `uv workspace list` (stable since uv 0.10.0) prints every
 member of a uv workspace, root included, one name per line (`--paths`
 prints absolute paths instead; there is no `--output-format json` in uv
-0.13.5). Use it to drive per-member CI matrices instead of hardcoding the
+0.13.7). Use it to drive per-member CI matrices instead of hardcoding the
 member list.
 
 **Why.** A hardcoded member list in CI drifts the moment someone adds a
@@ -436,5 +460,91 @@ done
 **When NOT to apply.** A workspace whose CI just syncs and tests the root
 (`uv sync --locked --all-packages` covers all members in one job, UVP-077) doesn't need
 enumeration — this is for *per-member* build/test/publish steps.
+
+---
+
+## UVP-080 — Pin the uv version CI installs; never install latest
+
+**What.** Pin the uv binary that CI installs, not only the action that
+installs it. On GitHub Actions, set `setup-uv`'s `version:` input. On
+GitLab or any image-based CI, use a versioned `ghcr.io/astral-sh/uv`
+image tag. The [uv GitHub guide](https://docs.astral.sh/uv/guides/integration/github/#installation)
+says: "It is considered best practice to pin to a specific uv version."
+
+**Why.** UVP-030 pins the `setup-uv` action to a SHA, but that action
+still installs whatever uv version it resolves. With no `version:`
+input, `setup-uv` installs the `required-version` from `uv.toml` or
+`pyproject.toml` (the highest match for a range), and the latest uv when
+there is none. An unpinned uv changes CI behavior with no diff in the
+repository. For example, uv 0.13.0 changed the default Python download
+from 3.14 to 3.15, and preview commands such as `uv audit` (UVP-028)
+"may change without warning". A pin makes each such change arrive as a
+reviewed bump.
+
+**How.**
+
+```yaml
+# GitHub Actions
+- uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+  with:
+    version: "0.13.7"
+```
+
+```yaml
+# GitLab CI
+variables:
+  UV_VERSION: "0.13.7"
+  PYTHON_VERSION: "3.12"
+  BASE_LAYER: trixie-slim
+
+uv:
+  image: ghcr.io/astral-sh/uv:$UV_VERSION-python$PYTHON_VERSION-$BASE_LAYER
+```
+
+An exact `required-version = "==0.13.7"` in `[tool.uv]` (UVP-008) also
+pins the `setup-uv` install, and it makes local runs fail on a version
+mismatch. A range such as `>=0.13` does not pin: `setup-uv` installs the
+highest version that matches.
+
+**When NOT to apply.** A scheduled canary job whose purpose is to test
+the project against the newest uv. Keep the main CI jobs pinned.
+
+---
+
+## UVP-081 — Authenticate private GitHub git dependencies in CI with a PAT secret and `gh auth setup-git`
+
+**What.** When `[tool.uv.sources]` (or a dependency URL) points at a
+private GitHub repository, give CI a personal access token (PAT) with
+read access to that repository. Store it as a repository secret. Log in
+with `gh auth login --with-token`, then run `gh auth setup-git` to
+register the git credential helper.
+
+**Why.** uv fetches git dependencies through git, so git needs
+credentials for `github.com`. An interactive `gh auth login` configures
+the credential helper automatically, but `gh auth login --with-token`
+does not. Without `gh auth setup-git`, the login step succeeds and the
+uv fetch of the private repository then fails
+([uv git authentication docs](https://docs.astral.sh/uv/concepts/authentication/git/#git-credential-helpers)).
+A secret-based token also keeps the credential out of `pyproject.toml`
+and `uv.lock`.
+
+**How.** From the
+[uv GitHub guide](https://docs.astral.sh/uv/guides/integration/github/#private-repos),
+with a repository secret named `MY_PAT`:
+
+```yaml
+steps:
+  - name: Register the personal access token
+    run: echo "${{ secrets.MY_PAT }}" | gh auth login --with-token
+  - name: Configure the Git credential helper
+    run: gh auth setup-git
+  - run: uv sync --locked
+```
+
+The `gh` CLI is installed on GitHub-hosted runners by default.
+
+**When NOT to apply.** Projects with no private git dependencies.
+Private packages served from an index use index credentials instead
+(UVP-025).
 
 ---

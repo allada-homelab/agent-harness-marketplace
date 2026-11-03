@@ -171,6 +171,34 @@ holds below it. An agent applying a tagged rule compares the floor
 with the project's own (`requires-python`, `go.mod`'s `go` directive,
 the pinned tool) and, below it, reports that the rule does not apply.
 
+## Applicability (`when:`)
+
+A skill may define an **applicability vocabulary**: a closed set of
+tags, each saying which repositories a rule matters for and how to
+detect them. The vocabulary is a `## Applicability` table in the
+skill's `SKILL.md`, one row per tag:
+
+```markdown
+| Tag | Applies when | Detect |
+|---|---|---|
+| `workspace` | The repo is a uv workspace | `grep -q '^\[tool\.uv\.workspace\]' pyproject.toml` |
+```
+
+A rule that matters only for some repositories ends its index line
+with `_(when: <tag>)_`, before any `_(requires …)_` suffix. A rule
+with no `when:` suffix applies to every project in the domain. The
+tag lives only on the index line, because filtering is what it is
+for: an audit runs the detect commands once, then reads only the
+rules whose tag matched, plus every untagged rule.
+
+```markdown
+- **UVP-007** — Workspace inter-member deps need both … _(when: workspace)_
+```
+
+The uv skill is the first to define a vocabulary. A skill without an
+`## Applicability` table has no tags, and the lint rejects any
+`when:` suffix in it.
+
 ## `SKILL.md` shape
 
 Every domain skill's `SKILL.md` follows this skeleton:
@@ -301,6 +329,7 @@ Run `tools/lint.sh` from the module root. It fails on:
 6. **Frontmatter format** — `name:` and `description:` fields present; `description:` is third-person heuristic check (doesn't start with "I", "You", "This skill").
 7. **`Requires.` syntax** — a `**Requires.**` line that doesn't match the grammar in "Version floors", or one that isn't directly under its rule heading.
 8. **`Requires.` agreement** — a rule's `SKILL.md` index suffix `_(requires …)_` and its reference `**Requires.**` line differ, or only one of them exists.
+9. **Applicability tags** — an index suffix `_(when: <tag>)_` whose tag is not a row of the skill's `## Applicability` table.
 
 Run `tools/lint.sh` before every PR; the marketplace's `bin/check.sh`,
 the CI gate, runs it too.

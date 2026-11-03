@@ -11,13 +11,13 @@
 - UVP-079 — Vulnerability-scan installed tools with `uv tool audit`
 <!-- /toc -->
 
-Detailed entries for `UVP-040..UVP-042`. Covers `uv tool install` vs
+Detailed entries for `UVP-040..UVP-042`, `UVP-072`, `UVP-076` and `UVP-079`. Covers `uv tool install` vs
 `uv add --dev` vs `uvx`, version pinning, the "works locally, fails
 in CI" antipattern from global tools, and the `uv tool upgrade --all`
 trap.
 
-Citations point at the [uv tools guide](https://docs.astral.sh/uv/concepts/tools/)
-and the [uv tools concepts](https://docs.astral.sh/uv/guides/tools/).
+Citations point at the [uv tools guide](https://docs.astral.sh/uv/guides/tools/)
+and the [uv tools concepts](https://docs.astral.sh/uv/concepts/tools/).
 
 ---
 
@@ -104,16 +104,18 @@ isolated environment without installing it. For one-shot or
 infrequent use:
 
 ```bash
-uvx ruff check .                    # ad-hoc — fetches latest
-uvx 'ruff==0.6.9' check .           # pinned — reproducible
-uvx 'ruff@0.6.9' check .            # equivalent shorthand
+uvx ruff check .                         # unpinned — version depends on cache and installed tools
+uvx 'ruff@0.6.9' check .                 # pinned — reproducible
+uvx --from 'ruff>=0.6,<0.7' ruff check . # a range needs --from; @ takes only an exact version
+uvx ruff@latest check .                  # explicit opt-in to the newest release; refreshes the cache
 ```
 
-**Why.** Three real considerations:
+**Why.** Four real considerations:
 
-1. **`uvx ruff` without a version pin fetches the *latest* `ruff` every cold-cache invocation.** A linter version bump that lands while you're not looking can break CI without any source change. For correctness-critical tools (linters that gate merges, formatters that produce diffs), pin.
+1. **An unpinned `uvx ruff` is not "always latest".** uv's docs: "`uvx` will use the latest available version of the requested tool _on the first invocation_. After that, `uvx` will use the cached version of the tool unless a different version is requested, the cache is pruned, or the cache is refreshed", and "Once a tool is installed with `uv tool install`, `uvx` will use the installed version by default" ([uv tools concepts](https://docs.astral.sh/uv/concepts/tools/#tool-versions)). So the same unpinned command runs a stale version on a warm cache or a machine with an old `uv tool install`, and a new release on a cold CI cache. Either way two machines can disagree with no source change. For correctness-critical tools (linters that gate merges, formatters that produce diffs), pin. `@` accepts only an exact version ("the `@` syntax cannot be used for anything other than an exact version", [uv tools guide](https://docs.astral.sh/uv/guides/tools/#requesting-specific-versions)); `uvx 'ruff@>=0.6'` fails, so put a range in `--from`.
 2. **`uvx` doesn't pollute global tool state.** Compared to `uv tool install`, there's no entry in `~/.local/share/uv/tools/` and no shim in `~/.local/bin/`. Good for genuinely one-shot use (`uvx cookiecutter gh:org/template`), and avoids the "I installed it once and now I have a stale version everywhere" problem.
 3. **`uvx` runs in isolation — it doesn't see your project.** If you `uvx pytest`, it won't import your project's source. This is the right behavior for project-agnostic tools but the wrong behavior for project-context tools (UVP-040). The uv docs are explicit: "If you are running a tool in a project and the tool requires that your project is installed, you'll want to use `uv run` instead of `uvx`." ([uv tools guide](https://docs.astral.sh/uv/guides/tools/))
+4. **`uvx` and `uv tool install` ignore the project's uv config and Python pin.** "For `tool` commands, which operate at the user level, local configuration files will be ignored. Instead, uv will exclusively read from user-level configuration (e.g., `~/.config/uv/uv.toml`) and system-level configuration (e.g., `/etc/uv/uv.toml`)" ([configuration files](https://docs.astral.sh/uv/concepts/configuration-files/)). Tool environments also "ignore non-global Python version requests like `.python-version` files and the `requires-python` value from a `pyproject.toml`" ([uv tools concepts](https://docs.astral.sh/uv/concepts/tools/#python-versions)). So a `[tool.uv]` `constraint-dependencies = ["ruff==0.6.9"]` has no effect on `uvx ruff`, and `uvx` cannot see an index declared only in `pyproject.toml`. Put what a tool run needs on the command line (`@<version>`, `--from`, `--constraint`, `--index`, `--python`) or in a user- or system-level `uv.toml`.
 
 **How.**
 
@@ -122,8 +124,8 @@ uvx 'ruff@0.6.9' check .            # equivalent shorthand
 uvx cookiecutter@2.6.0 gh:cookiecutter/cookiecutter-pypackage
 
 # CI lint — pinned for reproducibility, no install step needed
-uvx 'ruff==0.6.9' check .
-uvx 'ruff==0.6.9' format --check .
+uvx 'ruff@0.6.9' check .
+uvx 'ruff@0.6.9' format --check .
 
 # don't accidentally use uvx for project tools:
 uvx pytest                          # WRONG — runs in isolation, can't import project
@@ -133,23 +135,14 @@ uv run pytest                       # RIGHT — runs in project venv
 In CI workflows where `uvx` is the right call:
 
 ```yaml
-# Lint with explicit version pin (the version lives in your config, not in someone's tool dir)
-- run: uvx 'ruff==0.6.9' check .
-- run: uvx 'ruff==0.6.9' format --check .
+# Lint with explicit version pin (the version lives in the workflow, not in someone's tool dir)
+- run: uvx 'ruff@0.6.9' check .
+- run: uvx 'ruff@0.6.9' format --check .
 ```
 
-A pattern that combines the two: declare the tool version in the
-project's `[tool.uv]` `constraint-dependencies` so it's centralized
-even when invoked via `uvx`:
-
-```toml
-[tool.uv]
-constraint-dependencies = ["ruff==0.6.9"]
-```
-
-```bash
-uvx ruff check .   # constraint pulls in 0.6.9
-```
+To keep one version for both local runs and CI, put the tool in a
+dependency group and call it with `uv run` (UVP-040); `[tool.uv]`
+settings do not reach `uvx`.
 
 **When NOT to apply.** Tools that need to see your project's source
 (use `uv run`, UVP-021). Tools that are invoked frequently enough
@@ -158,15 +151,15 @@ pinned version).
 
 ### uv 0.7.0 behavior change: `uvx foo` errors on missing command
 
-Prior to uv 0.7.0, `uvx foo` would silently fall back to a `foo`
-binary on `PATH` if the package didn't expose a `foo` entry point.
-This produced bizarre debugging sessions ("why is `uvx pre-commit`
-running my system pre-commit?"). uv 0.7.0 changed this to a hard
-error: if the installed package doesn't ship a `foo` command, `uvx
-foo` exits non-zero with a clear message. The `--from` flag remains
-the escape hatch when the binary name differs from the package
-name (`uvx --from python-lsp-server pylsp`). Pre-0.7 uv binaries
-still have the old silent-fallback behavior; pin via UVP-008.
+Before uv 0.7.0, if the `foo` package provided no `foo` command,
+`uvx foo` ran a `foo` binary from `PATH` instead (if one was present).
+From uv 0.7.0 it errors early: `uvx six` exits 1 with
+`` Package `six` does not provide any executables. ``
+([uv 0.7.0 changelog](https://github.com/astral-sh/uv/blob/main/changelogs/0.7.x.md)).
+The check is skipped when `--from` is used, so `uvx --from foo bash -c "..."`
+still works, and `--from` remains the escape hatch when the binary name
+differs from the package name (`uvx --from python-lsp-server pylsp`).
+Pre-0.7 uv binaries still have the old silent-fallback behavior; pin via UVP-008.
 
 ---
 
@@ -224,7 +217,8 @@ the PR's own pinning workflow:
 # weekly tool-refresh job — opens PR with new pinned versions
 - name: Refresh tool pins
   run: |
-    new_version="$(uvx pre-commit --version | awk '{print $2}')"
+    # @latest: an unpinned uvx would reuse a cached or installed version (UVP-041)
+    new_version="$(uvx pre-commit@latest --version | awk '{print $2}')"
     sed -i "s|pre-commit@[^']*|pre-commit@${new_version}|g" .github/workflows/*.yml
     # then commit + open PR
 ```
@@ -301,7 +295,7 @@ nothing from switching; keep one way of running each tool.
 
 ## UVP-079 — Vulnerability-scan installed tools with `uv tool audit`
 
-**Requires.** uv>=0.12.2 (preview: audit), uv>=0.12.2 (preview: tool-install-locks)
+**Requires.** uv>=0.12.2 (preview: audit-command), uv>=0.12.2 (preview: tool-install-locks)
 
 **What.** `uv tool audit <name>` or `uv tool audit --all` checks the
 environments of tools installed with `uv tool install` against OSV, the

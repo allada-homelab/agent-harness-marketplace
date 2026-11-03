@@ -6,14 +6,18 @@
 - UVP-026 — Pre-publish sanity check: `uv build --no-sources`
 - UVP-027 — Publish from GitHub Actions via OIDC trusted publishing
 - UVP-029 — `uv_build` backend for pure-Python packages
+- UVP-087 — Publish to a non-PyPI index through `[[tool.uv.index]]` `publish-url` and `uv publish --index`
+- UVP-088 — Mark never-published internal packages `Private :: Do Not Upload`
+- UVP-089 — Declare a `[build-system]` when the project has entry points, is published, or sets `tool.uv.package = true`
 <!-- /toc -->
 
-Detailed entries for `UVP-026..UVP-029`. Covers building wheels with
-`uv build`, publishing to PyPI via `uv publish` (including OIDC
-trusted publishing), and the native `uv_build` backend.
+Detailed entries for UVP-026, UVP-027, UVP-029 and UVP-087..UVP-089.
+Covers building wheels with `uv build`, publishing via `uv publish`
+(including OIDC trusted publishing and non-PyPI registries), the native
+`uv_build` backend, and when a project needs a build system at all.
 
 Citations point at the [uv package guide](https://docs.astral.sh/uv/guides/package/)
-and the [uv_build backend docs](https://docs.astral.sh/uv/concepts/projects/build-backend/).
+and the [uv_build backend docs](https://docs.astral.sh/uv/concepts/build-backend/).
 
 For lockfile export to `requirements.txt` / `pylock.toml`, see
 [`migration.md`](migration.md) (UVP-061, UVP-062). For the project
@@ -24,52 +28,60 @@ shape that determines what gets built, see
 
 ## UVP-026 — Pre-publish sanity check: `uv build --no-sources`
 
-**What.** Before publishing a wheel to PyPI, build it once with
-`--no-sources` to verify it doesn't accidentally depend on anything
-declared in `[tool.uv.sources]` — git deps, local paths, or named
-private indexes.
+**What.** Build the distributions you publish with `--no-sources`, so
+the build ignores `[tool.uv.sources]` the way every other build
+frontend (`pypa/build`, pip) does.
 
 ```bash
-# normal local build — uses [tool.uv.sources]
+# normal local build: resolves build-system.requires through [tool.uv.sources]
 uv build
 
-# the sanity check — pretends [tool.uv.sources] doesn't exist
+# the build to publish: pretends [tool.uv.sources] doesn't exist
 uv build --no-sources
 ```
 
-If `--no-sources` fails to resolve a dependency, the wheel you were
-about to publish would have broken for every consumer.
+`--no-sources` checks the **build** dependencies
+(`[build-system] requires`). It does not check runtime dependencies:
+`[project.dependencies]` are written to the wheel as plain
+`Requires-Dist` lines and are not resolved by `uv build`. To check
+those, install the built wheel in an isolated environment (the smoke
+test in UVP-027's workflow).
 
-**Why.** `[tool.uv.sources]` is uv-specific local metadata. It tells
-*your* uv where to find git repos, path siblings, and private indexes
-during development — but **it doesn't ship in the published wheel**.
-Wheels carry only the normalized PEP 508 dependency specs from
-`[project.dependencies]`.
+**Why.** `[tool.uv.sources]` is uv-specific development metadata. uv's
+docs: "By default, `uv build` respects `tool.uv.sources` when resolving
+build dependencies from the `build-system.requires` section … When
+publishing a package, we recommend running `uv build --no-sources` to
+ensure that the package builds correctly when `tool.uv.sources` is
+disabled, as is the case when using other build tools, like
+`pypa/build`."
 
-Concrete failure mode:
+Concrete failure mode: `[build-system] requires` lists a build plugin
+that only `[tool.uv.sources]` can find (a git URL or a sibling path).
+`uv build` succeeds locally. The published sdist then fails to build on
+every consumer that installs from source, because their frontend looks
+the plugin up on the index. Checked with uv 0.13.7: the same project
+built with `uv build` (exit 0) and failed with `uv build --no-sources`
+(exit 2, "Failed to resolve requirements from `build-system.requires`").
 
-1. A library declares `dependencies = ["internal-lib"]` in `[project]` and `internal-lib = { git = "ssh://..." }` in `[tool.uv.sources]`. Locally, `uv build` resolves via the git URL and the wheel builds fine.
-2. The wheel is published. The wheel metadata says `Requires-Dist: internal-lib` — no URL, no source hint, just the name.
-3. A consumer `pip install`s the package. pip looks up `internal-lib` on PyPI and either fails ("no version found") or — worse — installs a *typosquatted* package with the same name.
+The runtime side is a different gap. A dependency that only
+`[tool.uv.sources]` can find (`internal-lib = { git = "ssh://..." }`)
+ships as a bare `Requires-Dist: internal-lib`. A consumer's installer
+looks that name up on its index and fails, or installs a different
+package with the same name (the dependency-confusion vector UVP-025
+covers on the consumer side). `uv build --no-sources` still succeeds
+here; installing the wheel with
+`uv run --isolated --no-project --with dist/*.whl …` fails and shows it.
 
-Step 3 is exactly the dependency-confusion attack vector that UVP-025
-discusses on the *consumer* side. `--no-sources` catches it on the
-*producer* side: it forces resolution to use only what's declared in
-`[project.dependencies]` plus the indexes a consumer would see, which
-is what the published wheel actually requires of its users.
-
-See the [uv package docs on `--no-sources`](https://docs.astral.sh/uv/guides/package/#preparing-your-package-for-publishing).
+See the [uv package guide](https://docs.astral.sh/uv/guides/package/#building-your-package).
 
 **How.**
 
-```bash
-# CI release workflow — run as a gate before publishing
-- name: Verify build with no sources
+```yaml
+# CI release job: the --no-sources build is the one you publish
+- name: Build
   run: uv build --no-sources
-- name: Build for publish
-  run: uv build
-- name: Publish
-  run: uv publish
+- name: Smoke test (wheel) — catches source-only runtime dependencies
+  run: uv run --isolated --no-project --with dist/*.whl tests/smoke_test.py
 ```
 
 ```yaml
@@ -77,19 +89,22 @@ See the [uv package docs on `--no-sources`](https://docs.astral.sh/uv/guides/pac
 jobs:
   release-readiness:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@<sha>
+        with: { persist-credentials: false }
       - uses: astral-sh/setup-uv@<sha> # v8.1.0
-        with: { enable-cache: true }
       - name: Build without [tool.uv.sources]
         run: uv build --no-sources
-        # if this fails, a published wheel would be broken
+      - name: Install the wheel in isolation
+        run: uv run --isolated --no-project --with dist/*.whl tests/smoke_test.py
 ```
 
-If `--no-sources` does fail, fix the underlying issue rather than
-bypassing the check. The fix is typically one of:
+If either step fails, fix the underlying issue rather than bypassing
+the check. The fix is typically one of:
 
-- **Convert a git dep to a published dep.** Publish `internal-lib` to your private PyPI; depend on it normally. Document the private index for consumers (UVP-025).
+- **Convert a git or path dep to a published dep.** Publish `internal-lib` to your private registry and depend on it normally. Document the private index for consumers (UVP-025).
 - **Vendor the dep.** For small utilities, copy the code into your package.
 - **Make the dep optional.** Move it from `[project.dependencies]` into an optional extra that only consumers who have access to the private index will install.
 
@@ -107,64 +122,55 @@ install from.
 [PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/) —
 OIDC-based authentication that exchanges the GitHub Actions identity
 token for a short-lived PyPI upload token. No `UV_PUBLISH_TOKEN`
-secret, no API token rotation. `uv publish` auto-detects the GitHub
-Actions OIDC context and uses it.
+secret, no API token rotation. `uv publish` checks for trusted
+publishing by default in a supported environment (GitHub Actions,
+GitLab CI/CD) and uses it.
 
-OIDC trusted publishing graduated from preview to stable in uv 0.6.0.
+Build and publish in **separate jobs**, so the build job never holds
+`id-token: write`. Only the publish job gets that permission, and it
+runs no project code.
 
-```yaml
-# .github/workflows/publish.yml
-name: Publish
-on:
-  release:
-    types: [published]
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    environment: pypi              # the trusted-publisher environment, configured on PyPI
-    permissions:
-      id-token: write              # required for OIDC token minting
-      contents: read
-    steps:
-      - uses: actions/checkout@<sha>
-      - uses: astral-sh/setup-uv@<sha> # v8.1.0
-      - run: uv build --no-sources
-      - run: uv build
-      - run: uv publish            # no token, no auth flags — OIDC handles it
-```
+See the [uv publish guide](https://docs.astral.sh/uv/guides/package/#publishing-your-package)
+and the [GitHub Actions publishing guide](https://docs.astral.sh/uv/guides/integration/github/#publishing-to-pypi).
 
-See the [uv publish guide](https://docs.astral.sh/uv/guides/package/#publishing-your-package).
+**Why.** Concrete benefits over long-lived API tokens:
 
-**Why.** Three concrete benefits over long-lived API tokens:
-
-1. **No secret to rotate or leak.** A PyPI API token committed by mistake (or exposed in a build log) is a publish-as-you incident until revoked. OIDC tokens are minted at job-run time and expire in minutes; there's nothing in the repo or workflow secrets to steal.
-2. **Cryptographically bound to the workflow.** PyPI verifies the OIDC token came from the specific `<org>/<repo>` and the specific workflow file the project has configured as a trusted publisher. A fork can't publish to your project even if it spoofs the workflow shape; the audience check fails.
-3. **PEP 740 attestations are auto-uploaded.** When `uv publish` runs inside GitHub Actions with OIDC, uv builds and uploads [PEP 740 provenance attestations](https://peps.python.org/pep-0740/) alongside the wheel — cryptographic proof of which workflow produced the artifact. This shows up as a "Verified" badge on PyPI and is consumable by downstream supply-chain tooling.
+1. **No secret to rotate or leak.** A PyPI API token committed by mistake (or exposed in a build log) is a publish-as-you incident until revoked. Trusted-publishing tokens are minted at job-run time and are short-lived; uv also attempts to invalidate the token after publishing, even if publishing fails. There's nothing in the repo or workflow secrets to steal.
+2. **Bound to the workflow.** PyPI accepts the OIDC token only from the `<org>/<repo>`, workflow file and environment the project has configured as a trusted publisher. A fork can't publish to your project.
+3. **Attestations can ride along.** `uv publish` does **not** generate [PEP 740 attestations](https://peps.python.org/pep-0740/). It uploads `*.publish.attestation` files it finds next to the distributions (since uv 0.9.12). Generate them in the publish job with `astral-sh/attest-action` before `uv publish`.
 
 The setup on PyPI is one-time: on the project's "Publishing" tab,
-add a "trusted publisher" entry naming the GitHub org, repo,
-workflow filename, and (optionally) the environment. Future
-`uv publish` runs from that workflow Just Work.
+add a trusted publisher naming the GitHub org, repo, workflow
+filename and environment. The job's `environment` name must match
+that entry.
 
-**How — full workflow.**
+**How — full workflow** (follows the official example in the uv
+GitHub Actions guide).
 
 ```yaml
-# .github/workflows/publish.yml
-name: Publish to PyPI
+# .github/workflows/release.yml
+name: Publish release to PyPI
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@<sha>
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@<sha> # v8.1.0
-        with: { enable-cache: true }
-      - run: uv build --no-sources
-      - run: uv build
+        with:
+          enable-cache: false        # no cache in a release job
+      - run: uv build --no-sources   # UVP-026
+      # Optional, but recommended: smoke-test both distributions
+      - run: uv run --isolated --no-project --with dist/*.whl tests/smoke_test.py
+      - run: uv run --isolated --no-project --with dist/*.tar.gz tests/smoke_test.py
       - uses: actions/upload-artifact@<sha>
         with:
           name: dist
@@ -173,46 +179,58 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    environment: pypi              # protected env, requires reviewer approval
+    environment:
+      name: pypi                     # must match the trusted publisher on PyPI
     permissions:
-      id-token: write              # mint the OIDC token
+      id-token: write                # mint the OIDC token
     steps:
-      - uses: actions/download-artifact@<sha>
-        with: { name: dist, path: dist/ }
       - uses: astral-sh/setup-uv@<sha> # v8.1.0
-      - run: uv publish            # picks up OIDC from the runner
+        with:
+          enable-cache: false
+      - uses: actions/download-artifact@<sha>
+        with:
+          name: dist
+          path: dist/
+      - name: Generate PEP 740 attestations
+        uses: astral-sh/attest-action@<sha> # v0.0.7
+      - run: uv publish              # trusted publishing; uploads the attestations too
 ```
 
-For registries that don't support PEP 740 attestations (some private
-mirrors), opt out:
+To make a missing trusted-publishing setup fail the job instead of
+being skipped, set `--trusted-publishing always` (or
+`trusted-publishing = "always"`). The default, `automatic`, tries
+trusted publishing in a supported environment and continues without
+it if that fails.
+
+For registries that reject attestations (some third-party indexes),
+opt out:
 
 ```bash
-uv publish --no-attestations
+uv publish --no-attestations   # or UV_PUBLISH_NO_ATTESTATIONS=1
 ```
 
-For non-GitHub Actions runners (GitLab, self-hosted), trusted
-publishing is still possible but the OIDC flow differs — see
-[PyPI's GitLab guide](https://docs.pypi.org/trusted-publishers/using-a-publisher/).
+For GitLab CI/CD, uv supports trusted publishing too, but the PyPI
+setup differs — see
+[PyPI's trusted publisher docs](https://docs.pypi.org/trusted-publishers/using-a-publisher/).
 
 **When NOT to apply.** Two cases:
 
-1. **Publishing to a private registry that doesn't support OIDC.** Stay on `UV_PUBLISH_TOKEN` / `--token`, rotate regularly, store in the runner's secret manager (never in the repo).
-2. **One-off manual publishes from a developer's laptop.** OIDC requires the GitHub Actions OIDC issuer; a laptop has no such token. Use a scoped API token for the rare manual publish, and prefer to make publishing CI-only.
+1. **Publishing to a private registry that doesn't support OIDC.** Stay on `UV_PUBLISH_TOKEN` / `--token`, rotate regularly, store in the runner's secret manager (never in the repo). See UVP-087 for the index configuration.
+2. **One-off manual publishes from a developer's laptop.** A laptop has no OIDC identity. Use a **per-project** PyPI API token, not an account-wide one, so the token cannot publish any other project. PyPI no longer accepts a username and password: pass the token with `--token` or `UV_PUBLISH_TOKEN` (the same as `--username __token__` with the token as password). uv does not revoke tokens passed explicitly, so revoke it yourself if it may have leaked. Prefer to make publishing CI-only.
 
 ---
 
 ## UVP-029 — `uv_build` backend for pure-Python packages
 
-**What.** uv ships a native PEP 517 build backend (`uv_build`) that has
-been the **default** backend for `uv init --lib` / `--package` since uv
-0.8.0 (production-ready since ~0.7.16). For pure-Python packages — no C
-extensions, no Cython, no Rust — `uv_build` is 10–35x faster than
-hatchling, flit, setuptools, or poetry-core. New library projects get it
-automatically; choosing a *different* backend is now the opt-out. To set
-it explicitly at `uv init` time:
+**What.** uv ships a native PEP 517 build backend (`uv_build`). It has
+been stable since uv 0.7.19 and the **default** backend for `uv init`
+since uv 0.8.0. For pure-Python packages — no C extensions, no Cython,
+no Rust — use it. New projects get it automatically; choosing a
+*different* backend is the opt-out. To set it explicitly at `uv init`
+time:
 
 ```bash
-uv init --build-backend uv_build mylib
+uv init --build-backend uv mylib
 ```
 
 Or in an existing project, swap `[build-system]`:
@@ -220,35 +238,49 @@ Or in an existing project, swap `[build-system]`:
 ```toml
 # pyproject.toml
 [build-system]
-requires = ["uv_build>=0.11,<0.12"]
+requires = ["uv_build>=0.13.7,<0.14"]
 build-backend = "uv_build"
 ```
 
-See the [uv_build backend docs](https://docs.astral.sh/uv/concepts/projects/build-backend/)
-and the [introductory write-up](https://pydevtools.com/blog/uv-build-backend/).
+Always keep the upper bound at the next minor version. `uv_build`
+follows uv's versioning policy, where a new minor version may change
+build output; the upper bound keeps your package building the same
+way as new versions are released. When you bump it, move both bounds
+together (`uv init` writes the current pair).
 
-**Why.** Two concrete wins, one trade-off:
+See the [uv_build backend docs](https://docs.astral.sh/uv/concepts/build-backend/).
 
-1. **Build time.** For a single pure-Python wheel, `uv_build` typically completes in 10–100 ms versus 500 ms – 3 s for hatchling / setuptools (which import the full Python build stack first). At repo scale (workspace with 20 members, monorepo CI rebuilds), this compounds into multi-minute savings per pipeline run.
-2. **No extra dependency.** `uv_build` is shipped *as part of uv*. `[build-system] requires = ["uv_build"]` resolves to a tiny shim that delegates to the running uv binary. Hatchling/setuptools each pull in their own dependency tree (`pathspec`, `pluggy`, ...) into the build env.
+**Why.** Two concrete wins, two trade-offs:
+
+1. **Fast, zero-config builds.** The docs describe the backend as "very fast", with defaults chosen so most projects need no configuration. It also validates project metadata and structure, catching common mistakes at build time.
+2. **Small, self-contained build dependency.** `uv_build` is a separate package optimized for portability and small binary size. `uv build` uses the copy bundled in the uv binary when its version satisfies the `uv_build` requirement, and fetches a compatible `uv_build` otherwise. Other frontends (`python -m build`) always install the `uv_build` package.
 
 Trade-offs:
 
 1. **Pure-Python only.** No support for C / Rust extensions, no
    custom build hooks, no plugin system. If you need maturin (Rust),
-   `setuptools-rust` (C/C++), or a hatch plugin, stay with that
-   backend. The uv docs are explicit about this scope.
-2. **Namespace / divergent import names need explicit configuration.**
-   Implicit namespace packages (a `foo/bar/` directory without
-   `foo/__init__.py`) require `[tool.uv.build-backend] namespace =
-   true`. A package whose import name differs from the distribution
-   name (e.g. dist `my-lib`, import `mylib`) needs
-   `[tool.uv.build-backend] module-name = "mylib"`; PEP 794
-   `import-names` (a `[project]` key) only emits `Import-Name` metadata
-   and does not change which module `uv_build` packages.
+   scikit-build-core (C, C++, Cython) or a hatch plugin, stay with
+   that backend. The uv docs are explicit about this scope.
+2. **Non-default layouts need explicit configuration.** By default
+   the backend expects one module at `src/<normalized_name>/__init__.py`
+   (the package name lowercased, with dots and dashes replaced by
+   underscores).
+   - A different import name or location: set `module-name` and
+     `module-root` in `[tool.uv.build-backend]`. A non-`src` layout
+     uses `module-root = ""`.
+   - A namespace package (`src/foo/bar/__init__.py` with no
+     `foo/__init__.py`): set a **dotted** `module-name = "foo.bar"`.
+   - Do not use `namespace = true` for new projects. The docs warn it
+     "disables safety checks" and recommend explicit module names
+     outside legacy projects. A list (`module-name = ["foo", "bar"]`)
+     also works, but the docs recommend one module per package and a
+     workspace for several.
+   - PEP 794 `import-names` (a `[project]` key) only emits
+     `Import-Name` metadata and does not change which module
+     `uv_build` packages.
 
 For most libraries — which are pure Python — `uv_build` is the right
-default in 2026.
+default.
 
 **How.**
 
@@ -261,17 +293,17 @@ requires-python = ">=3.12"
 dependencies = ["httpx"]
 
 [build-system]
-requires = ["uv_build>=0.11,<0.12"]
+requires = ["uv_build>=0.13.7,<0.14"]
 build-backend = "uv_build"
 
 # default layout: src/mylib/ — no extra config needed
 ```
 
 ```bash
-# scaffold a new project with uv_build from the start
-uv init --build-backend uv_build --lib mylib
+# scaffold a new library with uv_build from the start
+uv init --lib mylib
 
-# build the wheel (uses uv_build per pyproject.toml)
+# build the sdist and wheel (uses uv_build per pyproject.toml)
 uv build
 
 # inspect what got built
@@ -285,15 +317,15 @@ For a workspace where every member is pure Python:
 ```toml
 # each member's pyproject.toml
 [build-system]
-requires = ["uv_build>=0.11,<0.12"]
+requires = ["uv_build>=0.13.7,<0.14"]
 build-backend = "uv_build"
 ```
 
-Namespace package opt-in:
+Namespace package (`src/foo/bar/__init__.py`, no `src/foo/__init__.py`):
 
 ```toml
 [tool.uv.build-backend]
-namespace = true                  # allow src/foo/bar/ without src/foo/__init__.py
+module-name = "foo.bar"           # dotted name marks foo as the shared namespace
 ```
 
 **When NOT to apply.** Anything that's not a pure-Python wheel:
@@ -301,10 +333,140 @@ namespace = true                  # allow src/foo/bar/ without src/foo/__init__.
 - **C / C++ / Cython extensions** → stick with `setuptools`, `meson-python`, or `scikit-build-core`.
 - **Rust extensions** → `maturin`.
 - **Projects relying on hatch plugins** (`hatch-vcs`, `hatch-fancy-pypi-readme`, `hatchling`'s file-include DSL) → stay on hatchling; the plugin ecosystem doesn't port.
-- **Projects with custom build hooks** (generating Python from a `.proto` file at build time, embedding a JS bundle) → use a backend with a hooks API.
+- **Projects with custom build hooks** (generating Python from a `.proto` file at build time, embedding a JS bundle) → use a backend with a hooks API, such as hatchling, which the uv docs suggest when build scripts are required.
 
 `uv_build` is the right default for *new* pure-Python projects and
 for *existing* projects whose only build-backend usage is "produce a
 wheel." It's not a forced migration.
 
 ---
+
+## UVP-087 — Publish to a non-PyPI index through `[[tool.uv.index]]` `publish-url` and `uv publish --index`
+
+**What.** To publish to a private or third-party registry (AWS
+CodeArtifact, Artifactory, a TestPyPI staging run), add a
+`publish-url` to the registry's `[[tool.uv.index]]` entry and publish
+with `uv publish --index <name>`. Do not point a bare
+`UV_PUBLISH_URL` / `--publish-url` at the registry without a check
+URL.
+
+```toml
+# pyproject.toml
+[[tool.uv.index]]
+name = "private-registry"
+url = "https://registry.example.com/pypi/simple/"          # index (read) URL
+publish-url = "https://registry.example.com/pypi/upload/"  # upload endpoint
+explicit = true
+```
+
+```bash
+uv publish --index private-registry   # or UV_PUBLISH_INDEX=private-registry
+```
+
+**Why.** A publish can fail partway, with some files uploaded and
+some missing. PyPI accepts a re-upload of an identical file, so
+re-running the command works there. Most other registries reject it,
+so a bare retry fails on the files that already went up. With
+`--index`, uv uses the index's `url` as the check URL: it checks the
+registry before uploading, skips files that are identical to ones
+already there, and handles parallel uploads of the same file. uv's
+AWS CodeArtifact guide calls the bare `UV_PUBLISH_URL` method "not
+preferable because uv cannot check if the package is already
+published before uploading artifacts."
+
+The index also lives in `pyproject.toml` next to the indexes used for
+resolving (UVP-025), so the release script names the registry once
+instead of carrying an upload URL.
+
+See the [uv package guide](https://docs.astral.sh/uv/guides/package/#publishing-your-package)
+and the [AWS CodeArtifact guide](https://docs.astral.sh/uv/guides/integration/aws/#publishing-packages).
+
+**How.**
+
+- Add `publish-url` to the existing `[[tool.uv.index]]` entry for the registry.
+- In CI, replace `uv publish --publish-url …` / `UV_PUBLISH_URL=…` with `uv publish --index <name>`.
+- `--index` reads `pyproject.toml`, so the publish job needs a checkout step (with `persist-credentials: false`). A publish job that only downloads `dist/` cannot use `--index`.
+- If you cannot add the index to the project, keep `--publish-url` but add `--check-url <index url>` (the index URL, not the upload URL) to get the same skip-duplicates behavior.
+- Keep credentials out of `pyproject.toml`: pass them with `UV_PUBLISH_USERNAME` / `UV_PUBLISH_PASSWORD`, `UV_PUBLISH_TOKEN`, or a keyring (UVP-025).
+
+**When NOT to apply.** Publishing only to PyPI: plain `uv publish`
+already targets PyPI's upload endpoint, and PyPI ignores identical
+re-uploads.
+
+---
+
+## UVP-088 — Mark never-published internal packages `Private :: Do Not Upload`
+
+**What.** Give every internal package that has a `[build-system]` but
+must never reach public PyPI the `Private :: Do Not Upload`
+classifier:
+
+```toml
+[project]
+name = "acme-billing"
+classifiers = ["Private :: Do Not Upload"]
+```
+
+**Why.** A packaged project can be published by one mistaken
+`uv publish` (a wrong environment, a stray token, a copied release
+script). With this classifier, PyPI rejects the upload, so internal
+code doesn't leak to the public index under your account.
+
+The classifier protects **PyPI only**. uv's docs: it "does not affect
+security or privacy settings on alternative registries." Pair it with
+per-project PyPI API tokens (UVP-027): without a token matching the
+project, it can't be accidentally published.
+
+See [Preventing publish to PyPI](https://docs.astral.sh/uv/concepts/projects/build/#preventing-publish-to-pypi).
+
+**How.**
+
+- Add the classifier to each internal package's `[project] classifiers`; in a workspace, to each internal member.
+- Review check: a `pyproject.toml` with a `[build-system]`, no public release workflow, and no `Private :: Do Not Upload` classifier.
+- Remove the classifier in the same change that makes the package public.
+
+**When NOT to apply.** Packages that are published to PyPI, and
+projects without a `[build-system]` that are never built into
+distributions (a virtual project, `tool.uv.package = false`).
+
+---
+
+## UVP-089 — Declare a `[build-system]` when the project has entry points, is published, or sets `tool.uv.package = true`
+
+**What.** If any of these hold, the project's `pyproject.toml` needs a
+`[build-system]` table (normally `uv_build`, UVP-029):
+
+- it defines entry points (`[project.scripts]`, `[project.gui-scripts]`, `[project.entry-points]`);
+- it is built or published with `uv build` / `uv publish`;
+- it sets `tool.uv.package = true`.
+
+```toml
+[project.scripts]
+demo = "demo:main"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14"]
+build-backend = "uv_build"
+```
+
+**Why.** uv decides whether to build and install the project from the
+`[build-system]` declaration. Without one:
+
+1. **Entry points are not installed.** The uv docs: "Using the entry point tables requires a build system to be defined." With uv 0.13.7, `uv sync` warns "Skipping installation of entry points (`project.scripts`) for package `demo` because this project is not packaged", and `uv run demo` then fails with "Failed to spawn: demo".
+2. **`uv build` and `tool.uv.package = true` fall back silently to the legacy setuptools backend.** The docs: uv "will fall back to the legacy setuptools build system during `uv build`", and with `tool.uv.package = true` and no build system "uv will use the setuptools legacy backend". uv 0.13.7 built such a project with exit 0 and no warning. The resulting distribution comes from whatever setuptools discovers, not from a backend you chose.
+
+The uv package guide: "We strongly recommend configuring a build
+system." See
+[Build systems](https://docs.astral.sh/uv/concepts/projects/config/#build-systems)
+and [Preparing your project](https://docs.astral.sh/uv/guides/package/#preparing-your-project).
+
+**How.**
+
+- Check `pyproject.toml`: entry-point tables, `tool.uv.package = true`, or a `uv build` / `uv publish` step in CI, with no `[build-system]` → add one.
+- Pure Python: the `uv_build` table above. Extensions: the backend from UVP-029's When NOT to apply.
+- `uv init` (and `--lib` / `--package`) writes a `[build-system]` by default; only `uv init --no-package` omits it (UVP-005).
+
+**When NOT to apply.** A virtual project that is never installed or
+built — a script collection run with `uv run python main.py`, a
+workspace root that only aggregates members. It has no entry points
+and needs no build system.

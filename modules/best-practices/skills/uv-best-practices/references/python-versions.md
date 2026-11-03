@@ -10,9 +10,12 @@
 - UVP-054 — Resolution strategy for libraries: matrix-test `lowest-direct` and `highest`
 - UVP-067 — Keep managed interpreters patched with `uv python upgrade`
 - UVP-073 — uv's default managed Python is 3.15 since 0.13.0 — pin explicitly
+- UVP-093 — Make the interpreter source explicit with `python-preference` in CI and images
+- UVP-094 — Give a dependency group its own `requires-python` instead of raising the project floor
 <!-- /toc -->
 
-Detailed entries for `UVP-050..UVP-054`. Covers the
+Detailed entries for `UVP-050..UVP-054`, `UVP-067`, `UVP-073`, `UVP-093`
+and `UVP-094`. Covers the
 `.python-version` vs `requires-python` distinction, patch-vs-minor
 pinning, disabling Python downloads in network-restricted CI, the
 `uv version` (project) vs `uv self version` (binary) split as of
@@ -43,7 +46,7 @@ They look similar; they aren't.
 
 **Why.** Conflating them causes loud and quiet failures:
 
-1. **Setting only `requires-python = ">=3.12"` doesn't pin CI to 3.12.** CI will use whatever Python is active in the runner (often a system default like 3.10) unless `.python-version`, `UV_PYTHON`, or the `setup-uv` action's `python-version` input also specifies. Result: "tests pass locally, fail in CI" because the Python versions differ even though `requires-python` matched both.
+1. **Setting only `requires-python = ">=3.12"` doesn't pin a minor version.** uv never runs a 3.10 interpreter against that floor, but it does use "the first Python version that is compatible with the requirement ... unless a version is otherwise requested, e.g., via a `.python-version` file or the `--python` flag" ([docs](https://docs.astral.sh/uv/concepts/python-versions/#project-python-versions)). Two machines with no pin can pick different compatible minors, for example 3.12 already installed locally and a freshly downloaded 3.15 in CI. Result: "tests pass locally, fail in CI" because the minors differ even though both satisfy `requires-python`.
 2. **Setting only `.python-version = "3.12"` doesn't tell downstream consumers anything.** A library published to PyPI without `requires-python` is offered to users on every Python version. Users on 3.9 install it, hit syntax errors at import time, and file confusing bug reports.
 3. **The "pin everywhere" mental model is wrong.** Locking `requires-python` to a single version (`==3.12`) blocks consumers on newer Pythons (see UVP-003). The right shape is: floor in `requires-python`, exact pin in `.python-version`.
 
@@ -67,8 +70,9 @@ uv python pin 3.12
 # this writes "3.12" to .python-version
 ```
 
-In CI, either `.python-version` is picked up automatically by
-`setup-uv`, or you specify explicitly:
+In CI, uv commands read `.python-version` themselves (`uv python
+install` with no argument installs the pinned version), or you specify
+explicitly:
 
 ```yaml
 - uses: astral-sh/setup-uv@<sha> # v8.1.0
@@ -78,13 +82,22 @@ In CI, either `.python-version` is picked up automatically by
 ```
 
 For a matrix across multiple Python versions, the matrix var
-overrides `.python-version`:
+overrides `.python-version`. Pass it to `setup-uv`'s `python-version`
+input, or, without `setup-uv`, set `UV_PYTHON`
+([GitHub integration guide](https://docs.astral.sh/uv/guides/integration/github/#multiple-python-versions)):
 
 ```yaml
 strategy:
   matrix:
     python-version: ["3.11", "3.12", "3.13"]
+env:
+  UV_PYTHON: ${{ matrix.python-version }}
 ```
+
+If CI provisions Python with `actions/setup-python` instead, point it
+at the pin with `python-version-file: ".python-version"`. Pointing it
+at `pyproject.toml` ignores the pin and uses the latest version
+compatible with `requires-python`.
 
 **When NOT to apply.** Single-file scripts using PEP 723 inline
 metadata — those don't have a `.python-version` and instead declare
@@ -104,10 +117,12 @@ auto-select a patch release within the pinned minor.
 2. **Pinning the major only (`3`)** — uv could legitimately pick Python 3.10 or 3.14. Resolution differs across minors (different stdlib, different syntax support); your lockfile becomes ambiguous. The pin is *too loose*.
 
 Pinning the minor (`3.12`) is the sweet spot: patch upgrades flow
-in transparently (which uv's docs explicitly support: "uv does not
-allow transparently upgrading across minor Python versions...
-Patch upgrades are transparent."), and the resolution stays
-stable across patches.
+in transparently, and the resolution stays stable across patches.
+uv's docs draw the same line: "uv allows transparently upgrading
+Python versions to the latest patch release ... uv does not allow
+transparently upgrading across minor Python versions ... because
+changing minor versions can affect dependency resolution"
+([docs](https://docs.astral.sh/uv/concepts/python-versions/#upgrading-python-versions)).
 
 **How.** Each block below is the whole `.python-version` file. Keep
 annotations out of it: uv rejects a trailing comment ("Ignoring
@@ -132,10 +147,17 @@ Bad — platform-specific, breaks on macOS:
 cpython-3.12.7-linux-x86_64-gnu
 ```
 
+The same goes for any uv-only request format (`cpython@3.12`, a
+specifier such as `>=3.12`): uv accepts it, but the docs recommend a
+plain version number "for interoperability with other tools" such as
+pyenv and `actions/setup-python`
+([docs](https://docs.astral.sh/uv/concepts/python-versions/#python-version-files)).
+
 For exact reproducibility (e.g. in deploys where you genuinely
-need the patch pinned), do it via `uv lock`'s Python version
-constraint or via your deploy infrastructure (Docker base image
-pinned to `python:3.12.7-slim@sha256:...`), not via `.python-version`.
+need the patch pinned), do it via your deploy infrastructure (Docker
+base image pinned to `python:3.12.7-slim@sha256:...`), not via
+`.python-version`. `uv.lock` records `requires-python`, not an
+interpreter patch.
 
 **When NOT to apply.** Two cases:
 
@@ -178,10 +200,14 @@ The actual problem ("we don't have Python 3.12 installed and we
 can't download it") is buried under network noise. Worse, the build
 can hang on retries.
 
-With `UV_PYTHON_DOWNLOADS=never`, the same situation produces:
+With `UV_PYTHON_DOWNLOADS=never`, the same situation fails at once
+(uv 0.13.7, `uv sync` with `3.9.1` in `.python-version`; the "in …"
+list of places searched varies with the command):
 
 ```
-error: No interpreter found for Python 3.12 in managed installations or search path
+error: No interpreter found for Python 3.9.1 in managed installations
+
+hint: A managed Python download is available for Python 3.9.1, but Python downloads are set to 'never'
 ```
 
 — which is clear, actionable, and points at the actual fix
@@ -227,6 +253,21 @@ name = "internal"
 url = "https://pypi.corp.example/simple"
 default = true
 ```
+
+The default is `automatic`. For a pipeline that provisions Python in
+an explicit `uv python install` step, the middle setting `manual`
+(`UV_PYTHON_DOWNLOADS=manual`) is a better fit: it allows "Python
+downloads during `uv python install`" only
+([docs](https://docs.astral.sh/uv/concepts/python-versions/#disabling-automatic-python-downloads)),
+so an implicit download during `uv sync` or `uv run` fails with a hint
+that names the install command:
+
+```
+hint: A managed Python download is available for Python 3.9.1, but Python downloads are set to 'manual', use `uv python install 3.9.1` to install the required version
+```
+
+Keep `never` for air-gapped builds, where even the explicit step
+cannot reach the download host.
 
 **When NOT to apply.** Standard GitHub-hosted runners with unrestricted
 network access — let uv (or `setup-uv`) auto-provision Python. The
@@ -375,7 +416,14 @@ test against the lockfile only. The matrix is library-specific.
 
 **What.** `uv python upgrade` (stable since uv 0.10.0) upgrades a managed
 CPython install to the latest patch within its minor version and
-**auto-upgrades any virtual environments** pointing at the old patch.
+**auto-upgrades the virtual environments** that use it through the
+minor-version link. Two kinds of venv are not upgraded
+([docs](https://docs.astral.sh/uv/concepts/python-versions/#upgrading-python-versions)):
+
+- one created with an explicit patch, e.g. `uv venv -p 3.12.15`;
+- one created from a canonicalized interpreter path, where another
+  tool resolved the `cpython-3.12-…` minor-version link to the
+  patch directory behind it.
 
 **Why.** A managed Python installed on first `uv python install`/`pin`
 stays at whatever patch was current then. CPython security fixes ship in
@@ -384,12 +432,26 @@ developer machine silently runs a vulnerable interpreter. The
 upgrade-plus-venv-auto-upgrade makes it one command instead of a manual
 reinstall-and-recreate.
 
-**How.**
+The patches a uv binary can install are fixed at its release: "The
+available Python versions are frozen for each uv release. To install
+new Python versions, you may need to upgrade uv"
+([docs](https://docs.astral.sh/uv/concepts/python-versions/#installing-a-python-version)).
+A pinned uv (`required-version`, the `setup-uv` `version` input, a
+`ghcr.io/astral-sh/uv:<version>` image) therefore caps the patch
+`uv python upgrade` can deliver. The uv 0.13.5 release notes give the
+same order for its CPython security builds: "After upgrading uv, run
+`uv python upgrade`."
+
+**How.** Upgrade uv first, then the interpreters:
 
 ```bash
+uv self update             # or bump the pinned uv version
 uv python upgrade 3.12     # bump 3.12.x to the latest 3.12 patch
 uv python upgrade          # all managed versions
 ```
+
+Recreate any venv that was created with an explicit patch; it stays
+on the old one.
 
 **When NOT to apply.** System Python (not uv-managed) — `uv python
 upgrade` doesn't touch it. Compliance environments that must control the
@@ -404,7 +466,8 @@ exact installed patch should manage the installer separately and set
 (3.14 from uv 0.9.0, 3.13 before that). When no version is requested or
 pinned and no compatible interpreter is already installed, uv downloads
 3.15.
-Free-threaded 3.14 (`3.14t`) no longer requires an explicit opt-in flag.
+Separately, since uv 0.9.0 free-threaded Python 3.14+ (`3.14t`) can be
+selected without an explicit opt-in.
 
 **Why.** This is a behavioral default change: a repo without
 `.python-version` that *implicitly* relied on 3.14 now silently gets 3.15
@@ -426,5 +489,111 @@ agree on the minor.
 **When NOT to apply.** A project that deliberately tracks uv's latest
 stable default and accepts the churn — leave it unpinned, and document
 the choice in CONTRIBUTING so it's intentional, not accidental.
+
+---
+
+## UVP-093 — Make the interpreter source explicit with `python-preference` in CI and images
+
+**What.** In CI and container builds, set `python-preference`
+(`UV_PYTHON_PREFERENCE`, or `[tool.uv] python-preference` in
+`pyproject.toml` / `uv.toml`) to say where the interpreter comes from:
+`only-managed` to always use a uv-managed build, or `only-system`
+(`--no-managed-python`) for an image that ships its own Python.
+
+**Why.** The default, `managed`, prefers managed installs over system
+ones, "However, system Python installations are still preferred over
+downloading a managed Python version"
+([docs](https://docs.astral.sh/uv/concepts/python-versions/#adjusting-python-version-preferences)).
+For system Pythons, uv takes "the first compatible version — not the
+newest version"
+([docs](https://docs.astral.sh/uv/concepts/python-versions/#discovery-of-python-versions)).
+So with no setting, the interpreter's build and patch depend on what
+each machine happens to have on `PATH`. With uv 0.13.7 and no managed
+3.12 installed, `uv venv -p 3.12` used an existing
+non-managed `python3.12` found on `PATH`; the same command under
+`UV_PYTHON_PREFERENCE=only-managed` downloaded and used a managed
+`cpython-3.12.16`.
+
+**How.**
+
+```yaml
+# GitHub Actions: always the uv-managed build of the pinned version
+env:
+  UV_PYTHON_PREFERENCE: only-managed
+```
+
+```dockerfile
+# Image that deliberately uses the base image's Python
+FROM python:3.12-slim
+ENV UV_PYTHON_PREFERENCE=only-system \
+    UV_PYTHON_DOWNLOADS=never
+```
+
+`--managed-python` and `--no-managed-python` are the per-command
+equivalents of `only-managed` and `only-system`.
+
+**When NOT to apply.** Developer machines, where using whatever
+compatible interpreter is already installed is the convenience the
+default exists for. Also a runner or image with exactly one
+interpreter and `UV_PYTHON_DOWNLOADS=never` (UVP-052): there is no
+second source for uv to choose.
+
+---
+
+## UVP-094 — Give a dependency group its own `requires-python` instead of raising the project floor
+
+**What.** When a dependency group (a dev tool, a docs builder) needs a
+newer Python than the project supports, scope the constraint to that
+group in `[tool.uv.dependency-groups]`. Don't raise
+`[project] requires-python`.
+
+**Why.** "By default, dependency groups must be compatible with your
+project's `requires-python` range"
+([docs](https://docs.astral.sh/uv/concepts/projects/dependencies/#group-requires-python)).
+Add `numpy>=2.3` to `dev` in a project with `requires-python = ">=3.10"`
+and `uv lock` (0.13.7) fails, and its hint points at the wrong fix:
+
+```
+hint: The `requires-python` value (>=3.10) includes Python versions that are not supported by your dependencies (e.g., all of:
+    numpy>=2.3.0,<=2.4.0rc1
+    numpy>=2.4.1,<=2.4.6
+ only support >=3.11). Consider using a more restrictive `requires-python` value (like >=3.11).
+```
+
+Following that hint changes the published metadata, and every
+consumer on 3.10 silently loses the package, all to satisfy a tool
+they never install.
+
+**How.**
+
+```toml
+[project]
+name = "example"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[dependency-groups]
+dev = ["numpy>=2.3"]
+
+[tool.uv.dependency-groups]
+dev = {requires-python = ">=3.12"}
+```
+
+`uv lock` then succeeds, and the lockfile scopes the group's packages
+with a marker:
+
+```toml
+[package.dev-dependencies]
+dev = [
+    { name = "numpy", marker = "python_full_version >= '3.12'" },
+]
+```
+
+In review, a diff that raises `requires-python` in the same change
+that adds a dev tool is the signal to check for this.
+
+**When NOT to apply.** When the runtime code itself now needs the
+newer Python (new syntax, a runtime dependency that dropped the old
+minor). Then raising the project floor is the honest change.
 
 ---

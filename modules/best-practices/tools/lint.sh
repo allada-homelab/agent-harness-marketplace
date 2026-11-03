@@ -10,6 +10,7 @@
 #   6. Frontmatter               name + description present; description is third-person
 #   7. Requires. syntax          "**Requires.** python>=3.15[, ...]" directly under its heading
 #   8. Requires. agreement       index suffix "_(requires ...)_" matches the reference line
+#   9. Applicability tags        every index "_(when: <tag>)_" is a row of the skill's ## Applicability table
 #
 # Exits non-zero on any failure. Run from any cwd.
 #
@@ -233,6 +234,21 @@ for skill_dir in "${skills[@]}"; do
       err "${skill_name}: ${iid} index line has _(requires ${ival})_ but its reference entry has no **Requires.** line"
     fi
   done <<< "$idx_requires"
+
+  # ---- 9. Applicability tags ----
+  # Index side: "_(when: <tag>)_"; each tag must be a row of the skill's
+  # "## Applicability" table ("| `tag` | ... |").
+  idx_when="$(grep -E '^- \*\*[A-Z]{2,7}-[0-9]{3,}\*\*' <<< "$skill_stripped" \
+    | grep -oE '_\(when: [^)]*\)_' | sed -E 's/^_\(when: (.*)\)_$/\1/' | sort -u || true)"
+  if [[ -n "$idx_when" ]]; then
+    vocab="$(awk '/^## / { in_s = ($0 == "## Applicability") } in_s && /^\| `[a-z][a-z0-9-]*` \|/' <<< "$skill_stripped" \
+      | sed -E 's/^\| `([a-z0-9-]+)`.*/\1/')"
+    while IFS= read -r tag; do
+      if ! grep -qxF "$tag" <<< "$vocab"; then
+        err "${skill_name}: _(when: ${tag})_ is not a tag in its ## Applicability table"
+      fi
+    done <<< "$idx_when"
+  fi
 
   # Track for cross-skill collision warning.
   if [[ -n "$ref_ids" ]]; then
