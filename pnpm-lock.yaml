@@ -18,6 +18,8 @@ importers:
 
   modules/best-practices: {}
 
+  modules/best-practices-maintainer: {}
+
   modules/browser: {}
 
   modules/code-review: {}
