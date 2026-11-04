@@ -1,6 +1,6 @@
 ---
 name: pr-flow
-description: Use whenever a task will change files in a git repository. Work happens on a new branch in a worktree, is pushed as a PR, and the PR is watched until green; also for "watch this PR", "is CI green", "merge when green", "clean up merged worktrees".
+description: Use whenever a task will change files in a git repository, or needs a worktree — creating one, setting it up, working in one or removing it. Work happens on a new branch in a worktree, is pushed as a PR, and the PR is watched until green; also for "make a worktree", "watch this PR", "is CI green", "merge when green", "clean up merged worktrees".
 user-invocable: true
 harness: [claude, pi, dsh]
 tags: [git, workflow]
@@ -105,18 +105,21 @@ an edit on main — it is a reminder to run `pr-flow start`, not a block.
 
 A git command that changes the main checkout while it is on a protected
 branch (`commit`, `checkout`, `switch`, `reset`, `restore`, `merge`, `rebase`,
-`stash` and the like; `fetch`, `pull --ff-only`, `stash list|show` are fine)
+`stash` and the like; `fetch`, `pull --ff-only`, `stash list|show|create` are fine)
 **is** blocked. Do it in a worktree. A repo whose convention is to commit on
 that branch directly is opted out by the user, never by you:
 `git config pr-flow.allowMainCheckout true`.
 
 ## Worktree setup
 
-- Never copy, clone or symlink a virtualenv (or a `.direnv/` holding one) into
-  a worktree: its shebangs and editable `.pth` paths point at the main
-  checkout, so the worktree silently runs main's code. `start` refuses a
-  `.worktreeinclude` entry that does. Let the worktree build its own — uv does
-  on the first `uv run`.
+- Make worktrees only with `pr-flow start`. A bare `git worktree add` is
+  blocked; a repo's own worktree task or a harness's built-in worktree command
+  skips the rules below too.
+- Never copy, clone or symlink a tool-built environment into a worktree — a
+  virtualenv (or a `.direnv/` holding one), `.tox`/`.nox`, a CMake build dir:
+  they hold absolute paths into the main checkout, so the worktree silently
+  runs main's code. `start` refuses a `.worktreeinclude` entry holding a
+  virtualenv. Let the worktree build its own — uv does on the first `uv run`.
 - Seed only gitignored files the worktree needs to run (`.env`, local config)
   through `.worktreeinclude`; everything tracked is already there.
 - A repo with its own setup step (a bootstrap script, `direnv allow`) needs it
@@ -124,6 +127,16 @@ that branch directly is opted out by the user, never by you:
   tooling pointed at the worktree.
 - Worktrees share the machine with main: ports, local databases, containers.
   Starting a service from a worktree takes them from whoever holds them.
+- Worktrees also share one git stash stack. `pop`, `drop`, `clear` and a bare
+  `apply` can take another session's entry and are blocked; set work aside
+  with a WIP commit, or `git stash create` and `git stash apply <sha>`.
+- Name a worktree by its literal absolute path (`pr-flow -C <path>`,
+  `git -C <path>`), never through a shell variable: harnesses reset the shell's
+  directory between calls, and guards cannot expand `$VAR` to see the target.
+- Remove a worktree with `pr-flow teardown`, which refuses unmerged work —
+  never `rm -rf` or `git worktree remove --force`. `git worktree prune`
+  without `-n` deletes the metadata of worktrees this side cannot see, such as
+  a dev container's.
 
 ## Traps
 
