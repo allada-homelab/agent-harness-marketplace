@@ -1,0 +1,40 @@
+{
+  "domain": "containers",
+  "skill": "containers-best-practices",
+  "subject": "Dockerfiles, BuildKit and Buildx builds, Compose files and dev containers",
+  "sources": [
+    {
+      "name": "docker-docs",
+      "repo": "https://github.com/docker/docs",
+      "ref": "default",
+      "paths": [
+        "_vendor/github.com/moby/buildkit/frontend/dockerfile/docs",
+        "content/manuals/build/building",
+        "content/manuals/build/cache",
+        "content/manuals/build/checks.md",
+        "content/manuals/build/ci",
+        "content/manuals/build/concepts",
+        "content/manuals/build/metadata",
+        "content/manuals/compose/how-tos",
+        "content/manuals/compose/trust-model.md",
+        "content/manuals/engine/security",
+        "content/reference/compose-file"
+      ]
+    },
+    {
+      "name": "devcontainers",
+      "repo": "https://github.com/devcontainers/spec",
+      "ref": "default",
+      "paths": ["docs/specs", "schemas/devContainer.base.schema.json"]
+    },
+    {
+      "name": "uv",
+      "repo": "https://github.com/astral-sh/uv",
+      "ref": "latest-tag",
+      "paths": ["docs/guides/integration/docker.md"]
+    }
+  ],
+  "out_of_scope": "Kubernetes and other orchestrators, Python packaging outside a Dockerfile (python- and uv-best-practices own it), CI workflow plumbing beyond the build steps themselves (repo-best-practices owns workflow permissions and action pinning), and Docker Desktop, Docker Hub and Docker Scout product features.",
+  "live": "Use the docker CLI on this host; record `docker version`, `docker buildx version` and `docker compose version` first. Build only from fresh directories under the live directory, never push an image, never run a container with --privileged or a host mount outside that directory, and remove every image and container you create. `docker compose config` validates a compose file without running it. For a uv-in-Docker claim use the `ghcr.io/astral-sh/uv:{uv}` image.",
+  "floors": "the Dockerfile frontend (`# syntax=docker/dockerfile:1.N`), BuildKit, Buildx or Compose release that introduced the feature, from the version notes in the docs themselves; for uv, the uv release. Null when the docs give no version."
+}
