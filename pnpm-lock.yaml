@@ -24,8 +24,6 @@ importers:
 
   modules/code-review: {}
 
-  modules/code-simplifier: {}
-
   modules/dual-agent-pr-review: {}
 
   modules/edit-lint: {}
