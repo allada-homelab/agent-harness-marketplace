@@ -4,6 +4,9 @@
 PreToolUse (Bash): blocks (exit 2) a git command that changes that checkout's branch, files
 or history — other sessions and every new worktree read it. Fails open whenever the target
 can't be resolved (a `cd $VAR`), since the hint and the skill still cover that case.
+In any checkout it also blocks `git worktree add` (worktrees come from `pr-flow start`, which
+applies the setup rules) and a stash command that can take another session's entry from the
+one stash stack every worktree shares.
 PostToolUse (Edit/Write): hints, once per session per repo, after a tracked file is edited
 there. Never blocks.
 
@@ -22,10 +25,12 @@ import tempfile
 PROTECTED = {"main", "master", "dev", "develop", "production", "release"}
 EDIT_TOOLS = {"Edit", "Write", "NotebookEdit"}
 SEP = r"(?:^|[;&|(\n])\s*"
-GIT_MUTATING = re.compile(
-    SEP + r"(?:[A-Za-z_]\w*=\S*\s+)*git((?:\s+-[Cc]\s+\S+)*)\s+"
-    r"(commit|checkout|switch|reset|clean|rebase|merge|cherry-pick|revert|restore|am|pull|stash)"
-    r"(?=[\s;&|)]|$)([^;&|\n]*)")
+GIT = re.compile(SEP + r"(?:[A-Za-z_]\w*=\S*\s+)*git((?:\s+-[Cc]\s+\S+)*)\s+([\w-]+)(?=[\s;&|)]|$)([^;&|\n]*)")
+MUTATING = {"commit", "checkout", "switch", "reset", "clean", "rebase", "merge", "cherry-pick", "revert",
+            "restore", "am", "pull", "stash"}
+# Reading the stack, and applying a named entry; pop/drop/clear/branch or a bare apply act on
+# whichever entry is on top, possibly another session's.
+STASH_OK = re.compile(r"\s+((list|show|create)(?=\s|$)|apply(\s+-\S+)*\s+[^-\s])")
 CD = re.compile(SEP + r"cd\s+([^\s;&|)]+)")
 
 
@@ -61,11 +66,19 @@ def block(ev):
     if ev.get("tool_name") != "Bash":
         return None
     cmd = (ev.get("tool_input") or {}).get("command") or ""
-    for m in GIT_MUTATING.finditer(cmd):
+    for m in GIT.finditer(cmd):
         flags, verb, rest = m.groups()
-        if verb == "pull" and "--ff-only" in rest:
+        if verb == "worktree" and re.match(r"\s+add(?=\s|$)", rest):
+            return ("pr-flow: make worktrees with `pr-flow start <slug>` (`--base <branch>` for one off "
+                    "another branch), not `git worktree add`: start applies the setup rules (no copied "
+                    "virtualenvs, .worktreeinclude, a recorded base) that a bare add skips.")
+        if verb == "stash" and not STASH_OK.match(rest):
+            return ("pr-flow: every worktree and session shares one stash stack, so this can take or drop "
+                    "another session's entry. Set work aside with a WIP commit, or `git stash create` and "
+                    "`git stash apply <sha>`.")
+        if verb not in MUTATING or (verb == "pull" and "--ff-only" in rest):
             continue
-        if verb == "stash" and re.match(r"\s+(list|show)(?=\s|$)", rest):
+        if verb == "stash" and re.match(r"\s+(list|show|create)(?=\s|$)", rest):
             continue
         target = ev.get("cwd") or os.getcwd()
         cds = [c for c in CD.finditer(cmd) if c.start() < m.start()]

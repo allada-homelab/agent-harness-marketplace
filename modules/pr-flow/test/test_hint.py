@@ -116,7 +116,6 @@ def guard(cwd, command):
     "git add README.md && git commit -m x",
     "git reset --hard HEAD~1",
     "git switch -c feat/x",
-    "git stash",
     "git pull",
     "FOO=1 git -c core.pager=cat restore README.md",
 ])
@@ -166,3 +165,30 @@ def test_guard_ignores_other_tools_and_bad_stdin(repo):
     assert subprocess.run([sys.executable, str(HOOK)], input=json.dumps(ev), text=True).returncode == 0
     p = subprocess.run([sys.executable, str(HOOK)], input="not json", text=True, capture_output=True)
     assert p.returncode == 0
+
+
+@pytest.mark.parametrize(("command", "blocked"), [
+    ("git stash", True), ("git stash push -m wip", True), ("git stash pop", True),
+    ("git stash drop", True), ("git stash clear", True), ("git stash apply", True),
+    ("git stash branch b", True),
+    ("git stash list", False), ("git stash show -p", False), ("git stash create", False),
+    ("git stash apply 1a2b3c", False), ("git stash apply --index 1a2b3c", False),
+])
+def test_guard_stash_rule_holds_in_any_worktree(repo, tmp_path, command, blocked):
+    root, _ = repo
+    wt = tmp_path / "wt"
+    git("worktree", "add", "-q", "-b", "feat/s", str(wt), cwd=root)
+    rc, err = guard(wt, command)
+    assert (rc == 2) == blocked, err
+    if blocked:
+        assert "stash stack" in err
+
+
+@pytest.mark.parametrize("cwd_is_main", [True, False])
+def test_guard_blocks_bare_worktree_add_anywhere(repo, tmp_path, cwd_is_main):
+    root, _ = repo
+    wt = tmp_path / "wt"
+    git("worktree", "add", "-q", "-b", "feat/w", str(wt), cwd=root)
+    rc, err = guard(root if cwd_is_main else wt, f"git worktree add -b feat/q {tmp_path / 'q'}")
+    assert rc == 2 and "pr-flow start" in err
+    assert guard(root, "git worktree list")[0] == 0
