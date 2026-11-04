@@ -6,10 +6,11 @@
 - PY-002 — `pyproject.toml` is the single source of truth
 - PY-003 — Required `[project]` metadata for publishing
 - PY-004 — Pick `[build-system]` deliberately
+- PY-110 — Use a `src/` layout with tests in a top-level `tests/`
 - PY-006 — `__init__.py`: explicit `__all__`, no side effects
 <!-- /toc -->
 
-Detailed entries for `PY-002..PY-009`. Each follows the four-part
+Detailed entries for `PY-002..PY-006` and `PY-110`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 Citations point at the [PyPA packaging guide](https://packaging.python.org/),
@@ -32,11 +33,12 @@ distribution metadata; `[tool.<name>]` tables cover tool config.
 1. **Version skew.** A project with `version = "1.2.3"` in `pyproject.toml` and `version = "1.2.4"` in `setup.py` produces inconsistent metadata; whichever file the build backend reads first wins, but readers (humans, search results, IDE plugins) may consult the other.
 2. **Classifier rot in `setup.cfg`.** Old `setup.cfg` files become invisible — nobody edits them when adding Python versions. PyPI then shows stale classifiers.
 3. **Two readme files.** `setup.py: long_description=open("README.rst").read()` plus `pyproject.toml: readme = "README.md"` — only one ships, the other is broken.
-4. **`setup.py` is executed at install time** — it's arbitrary Python code with side effects. PEP 517 deprecates this; modern installers (pip ≥21.3, uv) prefer pure-metadata builds.
+4. **`setup.py` is executed at install time** — it's arbitrary Python code with side effects. Running `setup.py` directly (`python setup.py install` / `sdist`) is deprecated; modern installers (pip ≥21.3, uv) prefer pure-metadata builds.
 
-There is **one** remaining historical reason for a `setup.py` —
-editable installs on very old pip versions — and PEP 660 eliminated
-that case. There's no reason to keep one in 2025+.
+Metadata goes in `[project]`. The PyPA guide
+[keeps `setup.py` only for programmatic build configuration](https://packaging.python.org/en/latest/guides/writing-pyproject-toml/),
+such as building C extensions under setuptools; such a `setup.py`
+carries no metadata.
 
 **How.**
 
@@ -79,13 +81,16 @@ testpaths = ["tests"]
 addopts = "--strict-markers"
 ```
 
-Delete: `setup.py`, `setup.cfg`, `MANIFEST.in` (unless you have a
-real reason to specify file inclusion outside what your build backend
-supports).
+Delete `setup.py` and `setup.cfg` unless they carry programmatic build
+configuration, and `MANIFEST.in` unless you have a real reason to
+specify file inclusion outside what your build backend supports.
 
-**When NOT to apply.** Legacy repos still on old setuptools (<61).
-Migrate when you have any reason to touch packaging config — don't
-maintain two parallel sources for new features.
+**When NOT to apply.** A setuptools project that needs programmatic
+build configuration (C extensions, generated sources) keeps a
+`setup.py` for that code only, with all metadata still in
+`[project]`. Legacy repos still on old setuptools (<61): migrate when
+you have any reason to touch packaging config — don't maintain two
+parallel sources for new features.
 
 ---
 
@@ -155,12 +160,14 @@ don't surface them. Public PyPI packages need all of the above.
 
 ## PY-004 — Pick `[build-system]` deliberately
 
-**What.** Choose the build backend based on what your package
-contains:
+**What.** The `[build-system]` table is always present, whichever
+backend you use: it *defines* the build tool. Choose the backend
+based on what your package contains, and take the exact `requires` /
+`build-backend` values from that backend's own docs:
 
 | Scenario | Backend | Build-system declaration |
 |---|---|---|
-| Pure Python, new project | `hatchling` (recommended default) | `requires = ["hatchling>=1.26"]`, `build-backend = "hatchling.build"` |
+| Pure Python, new project | `hatchling` (one reasonable choice) | `requires = ["hatchling>=1.26"]`, `build-backend = "hatchling.build"` |
 | uv-managed, minimal | `uv_build` (Astral's backend, zero-config) | `requires = ["uv_build"]`, `build-backend = "uv_build"` |
 | Needs C/C++ extensions | `scikit-build-core` | `requires = ["scikit-build-core"]`, `build-backend = "scikit_build_core.build"` |
 | Needs Rust extensions | `maturin` | `requires = ["maturin>=1.7,<2.0"]`, `build-backend = "maturin"` |
@@ -169,19 +176,19 @@ contains:
 
 **Why.** Three failure modes from getting this wrong:
 
-1. **No `[build-system]` table.** pip falls back to legacy `setuptools` with a deprecation warning, and the build behavior diverges from anything you can configure in `pyproject.toml`. Eventually pip will refuse the legacy fallback entirely.
+1. **No `[build-system]` table.** Build tools [silently apply the default](https://packaging.python.org/en/latest/specifications/pyproject-toml/) `requires = ["setuptools"]` with setuptools' legacy backend, so the build tool is whatever that default resolves to, not one you chose. pip 26.3 builds such a project with no warning at all: it installs the current setuptools (84.2.1 when checked) and produces the wheel.
 2. **`setuptools` without configuration.** Auto-discovery includes the wrong files in the wheel — often `tests/` and `docs/` end up shipped to PyPI. Or, conversely, sub-packages are missed because `find_packages()` doesn't see them.
 3. **`maturin` chosen for pure-Python projects.** Adds a Rust build dep nobody needs; build times balloon for no reason.
 
-`hatchling` is the PyPA tutorial default and a safe choice for new
-projects. It auto-discovers source layout, supports `dynamic =
+`hatchling` is the PyPA tutorial default and one reasonable choice
+for pure-Python projects. It auto-discovers source layout, supports `dynamic =
 ["version"]` via the `hatch-vcs` plugin (PY-061), and has minimal
 configuration burden.
 
 **How.**
 
 ```toml
-# Pure Python — recommended default
+# Pure Python with hatchling
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -212,6 +219,62 @@ features = ["pyo3/extension-module"]
 project unless you have a concrete reason (need a feature the current
 backend doesn't have, or your build is consistently broken). The
 migration cost is real and rarely worth it for "hatchling is newer."
+
+---
+
+## PY-110 — Use a `src/` layout with tests in a top-level `tests/`
+
+**What.** Put the importable package under `src/<pkg>/` and the tests
+in a top-level `tests/` directory, so the package is importable only
+once the project is installed (normally as an editable install).
+
+**Why.** With a flat layout (`<pkg>/` at the repo root), the repo root
+lands on `sys.path` and tests import the unbuilt checkout instead of
+the installed package. That hides packaging bugs — files missing from
+the wheel, sub-packages the backend does not discover — until a user
+installs the release. The root gets there in several ordinary ways:
+
+1. **The interpreter.** `python` puts the current directory first on
+   the import path ([PyPA: src layout vs flat layout](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/)).
+   On Python 3.15.2, `python -c 'import sys, mypkg'` in a flat repo
+   with nothing installed prints `sys.path[0] == ''` and imports the
+   checkout's `mypkg/__init__.py`.
+2. **`python -m pytest`** adds the current directory to `sys.path`
+   ([pytest: `pytest` vs `python -m pytest`](https://docs.pytest.org/en/stable/explanation/pythonpath.html#invoking-pytest-versus-python-m-pytest)).
+3. **pytest's default `prepend` import mode** inserts the first
+   directory above each test file that has no `__init__.py`. With a
+   `tests/__init__.py`, that is the repo root. (On pytest 9.2.0, a
+   flat repo whose `tests/` has no `__init__.py` fails collection with
+   `ModuleNotFoundError: No module named 'mypkg'` under bare `pytest`,
+   and passes once `tests/__init__.py` is added or it runs as
+   `python -m pytest`.)
+
+pytest's own guide: "Generally, but especially if you use the default
+import mode `prepend`, it is **strongly** suggested to use a `src`
+layout" ([pytest good practices](https://docs.pytest.org/en/stable/explanation/goodpractices.html#src-layout)).
+
+**How.**
+
+```
+my-package/
+├── pyproject.toml
+├── src/
+│   └── my_package/
+│       ├── __init__.py
+│       └── client.py
+└── tests/
+    └── test_client.py
+```
+
+Install the project in editable mode for development (`uv sync`, or
+`pip install -e .`), then run `pytest`. hatchling, `uv_build` and
+setuptools all discover a package under `src/` without extra
+configuration. pytest's import mode is covered with the other testing
+rules.
+
+**When NOT to apply.** Single-module scripts and applications that are
+never installed or packaged — there is no wheel whose contents the
+tests could misrepresent.
 
 ---
 

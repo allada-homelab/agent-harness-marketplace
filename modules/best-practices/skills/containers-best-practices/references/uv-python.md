@@ -14,6 +14,7 @@
 - UV-009 — Set `UV_TOOL_BIN_DIR=/usr/local/bin` for images that install uv tools
 - UV-010 — Use `ENV UV_NO_DEV=1` and `UV_NO_INSTALL_*` instead of repeating flags
 - UV-011 — Migrate off the removed `bookworm` uv base tags to `trixie`
+- UV-012 — Shield the image's `.venv` with an anonymous volume when bind-mounting a uv project
 <!-- /toc -->
 
 Detailed explanation for each `UV-NNN` rule. These are Python-and-uv-specific
@@ -87,8 +88,10 @@ build for one arch, the per-arch digest is fine.
 
 Variant tags exist for people who want uv pre-installed in a fuller
 base (`alpine`, `debian`, `debian-slim`,
-`python3.9`–`python3.14` × `trixie-slim`/`alpine`, and
-`-dhi` for Docker Hardened Images). Note the `bookworm`/`bookworm-slim`
+`python3.11`–`python3.15` × `trixie`/`trixie-slim`/`alpine`, and
+`python3.10`–`python3.14` × `-dhi` for Docker Hardened Images; checked
+against the registry at uv 0.13.7, see the
+[uv Docker guide's image list](https://docs.astral.sh/uv/guides/integration/docker/#available-images)). Note the `bookworm`/`bookworm-slim`
 tags were **removed in uv 0.10.0** when the Debian base moved to Trixie
 (see UV-011) — use `trixie-slim`. Astral's own
 [example repo](https://github.com/astral-sh/uv-docker-example) uses
@@ -374,6 +377,19 @@ that `home`. Two separately pinned `FROM python…` lines drift apart on the
 next bump, and the copied venv then points at a missing or different
 Python. A shared stage keeps one pin for both.
 
+If you keep a single stage and uv is not needed at runtime, mount the
+binary into each `RUN` instead of `COPY`ing it, so uv never lands in the
+image (pin it per UV-001):
+
+```dockerfile
+RUN --mount=from=ghcr.io/astral-sh/uv:0.13.7@sha256:...,source=/uv,target=/bin/uv \
+    uv sync --locked --no-dev
+```
+
+Checked live on uv 0.13.7: `uv --version` ran inside the `RUN`, and a
+later `test -e /bin/uv` failed. Cite:
+[uv Docker guide — using uv temporarily](https://docs.astral.sh/uv/guides/integration/docker/#using-uv-temporarily).
+
 **When NOT to apply.** Dev containers — you *want* the source to be
 editable and the env to reflect it. Single-stage images where you've
 decided the size hit is acceptable for simplicity.
@@ -520,7 +536,12 @@ no `[tool.uv.workspace]` block) — use UV-002 as written.
 binaries in its executable directory — `$XDG_BIN_HOME`, else
 `$XDG_DATA_HOME/../bin`, else `~/.local/bin` — which isn't on `PATH` in
 most base images, so the tools install successfully but aren't
-findable.
+findable. uv's own derived images (`ghcr.io/astral-sh/uv:python3.x-*`,
+`debian`, `alpine`) already set `UV_TOOL_BIN_DIR=/usr/local/bin` since
+uv 0.8, so set it yourself only when you copy uv onto another base
+(`python:*`, a distro image). Checked live on uv 0.13.7: the
+`python3.12-trixie-slim`, `debian` and `alpine` tags print
+`/usr/local/bin`; `python:3.12-slim-trixie` leaves it unset.
 
 ```dockerfile
 # syntax=docker/dockerfile:1
@@ -575,6 +596,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv tool install --python 3.12 pre-commit
 ```
 
+The uv guide's other form puts the default bin directory on `PATH`
+instead (`uv tool dir --bin` prints it). It suits an image that runs
+only as root, since `/root/.local/bin` is root's directory (see Why, 3):
+
+```dockerfile
+ENV PATH=/root/.local/bin:$PATH
+RUN uv tool install cowsay
+```
+
 `UV_TOOL_DIR` (separate from `UV_TOOL_BIN_DIR`) controls where the
 tool venvs themselves live — set it to a path you can `chown` to your
 container user if needed, or leave it at the default.
@@ -618,6 +648,7 @@ ENTRYPOINT ["ruff", "check"]
 **When NOT to apply.**
 
 - Images that don't use `uv tool install` at all — the env var has no effect.
+- Images built `FROM` a uv derived tag (`ghcr.io/astral-sh/uv:python3.x-*`, `debian`, `alpine`) — the image already sets it.
 - Cases where the default `~/.local/bin` is genuinely what you want, e.g. you've explicitly added that path to the image's `PATH` and want strong scoping per user. (Rare in containers, common on dev laptops.)
 - Single-stage dev containers where you `uv tool install` interactively and rely on `uv tool update-shell` having been run — but for *image*-built tool installs, prefer the explicit `UV_TOOL_BIN_DIR` declaration over relying on shell rc state.
 
@@ -682,5 +713,66 @@ tags.
 **When NOT to apply.** Images deliberately pinned to an older uv release
 by digest that still publishes `bookworm` — but new pulls and upgrades
 will hit the removal, so plan the move.
+
+---
+
+## UV-012 — Shield the image's `.venv` with an anonymous volume when bind-mounting a uv project
+
+**What.** When you bind-mount the project into a container for
+development (`docker run -v .:/app`, or compose `volumes: - .:/app`),
+add an anonymous volume at `/app/.venv` after the bind mount, so the
+image-built virtual environment stays visible instead of the host's.
+
+**Why.** The bind mount covers everything under `/app`, including the
+`.venv` that `uv sync` built in the image. The container then sees the
+host's `.venv`, which is platform specific (host interpreter paths,
+host-OS wheels), or no `.venv` at all, and imports and entry points
+break. The uv guide: "it is important _not_ to include the project
+virtual environment (`.venv`) in the mount, because the virtual
+environment is platform specific and the one built for the image should
+be kept." Checked live on uv 0.13.7: with only `-v "$PWD":/app`,
+`test -d /app/.venv` failed and `/app/.venv/bin/python` was "not found";
+with `-v /app/.venv` added, the image's venv was there and `import six`
+worked.
+
+**How.** `docker run`:
+
+```console
+$ docker run --rm --volume .:/app --volume /app/.venv myimage
+```
+
+Compose:
+
+```yaml
+services:
+  app:
+    build: .
+    volumes:
+      - .:/app
+      - /app/.venv   # anonymous volume, filled from the image's /app/.venv
+```
+
+Docker fills a new anonymous volume from the image's directory at that
+path. Compose keeps the old anonymous volume when it recreates a
+container, so after a rebuild that changes dependencies run
+`docker compose up -V` (`--renew-anon-volumes`). Checked live on
+Compose v5.6.0: a file added to `/app/.venv` by the rebuilt image was
+missing after `up --build` and present after `up -V`. With `docker run`,
+`--rm` removes the anonymous volume with the container. Docker also
+creates an empty, root-owned `.venv` directory on the host as the mount
+point.
+
+Better for hot reload: compose `develop.watch` with `ignore: - .venv/`
+on the `sync` action, and a `rebuild` action on `pyproject.toml`
+(COMPOSE-015). For dev containers, mount `.venv` as a named volume
+(DEVC-014).
+
+Cite: [uv Docker guide — developing in a container](https://docs.astral.sh/uv/guides/integration/docker/#developing-in-a-container),
+[Docker storage — volumes](https://docs.docker.com/engine/storage/#volumes).
+
+**When NOT to apply.** Images that keep the venv outside the mounted
+directory (`UV_PROJECT_ENVIRONMENT=/usr/local` or another path, UV-007),
+or no bind mount at all (production images, compose `develop.watch`
+with `.venv/` ignored).
 
 ---

@@ -74,14 +74,14 @@
       "name": "best-practices",
       "description": "Library of domain best-practices skills with stable, citable rule IDs (containers, uv, Python, FastAPI, databases, repo hygiene, Go, gRPC, QNAP QPKG packaging, Claude Code configuration and prompts) plus the containers-audit interactive scan-and-fix workflow and the authoring tools for adding rules.",
       "category": "development",
-      "version": "0.11.0",
+      "version": "0.12.0",
       "source": "./modules/best-practices"
     },
     {
       "name": "best-practices-maintainer",
       "description": "Maintainer tooling for the best-practices library: rebuild the uv rule set from uv's own docs at a pinned release with a multi-agent extract, judge and live-check workflow.",
       "category": "development",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "source": "./modules/best-practices-maintainer"
     },
     {

@@ -1,0 +1,72 @@
+{
+  "domain": "python",
+  "skill": "python-best-practices",
+  "subject": "Python projects: layout, typing, linting, testing, async code, logging and packaging",
+  "sources": [
+    {
+      "name": "cpython",
+      "repo": "https://github.com/python/cpython",
+      "ref": "latest-tag",
+      "tag_prefix": "v",
+      "paths": [
+        "Doc/library/typing.rst",
+        "Doc/library/asyncio-dev.rst",
+        "Doc/library/asyncio-runner.rst",
+        "Doc/library/asyncio-task.rst",
+        "Doc/library/logging.rst",
+        "Doc/howto/logging.rst"
+      ]
+    },
+    {
+      "name": "typing",
+      "repo": "https://github.com/python/typing",
+      "ref": "default",
+      "paths": ["docs/guides", "docs/reference"]
+    },
+    {
+      "name": "ruff",
+      "repo": "https://github.com/astral-sh/ruff",
+      "ref": "latest-tag",
+      "paths": ["docs/configuration.md", "docs/linter.md", "docs/formatter.md", "docs/preview.md"]
+    },
+    {
+      "name": "pytest",
+      "repo": "https://github.com/pytest-dev/pytest",
+      "ref": "latest-tag",
+      "paths": [
+        "doc/en/explanation",
+        "doc/en/how-to/capture-warnings.rst",
+        "doc/en/how-to/fixtures.rst",
+        "doc/en/how-to/mark.rst",
+        "doc/en/how-to/monkeypatch.rst",
+        "doc/en/how-to/parametrize.rst",
+        "doc/en/how-to/skipping.rst",
+        "doc/en/how-to/tmp_path.rst"
+      ]
+    },
+    {
+      "name": "packaging-guide",
+      "repo": "https://github.com/pypa/packaging.python.org",
+      "ref": "default",
+      "paths": [
+        "source/discussions/single-source-version.rst",
+        "source/discussions/src-layout-vs-flat-layout.rst",
+        "source/discussions/versioning.rst",
+        "source/guides/dropping-older-python-versions.rst",
+        "source/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows.rst",
+        "source/guides/writing-pyproject-toml.rst",
+        "source/specifications/dependency-groups.rst",
+        "source/specifications/pyproject-toml.rst"
+      ]
+    },
+    {
+      "name": "structlog",
+      "repo": "https://github.com/hynek/structlog",
+      "ref": "latest-tag",
+      "paths": ["docs/logging-best-practices.md", "docs/performance.md", "docs/standard-library.md"]
+    }
+  ],
+  "out_of_scope": "uv commands and settings (uv-best-practices owns them), FastAPI, databases, containers, and CI workflow plumbing.",
+  "live": "Run Python as `uvx --python {cpython} python`, ruff as `uvx ruff@{ruff}`, pytest as `uvx --python {cpython} --from pytest=={pytest} pytest`, structlog as `uv run --no-project --python {cpython} --with structlog=={structlog} python`, and a type checker as `uvx basedpyright` or `uvx mypy` (record the version it reports).",
+  "floors": "for the language and standard library, the Python version in the CPython docs' `versionadded`, `versionchanged` and `deprecated` markers; for a tool, the release that introduced the feature, from its changelog at the pinned tag (`gh api` can fetch it). Null when unmarked."
+}

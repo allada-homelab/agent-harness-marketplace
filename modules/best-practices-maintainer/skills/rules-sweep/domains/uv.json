@@ -1,0 +1,18 @@
+{
+  "domain": "uv",
+  "skill": "uv-best-practices",
+  "subject": "uv projects (Astral's Python package and project manager)",
+  "sources": [
+    {
+      "name": "uv",
+      "repo": "https://github.com/astral-sh/uv",
+      "ref": "latest-tag",
+      "paths": ["docs", "uv.schema.json", "CHANGELOG.md", "changelogs", "crates"],
+      "exclude": ["docs/pip/", "CHANGELOG.md", "changelogs/", "crates/"],
+      "history": true
+    }
+  ],
+  "out_of_scope": "Dockerfile and container patterns (containers-best-practices owns them), the `uv pip` interface, developing uv itself.",
+  "live": "Run uv only as `uvx --from uv=={uv} uv …`.",
+  "floors": "the earliest uv release with the feature (or its stabilization), from CHANGELOG.md and changelogs/*.md in the uv checkout; for a [tool.uv] setting key, confirm with `git show <tag>:uv.schema.json` across `git tag --sort=v:refname` in that checkout. Null when it predates the changelogs."
+}

@@ -4,9 +4,15 @@
 **Contents:**
 
 - PY-030 — pytest config in `pyproject.toml [tool.pytest.ini_options]`
+- PY-111 — Use `--import-mode=importlib` so tests import the installed package
+- PY-112 — `filterwarnings`: `"error"` first, narrow ignores after; never `--disable-warnings`
 - PY-031 — Always `@pytest.mark.parametrize` over for-loops
+- PY-113 — Compare floats in tests with `pytest.approx`, not `==`
 - PY-032 — Default fixtures to `function` scope; use `yield` for teardown
-- PY-033 — Register custom markers; `--strict-markers`; `xfail(strict=True)`
+- PY-114 — Patch the name the code under test looks up; never patch builtins or stdlib originals
+- PY-115 — Use `tmp_path` / `tmp_path_factory`, not `tmpdir`; enforce with `-p no:legacypath`
+- PY-116 — Share fixtures via `conftest.py` or `pytest_plugins`, never by importing them
+- PY-033 — Register custom markers; `--strict-markers`; strict xfail with `raises=`
 - PY-034 — Async tests: pick `pytest-asyncio` *or* `anyio`, not both
 - PY-035 — Coverage gate in `pyproject.toml [tool.coverage.report]`
 - PY-074 — Add `pytest-randomly` to detect order-dependent tests
@@ -14,8 +20,8 @@
 - PY-087 — Add `pytest-xdist` for parallel runs once the suite is order-independent
 <!-- /toc -->
 
-Detailed entries for `PY-030..PY-039` plus `PY-074`
-(`pytest-randomly`). Each follows the four-part **What / Why /
+Detailed entries for `PY-030..PY-035`, `PY-074`, `PY-086`, `PY-087`
+and `PY-111..PY-116`. Each follows the four-part **What / Why /
 How / When NOT to apply** shape.
 
 Citations point at the [pytest docs](https://docs.pytest.org/en/stable/),
@@ -41,6 +47,13 @@ the future, they will also be enabled in strict mode. Therefore, you
 should only enable strict mode if you use a pinned/locked version of
 pytest" ([pytest reference — strict](https://docs.pytest.org/en/stable/reference/reference.html#confval-strict)).
 An unpinned pytest can otherwise turn a new release into a red suite.
+If pytest is not locked, set the four options individually instead:
+`strict_config`, `strict_markers`, `strict_parametrization_ids` and
+`strict_xfail = true`
+([good practices — strict mode](https://docs.pytest.org/en/stable/explanation/goodpractices.html#using-pytest-s-strict-mode)).
+The pytest 9 docs show these in a dedicated `pytest.toml` under a
+`[pytest]` table; `[tool.pytest]` in `pyproject.toml` is the
+equivalent.
 
 ```toml
 [tool.pytest.ini_options]
@@ -89,17 +102,98 @@ filterwarnings = [
 ```
 
 ```toml
-# pytest 9.0+ — native TOML types
+# pytest 9.0+ — native TOML types, pytest not locked
 [tool.pytest]
 minversion = "9.0"
 testpaths = ["tests"]
 strict_markers = true
 strict_config = true
+strict_parametrization_ids = true
+strict_xfail = true
+# with pytest locked in uv.lock, `strict = true` replaces the four lines above
 ```
 
 **When NOT to apply.** Legacy repos still on `pytest.ini` or
 `setup.cfg` — migration is straightforward; do it when you have any
 reason to touch test config.
+
+---
+
+## PY-111 — Use `--import-mode=importlib` so tests import the installed package
+
+**What.** New projects set `addopts = ["--import-mode=importlib"]` in
+pytest config. pytest recommends it "for new projects"
+([good practices](https://docs.pytest.org/en/stable/explanation/goodpractices.html)).
+The other half is a `src/` layout, which PY-110 in `project-layout.md` covers. Under
+importlib, test modules cannot import each other. Shared test helpers
+live in the package (`mypkg.testing`), and shared fixtures live in
+`conftest.py`, not in an importable `tests/helpers.py`.
+
+**Why.** The default `prepend` mode inserts the directory that holds
+each test module (for a package, the directory above its top
+`__init__.py`) at the start of `sys.path`
+([import modes](https://docs.pytest.org/en/stable/explanation/pythonpath.html#import-modes)):
+
+1. **Tests import the checkout instead of the installed package.** With `tests/__init__.py`, that directory is the repository root, so `import mypkg` finds the source directory. Packaging bugs, such as a file missing from the wheel or wrong package discovery, then pass the suite. On pytest 9.2.0 with a flat `mypkg/` next to `tests/__init__.py`, prepend imported `mypkg` with the repository root on `sys.path`. Importlib, with nothing installed, failed with `ModuleNotFoundError: No module named 'mypkg'`.
+2. **Test basenames must be unique.** In a test tree without `__init__.py` files, `tests/a/test_x.py` and `tests/b/test_x.py` fail collection under prepend with `import file mismatch` and the hint `use a unique basename for your test file modules`. Under importlib, both pass.
+
+**How.**
+
+```toml
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+pythonpath = ["src"]   # only if tests run without installing the package
+```
+
+```
+src/mypkg/__init__.py
+src/mypkg/testing.py     # helpers that tests import: from mypkg.testing import ...
+tests/conftest.py        # shared fixtures, discovered automatically
+tests/test_api.py
+```
+
+**When NOT to apply.** An existing suite whose test modules import
+each other (`from helpers import X`). Under importlib this fails
+collection with `ModuleNotFoundError` (pytest 9.2.0). Move the helpers
+into the package or into `conftest.py` first, then switch the mode.
+
+---
+
+## PY-112 — `filterwarnings`: `"error"` first, narrow ignores after; never `--disable-warnings`
+
+**What.** pytest config sets `filterwarnings` with `"error"` first,
+then narrow ignores (category plus module, or a message regex). Silence
+third-party deprecations with these narrow filters. Never put
+`--disable-warnings` in `addopts` or CI. When `"error"` is not yet
+feasible, on pytest 9.1+, set `max_warnings` to today's count and
+lower it as warnings get fixed.
+
+**Why.**
+
+1. **The last matching entry wins.** "When a warning matches more than one option in the list, the action for the last matching option is performed" ([capture warnings](https://docs.pytest.org/en/stable/how-to/capture-warnings.html#controlling-warnings)). An `"error"` placed after the ignores overrides them. On pytest 9.2.0, `["ignore::UserWarning", "error"]` failed a test that emits a `UserWarning`. `["error", "ignore::UserWarning"]` passed it.
+2. **`--disable-warnings` hides the warnings summary entirely.** pytest documents it as "not recommended". A dependency's `DeprecationWarning` then goes unseen until the release that removes the API breaks the suite.
+3. **`max_warnings` ratchets without a big-bang fix.** If the tests pass but the warning count is over the threshold, pytest exits with code 6. On pytest 9.2.0 with `max_warnings = 0` and one warning, it printed `Tests pass, but maximum allowed warnings exceeded: 1 > 0`, rc=6. Filtered warnings do not count.
+
+**How.**
+
+```toml
+[tool.pytest.ini_options]
+filterwarnings = [
+  "error",
+  "ignore::DeprecationWarning:botocore.*",
+  'ignore:function ham\(\) is deprecated:DeprecationWarning',
+]
+```
+
+```toml
+# pytest 9.1+, while "error" is not yet feasible
+[tool.pytest]
+max_warnings = 37
+```
+
+**When NOT to apply.** A suite that handles warnings in an external
+system and turns off the plugin with `-p no:warnings`. `max_warnings`
+needs pytest 9.1 or newer. On older pytest, use the narrow ignores alone.
 
 ---
 
@@ -127,7 +221,7 @@ def test_abs(x, expected):
 1. **Stops at the first failure.** A for-loop hits `assert` and stops; the next 5 cases aren't checked. With parametrize, each case is its own test — they all run and all report independently.
 2. **Can't be run individually.** `pytest tests/test_abs.py::test_abs[case3]` doesn't work with loops. With parametrize, each case has a generated test ID you can target.
 3. **Per-case markers.** Want to xfail one specific case? With a loop, you put `if x == -1: pytest.xfail(...)` inside the body — ugly and easy to miss. With `pytest.param(..., marks=...)`, each case carries its own marks declaratively.
-4. **Mutation across iterations.** If parameters are mutable (lists, dicts) and a test mutates them, the next iteration in a loop sees the mutation. Parametrize creates fresh values per test invocation.
+4. **Parametrize does not copy values.** "Parameter values are passed as-is to tests (no copy whatsoever)" ([parametrize](https://docs.pytest.org/en/stable/how-to/parametrize.html)): a list or dict parameter that one case mutates leaks into later cases, exactly as in a loop. On pytest 9.2.0, two cases sharing one list that each append and assert `len == 1` give `1 failed, 1 passed`. Never mutate a parameter value in the test body; copy it first or build the value inside the test.
 
 **How.**
 
@@ -173,12 +267,50 @@ cases. Parametrize is for *independent* repetitions.
 
 ---
 
+## PY-113 — Compare floats in tests with `pytest.approx`, not `==`
+
+**What.** Assertions on computed floating-point values use
+`pytest.approx` (or `math.isclose`), never `==`. `pytest.approx` also
+compares lists and dicts of floats element by element.
+
+**Why.** pytest's flaky-tests guide names floating-point comparison as
+a cause of overly strict assertions and points to `pytest.approx`
+([flaky tests](https://docs.pytest.org/en/stable/explanation/flaky.html)).
+A result that is correct to the last few bits fails `==`. Because it
+depends on operation order, it can change with the platform or a
+harmless refactor. On Python 3.15.2 with pytest 9.2.0,
+`assert 0.1 + 0.2 == 0.3` fails and
+`assert 0.1 + 0.2 == pytest.approx(0.3)` passes.
+
+**How.**
+
+```python
+import pytest
+
+def test_mean():
+    assert mean([0.1, 0.2]) == pytest.approx(0.15)
+
+def test_vector():
+    assert scale([0.1, 0.2], 3) == pytest.approx([0.3, 0.6])
+
+def test_tight():
+    assert integrate(f, 0, 1) == pytest.approx(1 / 3, rel=1e-9)   # set the tolerance the quantity needs
+```
+
+**When NOT to apply.** Values that are exact by construction:
+integers, `Decimal`, `Fraction`, a float parsed from a string and
+compared with the same literal, or a sentinel such as `0.0` or `inf`
+that the code returns unchanged. For those, `==` is the correct and
+stricter check.
+
+---
+
 ## PY-032 — Default fixtures to `function` scope; use `yield` for teardown
 
 **What.** Two related rules:
 
 1. **Default fixture scope is `function`** (the safest). Escalate to `module` or `session` only for genuinely expensive resources (DB connections, Docker containers).
-2. **Use `yield` for teardown** — never a try/finally wrapping the whole fixture body.
+2. **Use `yield` for teardown**, with one state-changing action per fixture, each with its own teardown after its `yield`. Compose them by requesting one fixture from another. A `try/finally` around the `yield` is fine; the `db` example below uses one.
 
 ```python
 import pytest
@@ -212,13 +344,15 @@ def db_session(db_engine):
    added, alphabetical order shifts) cause spurious failures that
    are impossible to reproduce in isolation. Function scope is
    immune to this by default.
-2. **try/finally instead of yield runs teardown only on success.**
-   If the setup-side of the fixture raises (e.g. `engine =
-   create_engine(...)` fails), `finally:` runs — but anything
-   between the failure and the `finally` doesn't. With yield, the
-   "before yield" code is setup; "after yield" is teardown; pytest
-   guarantees teardown runs after a successful setup even when the
-   *test* fails.
+2. **Teardown after `yield` runs only if the fixture reached its
+   `yield`.** A fixture that does three setup steps and then
+   yields leaves the first two steps in place when the third one
+   raises: "if any of those steps in the setup raise an exception,
+   none of the teardown code will run"
+   ([fixtures — safe fixture structure](https://docs.pytest.org/en/stable/how-to/fixtures.html#safe-fixture-structure)).
+   With one state-changing action per fixture, every fixture that
+   reached its `yield` is torn down, so every action that succeeded
+   is undone. Teardown still runs when the *test* fails.
 
 **How.**
 
@@ -242,7 +376,8 @@ def db(db_engine):
         tx.rollback()
         conn.close()
 
-# Factory fixture pattern
+# Factory fixture pattern: the factory records what it creates,
+# so the fixture can clean it up after the yield
 @pytest.fixture
 def make_user(db):
     created = []
@@ -252,7 +387,8 @@ def make_user(db):
         created.append(user)
         return user
     yield _factory
-    # Optional cleanup (transaction rollback handles it in this case)
+    for user in created:
+        db.delete(user)   # redundant here (db rolls back); needed without a transaction
 ```
 
 **`autouse=True`** is a legitimate but easy-to-overuse feature.
@@ -260,9 +396,10 @@ Use it for setup that genuinely applies to every test (configuring
 logging, seeding a global rng) — not as a hack to avoid declaring
 fixture deps.
 
-**Deprecation note:** `@pytest.mark.usefixtures()` on a fixture
-function (not a test) is deprecated in pytest 8 and will error in
-a future version.
+**`usefixtures` on a fixture is an error.** `@pytest.mark.usefixtures`
+on a fixture function fails collection (pytest 9.2.0: `Failed: Marks
+cannot be applied to fixtures.`, rc=2). Request the other fixture as
+an argument instead.
 
 **When NOT to apply.** When the fixture is genuinely a
 constant-time operation (parsing a fixed string, creating a
@@ -272,13 +409,142 @@ only when you measure cost.
 
 ---
 
-## PY-033 — Register custom markers; `--strict-markers`; `xfail(strict=True)`
+## PY-114 — Patch the name the code under test looks up; never patch builtins or stdlib originals
 
-**What.** Three intertwined rules:
+**What.** `monkeypatch.setattr` and `mock.patch` target the reference
+the code under test uses. If `mymodule` does `from os import getcwd`,
+patch `mymodule.getcwd`, not `os.getcwd`. Never patch builtins such as
+`open` or `compile`. For code you control, pass the dependency in
+explicitly instead of patching. When patching a stdlib object cannot
+be avoided, scope it with `monkeypatch.context()`.
+
+**Why.**
+
+1. **Patching the original leaves the real object in use.** `from os import getcwd` binds the function into `mymodule` at import time, so replacing `os.getcwd` later does not change what `mymodule` calls. The test then exercises the real dependency and proves nothing. On pytest 9.2.0, `monkeypatch.setattr(os, "getcwd", ...)` left `mymodule.where()` returning the real directory and the assertion failed. `monkeypatch.setattr(mymodule, "getcwd", ...)` and `mock.patch("mymodule.getcwd", ...)` both passed.
+2. **Patching builtins and stdlib can break pytest.** "It is not recommended to patch builtin functions such as `open`, `compile`, etc., because it might break pytest's internals" ([monkeypatch](https://docs.pytest.org/en/stable/how-to/monkeypatch.html)). pytest uses the same stdlib objects that the test replaces.
+
+**How.**
+
+```python
+# mymodule.py
+from os import getcwd
+
+def where():
+    return getcwd()
+```
+
+```python
+# test_mymodule.py
+import mymodule
+
+def test_where(monkeypatch):
+    monkeypatch.setattr(mymodule, "getcwd", lambda: "/fake")
+    assert mymodule.where() == "/fake"
+```
+
+```python
+# Better, for code you own: take the dependency as a parameter
+import os
+
+def where(getcwd=os.getcwd):
+    return getcwd()
+
+def test_where():
+    assert where(getcwd=lambda: "/fake") == "/fake"
+```
+
+**When NOT to apply.** When the code does `import os` and calls
+`os.getcwd()`, the name it looks up *is* `os.getcwd`. Patching it with
+`monkeypatch` is then correct, ideally inside `monkeypatch.context()`
+so the change is undone as soon as the block ends.
+
+---
+
+## PY-115 — Use `tmp_path` / `tmp_path_factory`, not `tmpdir`; enforce with `-p no:legacypath`
+
+**What.** Tests use `tmp_path` and `tmp_path_factory`, which give
+`pathlib.Path`. They do not use `tmpdir` and `tmpdir_factory`, which
+give legacy `py.path.local` objects from the `legacypath` plugin. Add
+`-p no:legacypath` to `addopts` so any remaining use fails.
+
+**Why.** pytest's docs say "these days, it is preferred to use
+`tmp_path` and `tmp_path_factory`", and suggest disabling the
+`legacypath` plugin to modernize old code bases
+([tmp_path](https://docs.pytest.org/en/stable/how-to/tmp_path.html)).
+`py.path.local` is a different API from `pathlib`, so code that mixes
+the two needs conversions everywhere. The plugin flag turns any stray
+use into an error. On pytest 9.2.0, `-p no:legacypath` failed a
+`tmpdir` test with `fixture 'tmpdir' not found`, rc=1.
+
+**How.**
+
+```toml
+[tool.pytest.ini_options]
+addopts = ["-p", "no:legacypath"]
+```
+
+```python
+def test_writes_report(tmp_path):
+    out = tmp_path / "report.json"
+    write_report(out)
+    assert out.read_text().startswith("{")
+
+@pytest.fixture(scope="session")
+def corpus(tmp_path_factory):
+    return build_corpus(tmp_path_factory.mktemp("corpus"))
+```
+
+**When NOT to apply.** Keep the `-p no:legacypath` flag off while a
+plugin you depend on still requests `tmpdir`. Migrate your own tests
+anyway.
+
+---
+
+## PY-116 — Share fixtures via `conftest.py` or `pytest_plugins`, never by importing them
+
+**What.** Shared fixtures live in a `conftest.py`, which pytest
+discovers for every test at or below its directory. Fixtures from
+another module go through a `pytest_plugins` list in the top-level
+`conftest.py`. Test modules never `from x import <fixture>`.
+
+**Why.**
+
+1. **pytest does not support importing fixtures.** "Importing fixtures into a module will register them in pytest as *defined* in that module", and pytest warns that this "behavior might change/stop working in future versions" ([fixtures — using fixtures from other projects](https://docs.pytest.org/en/stable/how-to/fixtures.html#using-fixtures-from-other-projects)).
+2. **The linter deletes the import.** The import is used only as a test parameter name, so ruff 0.17.3 reports `F401 [*] ... imported but unused` and `F811 Redefinition of unused`. F401 is marked fixable, so `ruff check --fix` removes the import, and the fixture with it.
+
+**How.**
+
+```python
+# tests/conftest.py
+import pytest
+
+pytest_plugins = ["mypkg.testing.fixtures"]   # fixtures shipped with the package
+
+@pytest.fixture
+def db():
+    ...
+```
+
+```python
+# tests/test_users.py — no import; pytest supplies db by name
+def test_create(db):
+    ...
+```
+
+**When NOT to apply.** Never for fixtures. Plain helper functions and
+classes are ordinary imports. Under `--import-mode=importlib` (PY-111),
+they live in the package, not in `tests/`.
+
+---
+
+## PY-033 — Register custom markers; `--strict-markers`; strict xfail with `raises=`
+
+**What.** Four intertwined rules:
 
 1. Every custom marker (`@pytest.mark.slow`, `@pytest.mark.integration`) must be declared in `[tool.pytest.ini_options].markers`.
 2. `--strict-markers` in `addopts` so an unknown marker fails the test run instead of silently passing.
-3. `@pytest.mark.xfail(strict=True)` so unexpected passes (a test marked xfail that *succeeds*) fail the suite.
+3. Make every xfail strict, so unexpected passes (a test marked xfail that *succeeds*) fail the suite. The preferred way is the config-wide `strict_xfail = true`, which is named `xfail_strict` before pytest 9.0; the old name still works on 9.2.0. `@pytest.mark.xfail(strict=True)` does the same for one test.
+4. Pass `raises=<ExceptionType>` to xfail, so a failure for an unrelated reason is reported as a real failure instead of being hidden as XFAIL.
 
 ```toml
 [tool.pytest.ini_options]
@@ -291,15 +557,16 @@ markers = [
 ```
 
 ```python
-@pytest.mark.xfail(strict=True, reason="Bug #1234 — fix landing in v2")
+@pytest.mark.xfail(raises=AssertionError, reason="Bug #1234 — fix landing in v2")
 def test_known_broken():
     assert buggy_function() == "fixed"   # currently returns "broken"
 ```
 
-**Why.** Two failure modes:
+**Why.** Three failure modes:
 
 1. **Typo'd marker runs in every suite.** `@pytest.mark.integartion` (typo) doesn't match `pytest -m integration` (correct), so the test isn't filtered out. It runs in unit-test runs *and* integration runs. Without `--strict-markers`, pytest just emits a warning that nobody reads.
-2. **`xfail` without `strict=True` is silent tech debt.** A test marked xfail that starts passing stays marked xfail forever, because pytest reports "XPASS (xfail)" as success. Three months later, when the underlying bug *regresses*, the test fails again — and you've lost the signal that it ever started working.
+2. **`xfail` without `strict=True` is silent tech debt.** A test marked xfail that starts passing stays marked xfail forever, because pytest reports "XPASS (xfail)" as success. Three months later, when the underlying bug *regresses*, the test fails again — and you've lost the signal that it ever started working. Under `strict_xfail = true`, pytest 9.2.0 reports the pass as `FAILED ... [XPASS(strict)]`.
+3. **A bare xfail hides unrelated breakage.** Without `raises=`, any exception counts as the expected failure, so a test that now fails with a `TypeError` from a refactor still reads XFAIL. With `raises=`, "the test will be reported as a regular failure if it fails with an exception not mentioned in `raises`" ([skipping — raises](https://docs.pytest.org/en/stable/how-to/skipping.html#raises-parameter)). On pytest 9.2.0, `xfail(raises=KeyError)` around a `ValueError` reports `FAILED ... ValueError`.
 
 **How.**
 
@@ -309,6 +576,7 @@ addopts = [
   "--strict-markers",
   "--strict-config",       # also good — typos in config fail
 ]
+xfail_strict = true        # spelled strict_xfail on pytest 9.0+
 markers = [
   "slow: takes >1s; run with -m slow",
   "integration: needs external services (docker compose up)",
@@ -322,7 +590,7 @@ markers = [
 def test_full_corpus_ingestion():
     ...
 
-@pytest.mark.xfail(strict=True, reason="bug #4567")
+@pytest.mark.xfail(raises=ZeroDivisionError, reason="bug #4567")
 def test_known_broken():
     ...
 
@@ -565,7 +833,8 @@ the rule is to *prevent* that pattern from sneaking in undetected.
 
 **What.** Ruff's `PT` rules (from flake8-pytest-style) catch common
 pytest antipatterns: `unittest`-style assertions instead of plain
-`assert`, a bare `pytest.raises(...)` with no `match=`, wrong
+`assert`, `pytest.raises` on a broad exception such as `ValueError`
+with no `match=` (PT011 fires only for broad types), wrong
 `@pytest.mark.parametrize` argument shapes, and similar. Add `"PT"` to
 your ruff `select`.
 
@@ -579,8 +848,12 @@ grows.
 ```toml
 [tool.ruff.lint]
 extend-select = ["PT"]
-ignore = ["PT003", "PT004", "PT013"]   # widely considered over-opinionated
+ignore = ["PT003", "PT013"]   # widely considered over-opinionated
 ```
+
+Do not list PT004 or PT005: ruff removed them in 0.8.0, and ruff 0.17.3
+warns `The following rules have been removed and ignoring them has no
+effect: PT004`.
 
 **When NOT to apply.** Non-pytest test suites (`unittest`, `nose`) — the
 rules assume pytest idioms. A few `PT` rules are contentious; ignore the

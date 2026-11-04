@@ -45,7 +45,7 @@ Topics the rule index below covers, for matching against the task at hand:
 - **Migration** — moving from pip / poetry / PDM / pip-tools / Hatch via `migrate-to-uv`.
 
 Rules were last checked against uv 0.13.7 (commit 316c827) by the
-`uv-rules-sweep` command in the `best-practices-maintainer` module; a
+`rules-sweep` command in the `best-practices-maintainer` module; a
 new sweep starts from that release.
 
 ## How to use the rule index

@@ -15,15 +15,18 @@
 - SEC-012 — Don't `COPY` `.env` files into images
 - SEC-013 — Add `.git/` to `.dockerignore` (and never `COPY .git`)
 - SEC-014 — Don't put secrets in `ARG` or `ENV` names matching `*SECRET*` / `*TOKEN*` / `*PASSWORD*` / `*KEY*` / `*CREDENTIAL*`
+- SEC-028 — Don't declare the predefined proxy `ARG`s in a Dockerfile
 - SEC-015 — `.dockerignore` must be *comprehensive*, not just present
 - SEC-016 — Broad `COPY . .` without a matching `.dockerignore`
 - SEC-017 — Prefer `COPY` over `ADD`; flag un-checksummed `ADD <url>` and local tar auto-extract
 - SEC-019 — `.env` files must be in `.gitignore`, not just `.dockerignore`
 - SEC-020 — Use `--mount=type=ssh` for SSH-agent forwarding during builds
+- SEC-029 — Don't grant builds privileged entitlements (`RUN --security=insecure`, `RUN --network=host`)
 - SEC-021 — Pin third-party scanner/tool images by digest and CI Actions by commit SHA
 - SEC-022 — Sign images with keyless cosign and verify with an explicit identity
 - SEC-023 — Prefer a hardened/minimal verified base for production runtimes
 - SEC-024 — Run the daemon rootless (or with userns-remap) on hosts that run untrusted workloads
+- SEC-030 — Don't strip default confinement from containers (`privileged`, `seccomp=unconfined`, `apparmor=unconfined`, `label=disable`)
 - SEC-027 — Scan the built image in CI and fail the job on severity
 <!-- /toc -->
 
@@ -327,9 +330,44 @@ RUN --mount=type=secret,id=gh_token,env=GH_TOKEN,required=true \
     gh release download v1.2.3 --repo myorg/tool
 ```
 
+A secret file mounts with mode `0400`, uid `0` and gid `0` by default,
+so a step after a non-root `USER` can't read it and the tool fails or
+runs without the credential. Checked live: under `USER nobody`,
+`cat /run/secrets/tok` failed with `Permission denied` (rc=1); the same
+mount with `uid=65534` read the value (rc=0). Set `uid=`/`gid=` to the
+build user, or `mode=0444`. An `env=` mount is not affected:
+
+```dockerfile
+USER 10001
+RUN --mount=type=secret,id=npmrc,target=/app/.npmrc,uid=10001 \
+    npm ci
+```
+
+**Compose.** A top-level `secrets:` entry grants no build access:
+"Defining a secret in the top-level `secrets` must not imply granting
+any service build access to it." List the secret under the service's
+`build.secrets`; the long syntax's `target` is the `id` the Dockerfile
+mount uses. Checked live: without the grant the build failed with
+`secret tok: not found` (rc=1); with it the build passed. Pair the
+grant with `required=true` so a missing grant fails the build instead
+of running the step without the credential:
+
+```yaml
+services:
+  api:
+    build:
+      context: .
+      secrets:
+        - npmrc
+secrets:
+  npmrc:
+    file: ./.npmrc
+```
+
 Cite: [build secrets](https://docs.docker.com/build/building/secrets/),
 [Dockerfile reference — RUN --mount=type=secret](https://docs.docker.com/reference/dockerfile/#run---mounttypesecret),
-[build variables — build args in provenance](https://docs.docker.com/build/building/variables/).
+[build variables — build args in provenance](https://docs.docker.com/build/building/variables/),
+[Compose build — secrets](https://docs.docker.com/reference/compose-file/build/#secrets).
 
 For runtime secrets (DB passwords, API keys), use orchestrator-native
 secret mechanisms (Kubernetes Secrets, Docker secrets, Vault sidecar) — not
@@ -764,6 +802,14 @@ docker build .
 COPY build-info.txt /app/build-info.txt
 ```
 
+`ADD <git-url>` leaves `.git` out by default; `ADD --keep-git-dir=true`
+puts it back. Checked live: `/b/.git` was absent after a plain `ADD` of
+a Git URL and `/k/.git` was present with the flag. Treat the flag like
+`COPY .git`: use it only in a builder stage whose `.git` never reaches
+the final image.
+
+Cite: [Dockerfile reference — ADD --keep-git-dir](https://docs.docker.com/reference/dockerfile/#add---keep-git-dir).
+
 **When NOT to apply.** Never. If a tool genuinely requires a `.git`
 directory at build time (some `setuptools_scm` configurations,
 `git-describe`-based version detection), use a multi-stage build: do the
@@ -850,6 +896,54 @@ closely here," not an automatic verdict. Inspect, then decide.
 
 ---
 
+## SEC-028 — Don't declare the predefined proxy `ARG`s in a Dockerfile
+
+**What.** BuildKit predefines the proxy build arguments `HTTP_PROXY`,
+`HTTPS_PROXY`, `FTP_PROXY`, `NO_PROXY` and `ALL_PROXY` (and their
+lowercase forms). `--build-arg HTTP_PROXY=...` alone makes the build use
+the proxy. Don't add `ARG HTTP_PROXY` (or any of the others) to the
+Dockerfile.
+
+**Why.** Undeclared, the predefined proxy args are "excluded from the
+output of `docker history`" and from the cache key; the docs give the
+reason: "reduces the risk of accidentally leaking sensitive
+authentication information in an `HTTP_PROXY` variable." Declaring the
+`ARG` turns that off: the value "is preserved in the `docker history`,
+and changing its value invalidates the build cache." Proxy URLs often
+carry a username and password. SEC-014's name patterns don't match
+`*_PROXY`, so this leak passes that check. Checked live with
+`--build-arg HTTP_PROXY=http://leakproxy.invalid:3128`: `docker history
+--no-trunc` showed the URL 0 times without the declaration and 2 times
+with `ARG HTTP_PROXY`.
+
+**How.**
+
+```dockerfile
+# bad — the proxy URL (and any credentials in it) lands in docker history
+FROM alpine:3.22
+ARG HTTP_PROXY
+RUN apk add --no-cache curl
+```
+
+```dockerfile
+# good — no declaration; RUN steps still see the proxy
+FROM alpine:3.22
+RUN apk add --no-cache curl
+```
+
+```bash
+docker buildx build --build-arg HTTP_PROXY=http://proxy.example.com:3128 .
+```
+
+Cite: [Dockerfile reference — predefined ARGs](https://docs.docker.com/reference/dockerfile/#predefined-args),
+[build variables — proxy arguments](https://docs.docker.com/build/building/variables/#proxy-arguments).
+
+**When NOT to apply.** A proxy URL with no credentials, declared on
+purpose so that a proxy change busts the cache. Never declare one that
+carries credentials.
+
+---
+
 ## SEC-015 — `.dockerignore` must be *comprehensive*, not just present
 
 **What.** SEC-001 checks that a `.dockerignore` exists. This rule checks
@@ -891,6 +985,16 @@ re-included paths. The last matching line wins, so `!src` re-admits
 the `!` lines (`**/node_modules`, `**/.env`, `**/*.pem`, ...). Audit an
 allowlist for re-excludes below its last `!` line, not for the baseline
 categories.
+
+A Dockerfile-specific ignore file (`<name>.Dockerfile.dockerignore`
+next to the Dockerfile being built) "takes precedence over the
+`.dockerignore` file at the root of the build context": it replaces the
+root file, the two are not merged. Checked live: with `secret.txt` in
+the root `.dockerignore` and only `other` in
+`app.Dockerfile.dockerignore`, `docker buildx build -f app.Dockerfile .`
+copied `secret.txt` into the image. Audit each such file against the
+baseline for the Dockerfile it serves
+([build context — filename and location](https://docs.docker.com/build/concepts/context/#filename-and-location)).
 
 A concrete starter that covers the baseline:
 
@@ -1059,13 +1163,43 @@ ADD --checksum=sha256:<sha256-of-the-file> --unpack=true \
 A Git source takes the commit SHA as its checksum:
 `ADD --checksum=<full-commit-sha> https://github.com/org/repo.git#v1.2.3 /src`.
 
+A remote Git **build context** has the same gap: `docker buildx build
+'https://github.com/org/repo.git?tag=v1.2.3'` builds whatever the tag
+points at now. Add `&checksum=<commit-sha>` (alias `commit`) so the
+build fails when the ref resolves to another commit. Checked live:
+`'https://github.com/moby/buildkit.git?tag=v0.21.1&checksum=deadbeef'`
+failed with `expected checksum to match deadbeef, got 66735c67…`
+(rc=1). A builder that can't parse Git URL queries needs
+`BUILDX_SEND_GIT_QUERY_AS_INPUT=1`, which changes how the context
+appears in provenance.
+
+**Authenticated downloads.** Don't put a token in the `ADD` URL or in a
+build arg: the URL sits in the Dockerfile, and build args are recorded
+in history and provenance (SEC-006). Pass an `HTTP_AUTH_TOKEN_<host>`
+secret, sent as `Authorization: Bearer <token>`, or an
+`HTTP_AUTH_HEADER_<host>` secret, sent as the whole header value:
+
+```bash
+docker buildx build \
+  --secret id=HTTP_AUTH_TOKEN_artifacts.example.com,env=ARTIFACT_TOKEN .
+```
+
+Checked live: `ADD http://127.0.0.1:18091/f /f` built with
+`--secret id=HTTP_AUTH_TOKEN_127.0.0.1,env=TOK` reached the server with
+`Authorization: Bearer abc`. The Dockerfile reference still says `ADD`
+"doesn't support authentication" in the paragraph just above the one
+that documents these secrets; the secrets work. `RUN curl` with a
+secret mount (SEC-006) is the alternative.
+
 Cite: [best practices — ADD or COPY](https://docs.docker.com/build/building/best-practices/#add-or-copy),
-[Dockerfile reference — ADD](https://docs.docker.com/reference/dockerfile/#add).
+[Dockerfile reference — ADD](https://docs.docker.com/reference/dockerfile/#add),
+[build context — URL queries](https://docs.docker.com/build/concepts/context/#url-queries),
+[build secrets — HTTP authentication for COPY and ADD](https://docs.docker.com/build/building/secrets/#http-authentication-for-copy-and-add).
 
 **When NOT to apply.**
 
 - `ADD --checksum=... <url>` — this is the recommended form, not a finding.
-- `ADD --keep-git-dir=true <git-url>` for git-context builds where you want the `.git` directory preserved.
+- `ADD --keep-git-dir=true <git-url>` in a build stage whose `.git` never reaches the final image (SEC-013).
 - An explicit `ADD --unpack=true` on a local archive — the extraction is visible, which is the whole point of the rule.
 
 ---
@@ -1263,8 +1397,20 @@ else:
 docker buildx build --secret id=GIT_AUTH_TOKEN.github.com,env=GITHUB_TOKEN .
 ```
 
+`GIT_AUTH_TOKEN` sends Basic auth with the fixed username
+`x-access-token`, which is what GitHub accepts. For a host that needs
+another scheme, pass the full header value as a
+`GIT_AUTH_HEADER.<host>` secret; BuildKit sends it unchanged. Checked
+live against a local server: `GIT_AUTH_TOKEN` arrived as `basic` plus
+base64 of `x-access-token:<token>`, and `GIT_AUTH_HEADER` arrived
+exactly as given. For GitLab, use a personal or project access token.
+The docs disagree on GitLab's `CI_JOB_TOKEN` (one note says it works
+with neither secret, the next example builds a `GIT_AUTH_HEADER` from
+it), and it has not been checked against GitLab, so don't rely on it.
+
 Cite: [Dockerfile reference — ADD](https://docs.docker.com/reference/dockerfile/#add),
-[build secrets — Git authentication](https://docs.docker.com/build/building/secrets/#git-authentication-for-remote-contexts).
+[build secrets — Git authentication](https://docs.docker.com/build/building/secrets/#git-authentication-for-remote-contexts),
+[build secrets — HTTP authentication scheme](https://docs.docker.com/build/building/secrets/#http-authentication-scheme).
 
 **GitHub Actions caveat.** GHA has its own SSH-agent action
 ([webfactory/ssh-agent](https://github.com/webfactory/ssh-agent)) that
@@ -1278,6 +1424,60 @@ addresses.
 - The build doesn't need any private SSH-authenticated access. Public dependencies → no SSH mount needed.
 - Build-time **token** auth (private package registry, deploy token) — use `--mount=type=secret` (SEC-006) instead. Tokens aren't SSH identities.
 - Air-gapped / offline builds where no agent forwarding is possible. Vendor the private dependency into the build context instead, accepting the maintenance cost.
+
+---
+
+## SEC-029 — Don't grant builds privileged entitlements (`RUN --security=insecure`, `RUN --network=host`)
+
+**What.** Flag `RUN --security=insecure` and `RUN --network=host` in a
+Dockerfile, the `--allow security.insecure` / `--allow network.host`
+build flags and `--allow-insecure-entitlement` on a builder in CI or
+scripts, and `build.entitlements` / `build.privileged: true` in a
+compose file.
+
+**Why.** `--security=insecure` runs the step without the sandbox, which
+"is equivalent to running `docker run --privileged`"; `--network=host`
+runs it "in the host's network environment". On the builder (often a
+shared CI runner) any step in that build, including a dependency's
+install script, then gets host-root-equivalent access or reaches
+services on the host network. Both are entitlements: the builder must
+allow them and the build request must pass `--allow`. Checked live on
+the default `docker` driver (BuildKit v0.34.0): without `--allow`, the
+builds failed with `security.insecure is not allowed` and
+`network.host is not allowed` (rc=1); with `--allow network.host` the
+`--network=host` step ran (rc=0) with no builder setting, so on that
+driver the build flag is the only gate.
+
+**How.** Remove the flags and get the input another way:
+
+```dockerfile
+# bad — privileged / host-network build steps
+RUN --security=insecure ./build-with-loop-devices.sh
+RUN --network=host curl -fsSL http://localhost:8080/schema.json -o schema.json
+
+# good — the input comes from the build context, not the host network
+COPY schema.json .
+```
+
+```yaml
+# bad — compose grants the same privileges
+services:
+  app:
+    build:
+      context: .
+      privileged: true
+      entitlements: [security.insecure, network.host]
+```
+
+Cite: [Dockerfile reference — RUN --security](https://docs.docker.com/reference/dockerfile/#run---security),
+[Dockerfile reference — RUN --network](https://docs.docker.com/reference/dockerfile/#run---network),
+[Compose build — entitlements](https://docs.docker.com/reference/compose-file/build/#entitlements),
+[Compose build — privileged](https://docs.docker.com/reference/compose-file/build/#privileged).
+
+**When NOT to apply.** A build that genuinely needs elevated privileges
+(nested containerd, loop devices) on a dedicated, ephemeral builder that
+runs only trusted Dockerfiles. Allow the entitlement on that builder
+only, never on a shared runner.
 
 ---
 
@@ -1332,7 +1532,14 @@ transparency log), and verify with the **required**
 ≥2.6.0 / ≥3.0.1 targets Rekor v2 (GA late 2025).
 
 **Why.** Docker Content Trust was removed from the Docker CLI in Engine
-29, so cosign/Notation are the supported image-signing path. The subtle
+29, so cosign/Notation are the supported image-signing path. Checked
+live on Engine 29.9.0: `docker trust inspect` fails with
+`docker: unknown command: docker trust`. The docs still describe DCT as
+"being retired", with the Notary v1 service at `notary.docker.io`
+shutting down on December 8, 2026
+([Content trust](https://docs.docker.com/engine/security/trust/)), so
+don't sign or verify with `DOCKER_CONTENT_TRUST` or `docker trust` on
+older engines either. The subtle
 footgun is verification: `cosign verify` *without* pinning the identity
 and issuer will accept *any* valid keyless signature — including an
 attacker's — so the signature proves "someone signed it," not "*we*
@@ -1358,7 +1565,7 @@ image verified with `--owner astral-sh` (rc=0) and failed with a wrong
 owner (rc=1, HTTP 404). UV-001 applies this to the uv image:
 
 ```bash
-gh attestation verify --owner astral-sh oci://ghcr.io/astral-sh/uv:0.13.5
+gh attestation verify --owner astral-sh oci://ghcr.io/astral-sh/uv:0.13.7
 ```
 
 **When NOT to apply.** Projects with no supply-chain threat model, or
@@ -1447,6 +1654,16 @@ Or keep the rootful daemon and remap container root — in
 { "userns-remap": "default" }
 ```
 
+Enable `userns-remap` on a new installation. Turning it on hides the
+existing images and containers, because Docker keeps remapped objects in
+a subdirectory of `/var/lib/docker/`, and turning it off hides everything
+created while it was on. Under remapping, `--pid=host`, `--network=host`
+and `--privileged` are incompatible unless that container opts out with
+`--userns=host`, so compose files and dev containers that rely on them
+break
+([userns-remap — prerequisites](https://docs.docker.com/engine/security/userns-remap/#prerequisites),
+[known limitations](https://docs.docker.com/engine/security/userns-remap/#user-namespace-known-limitations)).
+
 Neither replaces DOCKER-005: the image should still run as a non-root
 user, so that an app compromise doesn't even get container root.
 
@@ -1457,6 +1674,64 @@ files owned by remapped UIDs) cost more than they protect. Dev
 containers and tools that assume the rootful daemon's socket and UID
 mapping break under a rootless daemon — keep those on the default
 daemon deliberately rather than by accident.
+
+---
+
+## SEC-030 — Don't strip default confinement from containers (`privileged`, `seccomp=unconfined`, `apparmor=unconfined`, `label=disable`)
+
+**What.** On compose services, `docker run` scripts and deploy configs,
+don't set `privileged: true` / `--privileged`, or `security_opt` /
+`--security-opt` values `seccomp=unconfined`, `apparmor=unconfined` or
+`label=disable`. Treat a hand-written seccomp profile that replaces the
+default as a finding to review, too.
+
+**Why.** Docker's defaults are what keep many kernel bugs out of reach:
+its list of vulnerabilities that never affected containers "assumes
+containers are run without adding extra capabilities or not run as
+`--privileged`". On seccomp the docs are direct: it "is instrumental
+for running Docker containers with least privilege. It is not
+recommended to change the default `seccomp` profile." Each of these
+options removes one layer, and `privileged` removes most of them at
+once; on a rootful daemon (SEC-024) the result is close to host root.
+Checked live: `grep Seccomp: /proc/self/status` printed `Seccomp: 2`
+(filter active) by default and `Seccomp: 0` with
+`--security-opt seccomp=unconfined`.
+
+**How.**
+
+```yaml
+# bad
+services:
+  worker:
+    image: ghcr.io/org/worker@sha256:...
+    privileged: true
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+```
+
+```yaml
+# good — keep the defaults; add back only the one capability needed
+services:
+  worker:
+    image: ghcr.io/org/worker@sha256:...
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt:
+      - no-new-privileges:true
+```
+
+If a tool needs one blocked syscall, start from Docker's default profile
+and allow that syscall, rather than running unconfined. COMPOSE-023
+covers the rest of the service hardening.
+
+Cite: [seccomp security profiles](https://docs.docker.com/engine/security/seccomp/),
+[security non-events](https://docs.docker.com/engine/security/non-events/).
+
+**When NOT to apply.** Dev containers are governed by DEVC-017, which
+covers debugger exceptions. Workloads that genuinely need it (Docker-in-
+Docker, system containers, hardware access) belong on an isolated host
+(SEC-024), with the reason written next to the option.
 
 ---
 

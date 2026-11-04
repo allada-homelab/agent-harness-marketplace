@@ -7,16 +7,22 @@
 - PY-011 — Default to `pyright` (or `basedpyright`) for new projects
 - PY-012 — Configure strict mode
 - PY-013 — `Protocol` for structural interfaces; `abc.ABC` for enforced hierarchy
+- PY-119 — Mark overriding methods with `@override`
+- PY-120 — Use `object`, not `Any`, for parameters that accept any value
+- PY-121 — Take abstract, covariant parameter types; return concrete types
 - PY-014 — `TYPE_CHECKING` block + `from __future__ import annotations`
 - PY-015 — `TypedDict` / `@dataclass` / `pydantic.BaseModel` decision matrix
 - PY-016 — `# type: ignore[code]` and `# noqa: CODE` always with explicit code
 - PY-069 — Prefer `TypeIs` over `TypeGuard` for narrowing predicates
+- PY-118 — End branches over enums, `Literal`s and unions with `assert_never`
 - PY-071 — Use PEP 695 generic syntax (3.12+)
+- PY-117 — Type decorators with `ParamSpec` so the wrapped function keeps its signature
 - PY-080 — On Python 3.14+, drop `from __future__ import annotations`
 - PY-081 — Use `TypedDict(closed=True)` / `extra_items=` for strict JSON shapes
 - PY-082 — Use `TypeForm[T]` for functions that accept a type expression at runtime
 - PY-092 — On basedpyright, start from `typeCheckingMode = "recommended"` (or `"all"`), not `"strict"`
 - PY-093 — Under basedpyright, suppress with `# pyright: ignore[rule]`, not `# type: ignore[code]`
+- PY-122 — Type your own SQL and shell sinks as `LiteralString`
 - PY-098 — Use `sentinel("NAME")` (PEP 661) instead of `_MISSING = object()`
 <!-- /toc -->
 
@@ -44,14 +50,27 @@ and the relevant PEPs (485, 526, 585, 604, 612, 673, 695, 696, 742).
 | `typing.Dict[K, V]` | `dict[K, V]` | 3.9 |
 | `typing.Type[X]` | `type[X]` | 3.9 |
 | `-> "Builder"` (forward ref) | `-> Self` | 3.11 ([PEP 673](https://peps.python.org/pep-0673/)) |
+| `typing.Callable`, `Iterable`, `Mapping`, `Sequence`, `Hashable`, `Sized`, ... | the same name from `collections.abc` | 3.9 |
+| `typing.Text` | `str` | 3.0 |
+| `typing.ByteString` | `collections.abc.Buffer`, or a union such as `bytes \| bytearray \| memoryview` | 3.12 for `Buffer` (`typing_extensions` earlier) |
 
 For projects on 3.9 that need the union syntax: `from __future__
 import annotations` at the top of the file enables it without
 runtime cost.
 
+Most of the old forms fail silently. The [`typing`
+docs](https://docs.python.org/3/library/typing.html#deprecated-aliases)
+say no deprecation warning is issued for the redundant aliases, and on
+Python 3.15.2 `python -W error -c "from typing import Callable"` (also
+`Text`, `List`, `Optional`) imports cleanly. Only a linter or type
+checker catches them. `typing.ByteString` is the exception. Importing
+it on 3.15.2 raises `DeprecationWarning: 'typing.ByteString' and
+'collections.abc.ByteString' are deprecated and slated for removal in
+Python 3.17`.
+
 **Why.** Three reasons:
 
-1. **Consistency.** A codebase mixing `Optional[X]` and `X | None` signals it grew across different Python versions with no consistent migration — and readers can't tell which form is "current style." Ruff's `UP007`/`UP006` rules flag these automatically.
+1. **Consistency.** A codebase mixing `Optional[X]` and `X | None` signals it grew across different Python versions with no consistent migration — and readers can't tell which form is "current style." Ruff flags each old form automatically: `UP007` (`Union`), `UP045` (`Optional`), `UP006` (`List`, `Dict`, `Type`), `UP035` (imports that belong in `collections.abc` or are builtins) and `UP019` (`Text`).
 2. **Forward refs become real types.** `def make_child(self) -> "Builder": ...` is a string until evaluated; tools and IDEs sometimes get it wrong. `Self` (PEP 673) is a real type that does the right thing in subclasses without forward refs.
 3. **`typing` module gets lighter.** `from typing import List, Dict, Optional, Union` was a Python idiom for a decade. None of those imports are needed on modern Python; dropping them shrinks every file's import block.
 
@@ -82,7 +101,8 @@ For `Self` on 3.9/3.10: `from typing_extensions import Self`.
 2. **Code that uses annotations at runtime via `typing.get_type_hints()`** (FastAPI, Pydantic) — the new syntax mostly works, but a few edge cases (string-quoted union literals as type aliases) can break introspection. Test before bulk-migrating.
 
 For everything else, modern syntax. Set `target-version = "py311"`
-(or your floor) in `[tool.ruff]` and let `UP006`/`UP007` enforce it.
+(or your floor) in `[tool.ruff]` and let `UP006`/`UP007`/`UP045`/`UP035`/`UP019`
+enforce it (ruff 0.17.3 reports all five on the old forms).
 
 ---
 
@@ -311,6 +331,137 @@ signature works. If you have one place that takes one parameter,
 just annotate the type. Interface abstractions earn their place when
 you have multiple implementations or genuine plugin extensibility —
 not for every shape that appears once.
+
+---
+
+## PY-119 — Mark overriding methods with `@override`
+
+**Requires.** python>=3.12 or typing-extensions>=4.4
+
+**What.** Every method that overrides a base-class method carries
+[`@typing.override`](https://docs.python.org/3/library/typing.html#typing.override)
+(PEP 698; `typing_extensions.override` before 3.12). On basedpyright,
+`reportImplicitOverride` (on under `"recommended"`, PY-092) flags an
+override that lacks the decorator.
+
+**Why.** When a base method is renamed or removed, an unmarked override
+stays orphaned. It still defines a method, nothing calls it any more,
+and no check fails. With `@override`, the checker reports the broken
+link. basedpyright 1.40.2 on a misspelled override: `Method "runn" is
+marked as override, but no base method of same name is present`.
+Under `"recommended"` it also warns on the unmarked one: `Method "run"
+is not marked as override but is overriding a method in class "Base"
+(reportImplicitOverride)`.
+
+**How.**
+
+```python
+from typing import override   # before 3.12: from typing_extensions import override
+
+class Transport:
+    def send(self, data: bytes) -> None: ...
+
+class HTTPTransport(Transport):
+    @override
+    def send(self, data: bytes) -> None: ...
+```
+
+**When NOT to apply.** Never for a real override in type-checked code.
+The decorator does nothing at runtime (it only sets `__override__`), so
+in code that no type checker runs over it is documentation only.
+
+---
+
+## PY-120 — Use `object`, not `Any`, for parameters that accept any value
+
+**What.** A parameter that accepts literally any value is typed
+`object`. A callback whose return value is ignored is typed
+`Callable[..., object]`, not `Callable[..., Any]` or
+`Callable[..., None]`. Every `Any` that remains carries a comment that
+says why. Ruff's `ANN401` flags `Any` parameter annotations.
+
+**Why.** `Any` switches checking off, and `object` keeps it on. The
+[`typing` docs](https://docs.python.org/3/library/typing.html#the-any-type)
+put it this way: "Use `object` to indicate that a value could be any
+type in a typesafe manner. Use `Any` to indicate that a value is
+dynamically typed." On basedpyright 1.40.2, `def f(o: Any) -> str:
+return o.nope()` passes, and the same body with `o: object` reports
+`Cannot access attribute "nope" for class "object"`. A
+`Callable[[int], None]` callback rejects valid callbacks that return a
+value. mypy 2.4.1: `Argument 2 to "none_cb" has incompatible type
+"Callable[[int], int]"; expected "Callable[[int], None]"`.
+
+**How.**
+
+```python
+from collections.abc import Callable
+from typing import Any
+
+def to_text(value: object) -> str:          # narrow with isinstance before use
+    if isinstance(value, bytes):
+        return value.decode()
+    return str(value)
+
+def on_each(items: list[int], callback: Callable[[int], object]) -> None:
+    for item in items:
+        callback(item)                      # return value ignored
+
+def parse(payload: dict[str, Any]) -> None:  # Any: value types depend on the key
+    ...
+```
+
+```toml
+[tool.ruff.lint]
+extend-select = ["ANN401"]
+```
+
+**When NOT to apply.** `Any` is still right where the type is
+genuinely dynamic or cannot be written. Examples are `dict[str, Any]`
+for JSON whose value types depend on the key (consider a `TypedDict`,
+PY-015), `Callable[..., Any]` for "any callable", and an invariant
+generic such as `Future[Any]` ([typing
+guide](https://typing.python.org/en/latest/guides/writing_stubs.html)).
+Comment each one.
+
+---
+
+## PY-121 — Take abstract, covariant parameter types; return concrete types
+
+**What.** Annotate a parameter with the widest type the body needs:
+`Iterable`, `Sequence`, `Mapping` from `collections.abc`, or
+`io.Reader` / `io.Writer` (3.14+) when only `.read()` / `.write()` is
+called. Return concrete types (`list`, `dict`, `set`).
+
+**Why.** `list` and `dict` are invariant, so a `list[float]` parameter
+rejects a caller's `list[int]` and every tuple. basedpyright 1.40.2:
+`"list[int]" is not assignable to "list[float]" ... Type parameter
+"_T@list" is invariant ... Consider switching from "list" to "Sequence"
+which is covariant`. `Sequence[float]` accepts both. Concrete returns
+give callers the full API (`.append`, `.sort`) without a cast ([typing
+best practices](https://typing.python.org/en/latest/reference/best_practices.html#argument-return-practices)).
+Covariant parameters also let a narrowing predicate use `TypeIs`
+(PY-069).
+
+**How.**
+
+```python
+from collections.abc import Iterable, Mapping, Sequence
+
+def mean(values: Sequence[float]) -> float:
+    return sum(values) / len(values)
+
+def render(env: Mapping[str, str]) -> list[str]:
+    return [f"{k}={v}" for k, v in env.items()]
+
+def unique(words: Iterable[str]) -> set[str]:
+    return set(words)
+```
+
+**When NOT to apply.** A function that mutates its argument
+(`names.append(...)`) keeps the concrete mutable type, `list[str]` or
+`MutableSequence[str]`. For the return type of a `Protocol` or ABC
+method, decide case by case. An abstract return there can be the
+contract.
 
 ---
 
@@ -578,32 +729,112 @@ narrows to `T`, negative branch narrows to `Original - T`. This is
 the behavior most users expected from `TypeGuard` and is the reason
 PEP 742 exists.
 
-**How.** Default to `TypeIs[T]` everywhere:
+**How.** Default to `TypeIs[T]` everywhere. The narrowed type must be
+consistent with the parameter type, so take a covariant parameter
+(`Sequence`, not `list`) when the predicate narrows a container's
+element type:
 
 ```python
+from collections.abc import Sequence
 from typing import TypeIs
 
-def is_str_list(xs: list[object]) -> TypeIs[list[str]]:
+def is_str_seq(xs: Sequence[object]) -> TypeIs[Sequence[str]]:
     return all(isinstance(x, str) for x in xs)
 
-def total_length(xs: list[object]) -> int:
-    if is_str_list(xs):
-        return sum(len(s) for s in xs)   # xs: list[str]
+def total_length(xs: Sequence[object]) -> int:
+    if is_str_seq(xs):
+        return sum(len(s) for s in xs)   # xs: Sequence[str]
     return 0
 ```
+
+The `list` version is rejected. basedpyright 1.40.2 reports `Return
+type of TypeIs ("list[str]") is not consistent with value parameter
+type ("list[object]")` for `def is_str_list(xs: list[object]) ->
+TypeIs[list[str]]`.
+
+The checker does not verify the predicate's body. A `TypeIs` function
+must return `True` if and only if its argument is of the narrowed type.
+A body that returns `True` for the wrong values narrows the wrong values
+in both branches, and nothing reports it. Give each predicate a unit
+test ([typing guide: type
+narrowing](https://typing.python.org/en/latest/guides/type_narrowing.html)).
 
 For pre-3.13 support: `from typing_extensions import TypeIs`. Same
 semantics; same name.
 
-**When NOT to apply.** `TypeGuard` is still the right tool in the
-one case PEP 742 explicitly preserves: when the **narrowed type is
-deliberately wider** than the input, so the negative-branch
-narrowing would be wrong. Example: a predicate over `list[object]`
-that returns `TypeGuard[list[int]]` to mean "this list is safe to
-treat as `list[int]` for our purposes, even though some elements
-might not actually be ints." In that case `TypeIs` would mis-narrow
-the `else`. This is rare; reach for it only when the asymmetry is
-intentional.
+**When NOT to apply.** The [`typing`
+docs](https://docs.python.org/3/library/typing.html#typing.TypeIs) name
+the two cases where `TypeIs` cannot be used and `TypeGuard` stays:
+
+1. **The narrowed type is not consistent with the input type**, such as `list[object]` to `list[int]`. `TypeGuard` accepts that, but it is unsafe on an invariant container. Code that appends to the narrowed `list[int]` corrupts a caller's `list[bool]`. Prefer reshaping the parameter to `Sequence[object]` so that `TypeIs` applies.
+2. **The function does not return `True` for every instance of the narrowed type.** An example is a check that also requires a non-empty string. `TypeIs` would then narrow the `else` branch to "not `str`", which is wrong for the empty string.
+
+---
+
+## PY-118 — End branches over enums, `Literal`s and unions with `assert_never`
+
+**Requires.** python>=3.11 or typing-extensions>=4.1
+
+**What.** A `match` or `if`/`elif` chain that handles each member of an
+enum, each value of a `Literal` or each type in a union ends with
+`case _: assert_never(x)` (or `else: assert_never(x)`). Also turn on
+the checker's own match-exhaustiveness check. On pyright/basedpyright
+that is `reportMatchNotExhaustive`, on in `"strict"`. On mypy it is the
+`exhaustive-match` error code.
+
+**Why.** Without it, a new enum member can fall through unnoticed,
+for example in a branch that only has side effects and returns `None`.
+With it, the checker reports the gap. After adding `Op.MUL` to the enum below,
+basedpyright 1.40.2 reports `Argument of type "Literal[Op.MUL]" cannot
+be assigned to parameter "arg" of type "Never" in function
+"assert_never"`. If the line is reached at runtime anyway (untyped
+caller, bad cast), it raises. On 3.15.2, `assert_never(1)` raises
+`AssertionError: Expected code to be unreachable, but got: 1`. The
+match-level checks catch a `match` with no default arm. mypy 2.4.1
+`--enable-error-code exhaustive-match`: `Match statement has unhandled
+case for values of type "Literal[Op.SUB]"`. basedpyright strict: `Cases
+within match statement do not exhaustively handle all values`.
+
+**How.**
+
+```python
+import enum
+from typing import Literal, assert_never   # before 3.11: from typing_extensions
+
+class Op(enum.Enum):
+    ADD = 1
+    SUB = 2
+
+def calculate(left: int, op: Op, right: int) -> int:
+    match op:
+        case Op.ADD:
+            return left + right
+        case Op.SUB:
+            return left - right
+        case _:
+            assert_never(op)
+
+def label(mode: Literal["r", "w"]) -> str:
+    if mode == "r":
+        return "read"
+    elif mode == "w":
+        return "write"
+    else:
+        assert_never(mode)
+```
+
+```toml
+[tool.mypy]
+enable_error_code = ["exhaustive-match"]
+```
+
+**When NOT to apply.** Code that is unreachable but that the checker
+cannot prove unreachable, such as the line after an infinite
+`itertools.count()` loop. There, `assert_never` is a type error. Write
+`assert False, "unreachable"` or raise instead ([typing guide:
+unreachable code](https://typing.python.org/en/latest/guides/unreachable.html)).
+Also leave out a `match` that is meant to handle only some cases. Give
+it an explicit `case _: pass`.
 
 ---
 
@@ -655,11 +886,29 @@ defaults on top — `class Box[T = str]:` — but is **3.13+**, not
 3.12. Pin your `requires-python` accordingly before relying on
 defaults.
 
-Ruff's `UP` family does **not** currently rewrite legacy `TypeVar`
-declarations into PEP 695 syntax (as of early 2026) — the migration
-is correctness-sensitive (scope changes, bound/variance preservation,
-typing_extensions fallbacks) and is left to humans. Don't expect
-`ruff check --fix` to do this for you.
+Ruff flags the legacy forms with three stable rules (no preview flag
+needed in ruff 0.17.3): `UP040` (type alias), `UP046` (generic class)
+and `UP047` (generic function). All three fixes are **unsafe**. `UP046`
+can change a class's variance, because PEP 695 parameters get inferred
+variance where the old `TypeVar` declared it. So plain `ruff check
+--fix` does nothing here. Review the rewrite with `ruff check
+--select UP040,UP046,UP047 --unsafe-fixes --diff` before applying it.
+
+Two legacy names are deprecated outright. `typing.TypeAlias` has been
+deprecated since 3.12 in favour of the `type` statement, with no
+removal planned. `typing.AnyStr` has been deprecated since 3.13 and is
+scheduled for removal in 3.18. Replace it with a constrained type
+parameter:
+
+```python
+def concat[S: (str, bytes)](a: S, b: S) -> S:   # was: (a: AnyStr, b: AnyStr) -> AnyStr
+    return a + b
+```
+
+Neither emits a runtime warning on 3.15.2 (`python -W error -c "from
+typing import AnyStr"` imports cleanly), so only review or a type
+checker finds them ([`typing` deprecation
+timeline](https://docs.python.org/3/library/typing.html#deprecation-timeline-of-major-features)).
 
 **How.** Migrate one declaration at a time:
 
@@ -672,27 +921,99 @@ class Repository[ItemT: BaseItem]:
 class Comparable[T: (int, float, str)]:
     def cmp(self, a: T, b: T) -> int: ...
 
-# Variance — PEP 695 uses Self-explanatory prefix
-class Producer[T]:                 # invariant by default
-    def produce(self) -> T: ...
+# Variance is inferred from how T is used; there is no syntax to declare it
+class Producer[T]:                 # T only in return position -> covariant
+    def __init__(self, value: T) -> None:
+        self._value = value
+    def get(self) -> T:
+        return self._value
 
-class Consumer[T_contra]:          # convention — name-suffix indicates intent
-    def consume(self, x: T_contra) -> None: ...
+class Sink[T]:                     # T only in parameter position -> contravariant
+    def put(self, item: T) -> None: ...
 
 # Generic alias (3.12+)
 type Pair[T] = tuple[T, T]
 type Result[T, E] = T | E
 ```
 
-For variance specifically, PEP 695 still expresses
-covariance/contravariance via the older `TypeVar(..., covariant=True)`
-spelling when truly needed — but most generic types are invariant
-and don't need it.
+PEP 695 type parameters have **inferred** variance ([`typing`
+docs](https://docs.python.org/3/library/typing.html#typing.TypeVar)).
+basedpyright 1.40.2 and mypy 2.4.1 both accept `Producer[int]` where
+`Producer[object]` is expected, and `Sink[object]` where `Sink[int]` is
+expected. Only a legacy `TypeVar(..., covariant=True)`,
+`contravariant=True` or `infer_variance=True` sets variance by hand. A
+legacy `TypeVar` without any of these is invariant.
 
 **When NOT to apply.** Two cases:
 
 1. **Libraries supporting Python < 3.12.** The PEP 695 syntax is a parse-time feature; older interpreters can't even *import* the file. Use `typing.TypeVar` + `Generic` until you can drop 3.11.
 2. **Code relying on `TypeVar` introspection at runtime.** Some libraries (older versions of pydantic, attrs internals) reflect on `__type_params__` / `__parameters__`. PEP 695 changes how those attributes are populated; spot-check the library before bulk migration.
+
+---
+
+## PY-117 — Type decorators with `ParamSpec` so the wrapped function keeps its signature
+
+**What.** A decorator, or any higher-order function that forwards
+arguments to the function it wraps, takes `Callable[P, R]` and returns
+`Callable[P, R]`, where `P` is a `ParamSpec` and `R` a type parameter.
+Its wrapper takes `*args: P.args, **kwargs: P.kwargs`. A decorator that adds or removes a
+leading parameter writes it with `Concatenate[X, P]`. Don't type a
+wrapping decorator with a `TypeVar` bound to `Callable[..., Any]`.
+
+**Why.** An unannotated decorator leaves the decorated function's
+signature to the checker's inference, and that inference differs
+between checkers. On mypy 2.4.1, a function decorated with `def
+untyped(f): def wrapper(*args, **kwargs): return f(*args, **kwargs);
+return wrapper` reveals as `Any`, and calling it with a `str` for its
+`int` parameter is not reported. The `ParamSpec` version reports
+`Argument 1 to "a" has incompatible type "str"; expected "int"`.
+(basedpyright 1.40.2 happened to infer through this simple wrapper.) The
+older `F = TypeVar("F", bound=Callable[..., Any])` form keeps the outer
+signature. But it forces the wrapper's `*args`/`**kwargs` to `Any` and
+needs a `cast` on `return wrapper`, so the wrapper body goes unchecked
+([`typing.ParamSpec`](https://docs.python.org/3/library/typing.html#typing.ParamSpec);
+[typing guide: generics](https://typing.python.org/en/latest/reference/generics.html)).
+
+**How.**
+
+```python
+import functools
+from collections.abc import Callable
+from typing import Concatenate
+
+def logged[**P, R](func: Callable[P, R]) -> Callable[P, R]:
+    @functools.wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        print("calling", func.__name__)
+        return func(*args, **kwargs)
+    return wrapper
+
+def with_attempts[**P, R](func: Callable[Concatenate[int, P], R]) -> Callable[P, R]:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        return func(3, *args, **kwargs)     # supplies the leading int
+    return wrapper
+```
+
+Below 3.12 the PEP 695 brackets are a syntax error, so declare the
+parameters instead: `P = ParamSpec("P")`, `R = TypeVar("R")`, then
+`def logged(func: Callable[P, R]) -> Callable[P, R]`.
+
+**When NOT to apply.** A decorator that returns the original function
+object unchanged, such as a registry, has no wrapper to check. It can
+take and return a type parameter `F` bound to `Callable[..., object]`,
+as in `register` below. A decorator that deliberately changes the signature (it
+returns a coroutine, a property or a different type) annotates that
+real output type instead of `Callable[P, R]`.
+
+```python
+_handlers: list[Callable[..., object]] = []
+
+def register[F: Callable[..., object]](func: F) -> F:
+    _handlers.append(func)
+    return func
+```
+
+---
 
 ## PY-080 — On Python 3.14+, drop `from __future__ import annotations`
 
@@ -902,6 +1223,51 @@ pyright (for example, a library with a mypy CI job plus pyright
 users). There, keep `# type: ignore[mypy-code]` for mypy and add the
 pyright form on the same line only where pyright also reports an
 error.
+
+---
+
+## PY-122 — Type your own SQL and shell sinks as `LiteralString`
+
+**Requires.** python>=3.11 or typing-extensions>=4.1
+
+**What.** A repository's own helper that executes a SQL statement or a
+shell command string takes that string as
+[`LiteralString`](https://docs.python.org/3/library/typing.html#typing.LiteralString)
+(PEP 675), not `str`, and takes the values as separate parameters.
+Literals, and concatenations of literals, still type-check. A string
+built from a runtime `str` does not.
+
+**Why.** An f-string that interpolates user input into SQL is an
+injection bug, and a `str` parameter accepts it silently. With
+`LiteralString`, basedpyright 1.40.2 reports `Argument of type "str"
+cannot be assigned to parameter "sql" of type "LiteralString"` at the
+call site that built the string, before any review. The check is
+pyright's. mypy 2.4.1 treats `LiteralString` as plain `str` and passed
+the same f-string call without an error. So the protection holds only
+in a project gated by pyright or basedpyright.
+
+**How.**
+
+```python
+import sqlite3
+from typing import LiteralString   # before 3.11: from typing_extensions
+
+def query(conn: sqlite3.Connection, sql: LiteralString, params: tuple[object, ...] = ()) -> list[tuple[object, ...]]:
+    return conn.execute(sql, params).fetchall()
+
+def find_user(conn: sqlite3.Connection, name: str) -> list[tuple[object, ...]]:
+    return query(conn, "SELECT id FROM users WHERE name = ?", (name,))   # OK
+
+# query(conn, f"SELECT id FROM users WHERE name = '{name}'")   -> type error
+```
+
+**When NOT to apply.** A statement that genuinely needs a dynamic
+identifier, such as a table name chosen at runtime, can't be a literal.
+Build it with the driver's own composition API (an identifier-quoting
+helper) and give that helper the `LiteralString` boundary, rather than
+widening the sink to `str`. A project checked only by mypy gets no
+enforcement from the annotation. There, `LiteralString` is
+documentation, and parameter binding is the real defence.
 
 ---
 

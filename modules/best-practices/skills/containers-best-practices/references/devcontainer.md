@@ -7,6 +7,7 @@
 - DEVC-002 — Put long-running installs in the image, not `postCreateCommand`
 - DEVC-003 — Use official `features` for common tooling
 - DEVC-004 — Pick the right lifecycle hook
+- DEVC-028 — Pick the lifecycle command form deliberately: string = shell, array = argv, object = parallel
 - DEVC-005 — Mount cache volumes for package managers
 - DEVC-006 — Be deliberate about `mounts` and `workspaceFolder`
 - DEVC-007 — Choose `remoteUser` vs `containerUser` consciously
@@ -211,7 +212,34 @@ version, and the `"version"` option is the *tool/language* version the
 feature installs (the `python` feature's default is `os-provided`).
 `devcontainer-lock.json` (DEVC-021) pins the exact feature digest.
 
-Cite: [python feature options](https://github.com/devcontainers/features/blob/47406487f9b4965e4f9865f20b86805b1e2d5c0f/src/python/devcontainer-feature.json#L4-L21),
+**Always write the major tag.** A Feature reference with no tag gets
+`:latest` added implicitly, and `:latest` can be a newer major than the
+one you tested. Checked with devcontainer CLI 0.89.0
+(`devcontainer features info manifest`): untagged
+`ghcr.io/devcontainers/features/node` resolved to the same digest as
+`node:2`, not `node:1`.
+
+**Don't reference deprecated identifiers:**
+
+- The legacy short IDs `fish`, `maven`, `gradle`, `homebrew` and
+  `jupyterlab`. The spec schema marks all five deprecated: `fish` and
+  `homebrew` as "Legacy feature not supported", the other three as
+  "Legacy feature will be removed in the future".
+- GitHub-release Feature references. The spec says they "are not
+  supported and the presence of this property may be considered a fatal
+  error or ignored", and the lockfile does not record them.
+- Renamed IDs, e.g. `docker-from-docker` (now `docker-outside-of-docker`).
+  A rename republishes the Feature under its old ID through `legacyIds`,
+  so the old reference still resolves today (`docker-from-docker:1` did
+  under CLI 0.89.0). It is still deprecated and may stop resolving, so
+  switch to the current ID.
+
+Cite: [Features spec — `:latest` added if omitted](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainer-features.md?plain=1#L193),
+[GitHub-release IDs not supported](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainer-features.md?plain=1#L53),
+[renaming a Feature with `legacyIds`](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/features-legacyIds-deprecated-properties.md?plain=1#L17-L52),
+[spec schema — legacy Feature IDs](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/schemas/devContainer.base.schema.json#L23-L42),
+[lockfile — GitHub-release Features not recorded](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainer-lockfile.md?plain=1#L32),
+[python feature options](https://github.com/devcontainers/features/blob/47406487f9b4965e4f9865f20b86805b1e2d5c0f/src/python/devcontainer-feature.json#L4-L21),
 [skip-if-present in python install.sh](https://github.com/devcontainers/features/blob/47406487f9b4965e4f9865f20b86805b1e2d5c0f/src/python/install.sh#L488-L492).
 
 **When NOT to apply.** Tooling not covered by an existing feature, or when
@@ -227,7 +255,7 @@ spec defines (in order of execution within a single create/start cycle):
 
 | Hook | Runs | Where | Use for |
 |---|---|---|---|
-| `initializeCommand` | Every time the tool starts/resumes the dev container (not just first create) | Host | Fetch credentials, generate compose `.env`, decrypt local secrets |
+| `initializeCommand` | Every time the tool starts/resumes the dev container (not just first create); "may run more than once during a given session" | Host — it runs repo code on your machine, so keep it small and idempotent | Fetch credentials, generate compose `.env`, decrypt local secrets |
 | `onCreateCommand` | Once per container *create* (re-runs on "Rebuild Container") | Container | Heavy one-time setup that depends on container state but not repo state (rare — usually goes in image) |
 | `updateContentCommand` | After `onCreateCommand` during create. Locally that is once per create; only cloud services / prebuilds re-run it to refresh a cached container | Container | Idempotent steps a prebuild should refresh when repo content changes (uncommon) |
 | `postCreateCommand` | Once per create, after content is in place | Container | Install repo deps from lockfile, wire git hooks |
@@ -250,13 +278,29 @@ Under the CLI, `onCreateCommand`, `updateContentCommand` and
 re-runs only with `--prebuild`), `postStartCommand` on every start, and
 `postAttachCommand` on every `up`.
 
+**A failing hook stops the rest.** The spec: "If one of the lifecycle
+scripts fails, any subsequent scripts will not be executed." Checked with
+CLI 0.89.0: a `postCreateCommand` of `exit 1` made `devcontainer up` exit
+1, logging `postCreateCommand from devcontainer.json failed with exit
+code 1. Skipping any further user-provided commands.`, and the
+`postStartCommand` never ran. Exit non-zero only for errors that make the
+container unusable; warn and continue for the rest (DEVC-019's
+`post-create.sh` / `post-start.sh` do this).
+
 Cite: [containers.dev — Lifecycle scripts](https://containers.dev/implementors/json_reference/#lifecycle-scripts),
+[spec — lifecycle script table, mount timing and failure rule](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainerjson-reference.md?plain=1#L71-L81),
 [CLI injectHeadless.ts — hook order and markers (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-common/injectHeadless.ts#L367-L446).
 
 **Why.** Mixing these up causes subtle bugs: heavy work in `postStartCommand`
-slows every editor restart; repo-dependent work in `onCreateCommand` runs
-too early (content may not be mounted yet, depending on configuration);
-host-side work in any `post*` hook never runs at all.
+slows every editor restart; host-side work in any `post*` hook never runs
+at all. Source mounting is not a reason to pick one hook over another:
+every in-container hook "fires after your source code has been mounted"
+(checked: `onCreateCommand` listed the workspace's `.devcontainer/`).
+The real constraint is credentials. Cloud services run `onCreateCommand`
+and `updateContentCommand` when they prebuild, so those hooks "will not
+typically have access to user-scoped assets or secrets". Steps that need
+the user's credentials (a private-index token, `gh auth`) go in
+`postCreateCommand`.
 
 **How.** Typical pattern:
 
@@ -272,6 +316,60 @@ host-side work in any `post*` hook never runs at all.
 **When NOT to apply.** When you only need one of these (most projects need
 `postCreateCommand` and nothing else — that's fine). Even then, setting
 `waitFor: postCreateCommand` is cheap insurance.
+
+---
+
+## DEVC-028 — Pick the lifecycle command form deliberately: string = shell, array = argv, object = parallel
+
+**What.** Every lifecycle command takes three forms, and they run
+differently:
+
+- **String** — run in `/bin/sh`. Use it for `&&`, pipes, redirection,
+  globs and `$VARS`.
+- **Array** — run directly as argv, with no shell. `&&`, quotes and
+  `$VARS` in an element reach the program literally.
+- **Object** — each entry (a string or an array) runs **in parallel**.
+  Every entry must succeed, and the step still blocks the hooks after it.
+
+`runArgs` is argv too: one flag or value per element, no shell quoting.
+
+**Why.** `["uv", "sync", "&&", "pre-commit", "install"]` passes `&&` to
+`uv` as an argument and fails. A string that chains independent slow
+steps (`uv sync && pnpm install`) wastes create time that the object form
+would overlap. Checked with devcontainer CLI 0.89.0: an array
+`["echo", "argv-form", "&&", "touch", "/tmp/array-shell"]` printed
+`argv-form && touch /tmp/array-shell` and created no file. An object
+`postCreateCommand` with a 2-second entry and an instant entry ran both
+at once, and `postStartCommand` started only after the slower one ended.
+
+**How.**
+
+```jsonc
+{
+  // string: shell features
+  "onCreateCommand": "[ -f .env ] || cp .env.example .env",
+  // array: one program, exact arguments, no shell
+  "postAttachCommand": ["git", "status", "--short"],
+  // object: independent steps in parallel; all must succeed
+  "postCreateCommand": {
+    // chained: pre-commit comes from the venv uv sync builds
+    "python": "uv sync --frozen && uv run pre-commit install --install-hooks",
+    "node": ["pnpm", "install", "--frozen-lockfile"]
+  },
+  // runArgs: one element per argv word — no quotes around values with spaces
+  "runArgs": ["--label", "purpose=dev box"]
+}
+```
+
+Keep the object entries truly independent. When one step needs
+another's output, chain them in one string entry, as `python` does.
+
+Cite: [spec — string vs array lifecycle commands](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainerjson-reference.md?plain=1#L79),
+[spec — `runArgs` array formatting](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainerjson-reference.md?plain=1#L114),
+[parallel lifecycle script execution](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/parallel-lifecycle-script-execution.md?plain=1#L19-L21).
+
+**When NOT to apply.** A single simple command with no shell syntax —
+either the string or the array form is fine.
 
 ---
 
@@ -340,6 +438,29 @@ a host agent is running; the devcontainer CLI does not, so bind the
 socket yourself. There is no official "ssh-keys" feature — the official
 features list has only `sshd` (an SSH *server*). The Docker socket is not
 a credential mount you can scope: it is root on the host (DEVC-025).
+
+**The workspace mount.** Three things to get right:
+
+- `workspaceMount` "Requires `workspaceFolder` be set as well". Set the
+  two together.
+- Mount the repository root (where `.git` is), "so that source control
+  operations work correctly inside the container". In a monorepo, point
+  `workspaceFolder` at the sub-project, not the mount.
+- In a Docker Compose config, set `workspaceFolder` to the target path of
+  the workspace volume in the compose file. It defaults to `/`. Checked
+  with CLI 0.89.0: a compose config without it reported
+  `remoteWorkspaceFolder` `/`, and `devcontainer exec pwd` printed `/`.
+
+```jsonc
+{
+  "dockerComposeFile": "compose.yml",   // dev service mounts ..:/workspaces/myrepo
+  "service": "dev",
+  "workspaceFolder": "/workspaces/myrepo/services/api"   // sub-project; .git stays at the mount root
+}
+```
+
+Cite: [spec — workspaceMount, workspaceFolder](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainerjson-reference.md?plain=1#L48-L59),
+[spec — workspaceFolder and workspaceMount](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainer-reference.md?plain=1#L158-L162).
 
 **When NOT to apply.** Trusted, isolated dev container with no external
 dependencies — but assume otherwise unless you've audited.
@@ -442,6 +563,23 @@ Or mount a host file:
 
 Document required host env vars in the repo README so contributors know what
 to set before opening the dev container.
+
+**`containerEnv` and `remoteEnv` keep the value out of the file, not out
+of sight.** Neither is handled as a secret: the spec says the reference
+implementation does "not (and need not) treat `remoteEnv` as secrets".
+A `containerEnv` value is set on the container, so `docker inspect`
+(`Config.Env`) and a plain `docker exec … env` show it to anyone with
+Docker access (checked: a `-e` variable appeared verbatim in
+`docker inspect`). So:
+
+- Credentials the **running** app needs: `${localEnv:...}` into
+  `containerEnv` as above, as an accepted exposure.
+- Credentials needed only for **setup** (e.g. a private-index token for
+  `uv sync`): use the tool's secrets mechanism — the CLI's
+  `--secrets-file` or Codespaces secrets (DEVC-020) — so the value reaches
+  lifecycle commands without being stored on the container.
+
+Cite: [spec — secrets support (remoteEnv is not a secret)](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/secrets-support.md?plain=1#L21-L32).
 
 **When NOT to apply.** Never — secrets always belong outside the file.
 
@@ -853,7 +991,7 @@ the container runs:
 
 | Field | Purpose |
 |---|---|
-| `appPort` | Editor-agnostic: *published* with Docker `-p` when the container is created, so it works under any tool, including the devcontainer CLI. A number `P` is published as `-p 127.0.0.1:P:P` (loopback only); a string is passed to `-p` verbatim. |
+| `appPort` | Editor-agnostic: *published* with Docker `-p` when the container is created, so it works under any tool, including the devcontainer CLI. A number `P` is published as `-p 127.0.0.1:P:P` (loopback only); a string is passed to `-p` verbatim. The app must listen on `0.0.0.0` inside the container. |
 | `forwardPorts` | List of container ports the *editor* forwards to the local machine. VS Code makes them clickable in the Ports panel. |
 | `portsAttributes` | Per-port metadata for editor forwards: label, `onAutoForward` ("notify" / "openBrowser" / "silent"), protocol. |
 | `runArgs` | Raw `docker run` flags appended at container start (image / Dockerfile configs only — not applied to Docker Compose). Use for things the spec doesn't model directly (ulimits, devices, sysctls). |
@@ -866,6 +1004,20 @@ sessions. But it is implemented by the editor: the devcontainer CLI parses
 also started headless (`devcontainer up`, CI, coding agents) gets no
 ports from `forwardPorts`. `appPort` is the working option there. The
 spec's own advice to prefer `forwardPorts` assumes an editor is attached.
+
+`appPort` *publishes* the port, so requests reach the app over the
+container's network interface, not its loopback. A server bound to
+`127.0.0.1` inside the container rejects them. The spec: "your
+application may need to listen on all interfaces (`0.0.0.0`) not just
+`localhost`", and "If your application only accepts calls from
+`localhost`, it will reject connections from published ports". An editor
+forward looks like `localhost` to the app, so the same server works in
+VS Code and fails headless. Checked with a busybox `httpd` behind
+`-p 127.0.0.1:P:8080`: bound to `127.0.0.1` inside, `curl` failed with
+`Recv failure: Connection reset by peer`; bound to `0.0.0.0`, it returned
+200. A config that uses `appPort` must start its servers on `0.0.0.0`
+(`--host 0.0.0.0` for uvicorn and Vite). The host side stays
+loopback-only, because the CLI publishes a number on `127.0.0.1`.
 `runArgs` is the escape hatch for everything else. Capabilities, security
 options, privileged mode and init have first-class properties
 (DEVC-017, DEVC-018) — use those instead.
@@ -892,11 +1044,14 @@ options, privileged mode and init have first-class properties
 {
   "image": "myimage",
   // started by the devcontainer CLI: published on host loopback as 127.0.0.1:3000
+  // the server inside must listen on 0.0.0.0:3000, or published traffic is reset
   "appPort": [3000]
 }
 ```
 
 Cite: [containers.dev — forwardPorts, portsAttributes, appPort](https://containers.dev/implementors/json_reference/#general-properties),
+[spec — appPort needs `0.0.0.0`](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainerjson-reference.md?plain=1#L47),
+[spec — publishing vs forwarding ports](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainerjson-reference.md?plain=1#L167-L170),
 [runArgs is image/Dockerfile-specific](https://containers.dev/implementors/json_reference/#image-or-dockerfile-specific-properties),
 [CLI singleContainer.ts L346-L348 — appPort publishing (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/singleContainer.ts#L346-L348),
 [CLI imageMetadata.ts — forwardPorts only merged, never used (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/imageMetadata.ts#L192-L209).
@@ -917,7 +1072,8 @@ The spec has first-class, cross-orchestrator properties for them —
 these over the equivalent `runArgs` flags: `runArgs` applies only to
 image/Dockerfile configs, while these properties also reach Docker
 Compose configs (the CLI writes them into its generated compose
-override), and they merge with values from features and image metadata.
+override), and they merge with values from features and image metadata
+(a merge that only ever adds privilege — see below).
 
 **Why.** A common mistake is `--privileged` (or `"privileged": true`)
 when the actual need is one or two specific capabilities. `--privileged`
@@ -946,6 +1102,23 @@ Seccomp/AppArmor:
 }
 ```
 
+**The merge only adds privilege.** `privileged` and `init` end up `true`
+if any Feature or image-metadata entry sets them; `capAdd` and
+`securityOpt` are the union of every source. devcontainer.json cannot
+turn off a `privileged: true` that comes from a Feature (e.g.
+`docker-in-docker`) or from the base image's `devcontainer.metadata`
+label, even with an explicit `"privileged": false`. Checked with CLI
+0.89.0 (`read-configuration --include-merged-configuration`): a config
+with `"privileged": false` plus a local Feature declaring
+`"privileged": true, "capAdd": ["SYS_PTRACE"]` merged to
+`privileged: true`, `capAdd: ["SYS_PTRACE"]`. So audit what you pull in:
+each Feature's `devcontainer-feature.json` and the image's
+`devcontainer.metadata` label (`docker buildx imagetools inspect
+--format '{{index (index .Image "linux/amd64").Config.Labels "devcontainer.metadata"}}' <image>`)
+for `privileged`,
+`capAdd` and `securityOpt`. To drop the privilege, drop the Feature or
+image.
+
 ```jsonc
 // bad — sledgehammer (and runArgs is silently ignored under Docker Compose)
 "runArgs": ["--privileged"]
@@ -959,6 +1132,7 @@ root on the host: any process in the container can
 `docker run -v /:/host …`. See DEVC-025.
 
 Cite: [json_reference — capAdd, securityOpt, privileged, init](https://containers.dev/implementors/json_reference/#general-properties),
+[spec — merge logic for Features and image metadata](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainer-reference.md?plain=1#L56-L64),
 [CLI singleContainer.ts L359-L373 / dockerCompose.ts L520-L565 (v0.89.0)](https://github.com/devcontainers/cli/blob/v0.89.0/src/spec-node/dockerCompose.ts#L520-L565).
 
 **When NOT to apply.** When you genuinely need `privileged` for an
@@ -971,9 +1145,10 @@ property (`--ulimit`, `--device`, `--sysctl`) in image/Dockerfile configs.
 ## DEVC-018 — Set `"init": true` at the devcontainer.json level for proper PID 1
 
 **What.** The dev container spec supports a top-level `"init": true`
-field that adds `--init` to the container's run args. Use it (or
-`"runArgs": ["--init"]`) instead of relying on the image's entrypoint
-to handle signals correctly.
+field that adds `--init` to the container's run args. Use it instead of
+relying on the image's entrypoint to handle signals correctly, and
+instead of `"runArgs": ["--init"]`, which is silently ignored under a
+Docker Compose config (DEVC-016, DEVC-017).
 
 **Why.** Same rationale as DOCKER-006 (PID 1 / signal handling) applied
 to dev containers: most editors and language servers fork child
@@ -992,17 +1167,12 @@ proper SIGTERM response that never comes.
 }
 ```
 
-Equivalent via `runArgs`:
-
-```jsonc
-{
-  "image": "mcr.microsoft.com/devcontainers/python:3-3.12-trixie",
-  "runArgs": ["--init"]
-}
-```
-
-For `dockerComposeFile` mode, set `init: true` on the *service* in the
-compose file:
+The same property works in `dockerComposeFile` mode: the CLI writes it
+into its generated compose override. Checked with CLI 0.89.0 on a
+compose config: `"init": true` gave the container `HostConfig.Init=true`,
+while `"runArgs": ["--init"]` left it unset (`<nil>`) with no warning.
+Setting `init: true` on the service in the compose file is an
+alternative, not a requirement:
 
 ```yaml
 services:
@@ -1012,6 +1182,7 @@ services:
 ```
 
 Cite: [containers.dev — init](https://containers.dev/implementors/json_reference/),
+[spec — `init`](https://github.com/devcontainers/spec/blob/c95ffeed1d059abfe9ffbe79762dc2fa4e7c2421/docs/specs/devcontainerjson-reference.md?plain=1#L23),
 [compose reference — services.init](https://docs.docker.com/reference/compose-file/services/#init).
 
 **When NOT to apply.** When the image's entrypoint already runs a real

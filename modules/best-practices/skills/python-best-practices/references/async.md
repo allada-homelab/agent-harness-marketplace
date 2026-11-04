@@ -5,25 +5,30 @@
 
 - PY-040 — `asyncio` for I/O-bound concurrency only
 - PY-041 — Never call blocking I/O inside async; use debug mode
+- PY-101 — Cross into the event loop from other threads only via the `*_threadsafe` APIs
 - PY-042 — `asyncio.run()` at the top level only
 - PY-043 — `TaskGroup` over `gather`; re-raise `CancelledError`
 - PY-044 — `contextlib.aclosing` for async generators
 - PY-045 — `anyio` for library code that must be runtime-agnostic
 - PY-067 — Keep strong refs to `create_task` results; or the task vanishes
+- PY-099 — Await or schedule every coroutine call; a bare call never runs
 - PY-068 — Prefer `asyncio.timeout()` (3.11+) over `asyncio.wait_for`
 - PY-079 — Free-threaded Python: don't adopt in production yet
 - PY-083 — Use `InterpreterPoolExecutor` for CPU-bound work on Python 3.14+
 - PY-084 — Use `asyncio.get_running_loop()`, never `asyncio.get_event_loop()`
+- PY-100 — Configure the loop with `loop_factory`, not event loop policies
 - PY-085 — Introspect stuck async apps with `python -m asyncio ps` / `pstree`
 <!-- /toc -->
 
 Detailed entries for `PY-040..PY-049` plus newer cross-cutting
-async rules (`PY-067`, `PY-068`, `PY-079`). Each follows the
+async rules (`PY-067`, `PY-068`, `PY-079`, `PY-083`..`PY-085`,
+`PY-099`..`PY-101`). Each follows the
 four-part **What / Why / How / When NOT to apply** shape.
 
 Citations point at the
 [asyncio docs](https://docs.python.org/3/library/asyncio.html),
 [asyncio-dev docs](https://docs.python.org/3/library/asyncio-dev.html),
+[asyncio-runner docs](https://docs.python.org/3/library/asyncio-runner.html),
 [anyio docs](https://anyio.readthedocs.io/),
 [PEP 525 — async generators](https://peps.python.org/pep-0525/),
 [PEP 703 / PEP 779 — free-threaded Python](https://peps.python.org/pep-0779/),
@@ -115,17 +120,23 @@ inside async functions. The biggest offenders:
 | `redis.Redis` | `redis.asyncio.Redis` |
 | `boto3` | `aioboto3` (or `asyncio.to_thread` for occasional calls) |
 
-Enable asyncio debug mode during development to detect violations:
+Enable asyncio debug mode during development to detect violations.
+The [asyncio-dev docs](https://docs.python.org/3/library/asyncio-dev.html#asyncio-debug-mode)
+list four ways:
 
-```python
-asyncio.run(main(), debug=True)
-```
-
-or set the env var:
+- set the `PYTHONASYNCIODEBUG=1` environment variable;
+- run under the Python Development Mode (`python -X dev`);
+- pass `debug=True` to `asyncio.run()`;
+- call `loop.set_debug(True)`.
 
 ```bash
 PYTHONASYNCIODEBUG=1 python -m myapp
+python -X dev -m myapp          # also turns on debug mode, and shows ResourceWarning
 ```
+
+Also show `ResourceWarning` (`python -W default`, which `-X dev`
+implies) and set the `asyncio` logger to `logging.DEBUG`, so the
+reports debug mode emits are visible.
 
 **Why.** Blocking I/O in async has the same failure mode as CPU-bound
 work (PY-040): the event loop stalls. The difference is that I/O
@@ -133,14 +144,17 @@ blocking is *common* — `requests` was the standard sync HTTP library
 for a decade and everyone has it in muscle memory. Mixing `requests`
 into an async handler is a routine mistake.
 
-Debug mode catches the most common cases:
+When debug mode is on, asyncio:
 
-- Logs warnings when a callback takes >100ms (configurable via
-  `loop.slow_callback_duration`).
-- Logs warnings about unawaited coroutines.
-- Logs warnings about tasks destroyed before completion.
-- Forces traceback objects on lost exceptions (which otherwise
-  vanish silently in fire-and-forget tasks).
+- logs callbacks that take longer than 100 ms (set the threshold
+  with `loop.slow_callback_duration`) — this is what catches a
+  blocking call;
+- logs an I/O selector call that takes too long;
+- raises from many non-threadsafe APIs (`loop.call_soon`,
+  `loop.call_at`) when they are called from the wrong thread
+  (see PY-101);
+- adds the creation traceback to "coroutine ... was never awaited"
+  warnings (PY-099) and to "Task exception was never retrieved" logs.
 
 In production: leave debug mode off (it's heavier). In dev / CI:
 turn it on.
@@ -163,11 +177,14 @@ if __name__ == "__main__":
     asyncio.run(main(), debug=debug)
 ```
 
-For tests with pytest-asyncio:
+For tests with pytest-asyncio, the `env` option below comes from the
+`pytest-env` plugin. Without that plugin, pytest ignores it and warns
+`PytestConfigWarning: Unknown config option: env`. Running
+`python -X dev -m pytest` works with no plugin.
 
 ```toml
 [tool.pytest.ini_options]
-env = [
+env = [                  # needs pytest-env
   "PYTHONASYNCIODEBUG=1",
 ]
 asyncio_mode = "auto"
@@ -201,6 +218,62 @@ async def handler():
 
 ---
 
+## PY-101 — Cross into the event loop from other threads only via the `*_threadsafe` APIs
+
+**What.** Code that runs in another OS thread (a thread-pool worker,
+a callback from a sync library) never calls `loop.call_soon`,
+`asyncio.create_task`, or methods of an asyncio `Queue`, `Event` or
+`Future` directly. It schedules callbacks with
+`loop.call_soon_threadsafe(...)` and submits coroutines with
+`asyncio.run_coroutine_threadsafe(coro, loop)`, which returns a
+`concurrent.futures.Future`. Capture the loop with
+`asyncio.get_running_loop()` in the loop's thread and pass it to the
+worker.
+
+**Why.** "Almost all asyncio objects are not thread safe"
+([docs](https://docs.python.org/3/library/asyncio-dev.html#asyncio-multithreading)).
+A plain `loop.call_soon` from another thread does not wake the
+loop, so the callback can sit unrun until some other event arrives
+(on 3.15.2, a callback scheduled this way while the loop slept on a
+2-second timer ran only after those 2 seconds), or it races with the
+loop's own bookkeeping. Only debug mode
+(PY-041) checks the thread; on 3.15.2 under `debug=True` it raises
+`RuntimeError: Non-thread-safe operation invoked on an event loop
+other than the current one`. In production mode nothing checks, so
+the bug ships.
+
+**How.**
+
+```python
+import asyncio
+
+async def notify(msg: str) -> str:
+    return f"handled {msg}"
+
+def worker(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue[str]) -> None:
+    # runs in a thread
+    loop.call_soon_threadsafe(queue.put_nowait, "tick")          # callback
+    fut = asyncio.run_coroutine_threadsafe(notify("done"), loop)  # coroutine
+    print(fut.result(timeout=5))     # concurrent.futures.Future — blocks this thread only
+
+async def main() -> None:
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    await asyncio.to_thread(worker, loop, queue)
+    print(await queue.get())
+
+asyncio.run(main())
+```
+
+**When NOT to apply.** Code that runs in the loop's own thread
+(coroutines, callbacks the loop invokes) uses the ordinary APIs —
+the `*_threadsafe` variants are only needed across a thread boundary.
+Thread-safe primitives that are not asyncio objects
+(`queue.Queue`, `threading.Event`) need no bridge from the worker
+side.
+
+---
+
 ## PY-042 — `asyncio.run()` at the top level only
 
 **What.** Call `asyncio.run(coro())` exactly once per program, at
@@ -221,13 +294,16 @@ if __name__ == "__main__":
 
 # WRONG — nested run
 async def some_handler():
-    other_result = asyncio.run(other_async_fn())  # RuntimeError: This event loop is already running
+    other_result = asyncio.run(other_async_fn())  # RuntimeError: asyncio.run() cannot be called from a running event loop
 ```
 
 **Why.** `asyncio.run()` creates a new event loop and blocks the
-calling thread until the coroutine finishes. Calling it when a loop
-is already running raises `RuntimeError: This event loop is already
-running`.
+calling thread until the coroutine finishes. The
+[docs](https://docs.python.org/3/library/asyncio-runner.html#asyncio.run)
+say it "should be used as a main entry point for asyncio programs,
+and should ideally only be called once". Calling it when a loop
+is already running raises `RuntimeError: asyncio.run() cannot be
+called from a running event loop`.
 
 The `nest_asyncio` antipattern: monkey-patches asyncio internals
 globally to allow nesting. It exists for one legitimate reason —
@@ -274,6 +350,17 @@ def sync_entry():
     return loop.run_until_complete(async_helper())
 ```
 
+A sync program that makes several top-level async calls that must
+share one event loop and one `contextvars.Context` uses
+`asyncio.Runner`, not repeated `asyncio.run()` calls (each of which
+makes and closes a new loop):
+
+```python
+with asyncio.Runner() as runner:
+    runner.run(connect())
+    runner.run(serve())        # same loop, same context as connect()
+```
+
 To run a *new* loop in a thread (rare, but legitimate when bridging
 sync and async code via threads):
 
@@ -299,9 +386,12 @@ where it's defensible.
    (Python 3.11+) over `asyncio.gather()`.** TaskGroup provides
    structured concurrency: any task failure cancels the others and
    raises an `ExceptionGroup` containing all failures.
-2. **When you catch `CancelledError`, always re-raise it** after
-   doing cleanup. Suppressing it breaks TaskGroup's cancellation
-   propagation.
+2. **Do cleanup in `try/finally`, not by catching `CancelledError`.**
+   If you do catch `CancelledError`, re-raise it after cleanup.
+   Swallowing it breaks `TaskGroup` and `asyncio.timeout()`, which
+   are both built on cancellation. In the rare case where you truly
+   must suppress it, also call `asyncio.current_task().uncancel()` to
+   remove the cancellation state; otherwise never call `uncancel()`.
 
 ```python
 # RIGHT — TaskGroup (3.11+)
@@ -311,7 +401,14 @@ async def fetch_all():
         task2 = tg.create_task(fetch(url2))
     # Both tasks done here; any exception is re-raised as ExceptionGroup
 
-# RIGHT — cancellation cleanup
+# RIGHT — cleanup in finally; cancellation propagates by itself
+async def worker():
+    try:
+        await asyncio.sleep(3600)
+    finally:
+        await cleanup()
+
+# ALSO RIGHT — if you must catch it, re-raise
 async def worker():
     try:
         await asyncio.sleep(3600)
@@ -322,14 +419,17 @@ async def worker():
 
 **Why.** Two failure modes:
 
-1. **`gather` lets failures slip through silently.** By default,
-   `asyncio.gather(*tasks)` continues running the remaining tasks
-   when one raises — and only raises *one* exception at the end. The
-   others are lost. With `return_exceptions=True`, exceptions become
-   values in the result list, but it's easy to forget to check them.
-   TaskGroup raises an `ExceptionGroup` with *all* failures, and
-   automatically cancels in-flight siblings on the first failure
-   (structured cancellation).
+1. **`gather` does not cancel the other awaitables on failure.** With
+   the default `return_exceptions=False`, `asyncio.gather(*aws)`
+   propagates the first exception immediately to the awaiting task,
+   but the other awaitables "won't be cancelled and will continue to
+   run" ([docs](https://docs.python.org/3/library/asyncio-task.html#asyncio.gather)).
+   Their later failures are never seen by the caller, and their work
+   continues after the caller has moved on. With
+   `return_exceptions=True`, exceptions become values in the result
+   list, but it's easy to forget to check them. TaskGroup cancels the
+   remaining tasks on the first failure and raises an
+   `ExceptionGroup` with *all* failures.
 2. **Suppressing `CancelledError` breaks the parent.** When a
    TaskGroup task is cancelled (because a sibling failed), it
    receives `CancelledError`. If your code catches it and doesn't
@@ -338,8 +438,11 @@ async def worker():
    sibling's exception, but the task that was supposed to clean up
    never did, and there's no signal of what went wrong.
 
-The rule: catch `CancelledError` only to release resources, then
-`raise` to continue propagation.
+The [docs](https://docs.python.org/3/library/asyncio-task.html#task-cancellation)
+say so directly: use `try/finally` for clean-up; a caught
+`CancelledError` "should generally be propagated when clean-up is
+complete"; `TaskGroup` and `asyncio.timeout()` "might misbehave if a
+coroutine swallows" it.
 
 **How.**
 
@@ -501,20 +604,17 @@ async def fetch_with_timeout(url: str) -> bytes:
    later adopted by asyncio's TaskGroup. Some users prefer Trio for
    its stricter semantics. A library that only supports asyncio
    excludes them.
-2. **anyio preserves context variables across task boundaries.**
-   asyncio's `create_task` *drops* contextvars when the new task
-   starts; you have to explicitly copy them. anyio's task primitives
-   preserve them by default, which matters for request-scoped state
-   (request IDs, current user, transaction context).
+2. **Cancel scopes.** This is real but less obvious: anyio's
+   cancellation semantics are noticeably better than asyncio's.
+   Trio's "cancel scopes" model (which anyio inherits) is harder to
+   deadlock-by-accident than asyncio's task cancellation.
 
-Third reason — and this is real but less obvious — anyio's
-cancellation semantics are noticeably better than asyncio's. Trio's
-"cancel scopes" model (which anyio inherits) is harder to
-deadlock-by-accident than asyncio's task cancellation.
+(Context variables are *not* a reason: asyncio's `create_task`
+already copies the current `contextvars.Context` into the new task
+— see the [`create_task` docs](https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task).)
 
-For applications, none of these matter much: you control the
-runtime, you can manage contextvars explicitly, and you can learn
-asyncio's cancellation. So application code uses asyncio. Libraries
+For applications, neither matters much: you control the
+runtime, and you can learn asyncio's cancellation. So application code uses asyncio. Libraries
 use anyio.
 
 **How.**
@@ -566,20 +666,33 @@ slightly different API to learn). For apps: asyncio.
 **What.** When you fire off a task with `asyncio.create_task(...)`
 and don't `await` it, the only thing keeping that task alive is a
 strong reference. Lose the reference and the garbage collector can
-finalize the task mid-flight — silently, with no traceback.
+finalize the task mid-flight. The same applies to a task passed to
+`asyncio.shield()`: save a reference to it as well
+([docs](https://docs.python.org/3/library/asyncio-task.html#asyncio.shield)).
 
-Use the "background tasks set" pattern from the
-[asyncio docs](https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task):
+Prefer `asyncio.TaskGroup` (PY-043), which holds a strong reference
+to each task, awaits them, and propagates their exceptions. When the
+task must outlive the current scope, use the "background tasks set"
+pattern from the
+[asyncio docs](https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task),
+and retrieve each task's exception in the done-callback:
 
 ```python
 import asyncio
+import logging
 
+log = logging.getLogger(__name__)
 background_tasks: set[asyncio.Task] = set()
+
+def _done(task: asyncio.Task) -> None:
+    background_tasks.discard(task)
+    if not task.cancelled() and (exc := task.exception()) is not None:
+        log.error("background task failed", exc_info=exc)
 
 def fire_and_forget(coro):
     task = asyncio.create_task(coro)
     background_tasks.add(task)
-    task.add_done_callback(background_tasks.discard)
+    task.add_done_callback(_done)
     return task
 ```
 
@@ -587,8 +700,16 @@ def fire_and_forget(coro):
 tasks it tracks. If the only Python-side reference to a task is a
 local variable that goes out of scope, GC can collect the task
 object before it runs to completion. The coroutine stops mid-await;
-no `CancelledError` is raised in the coroutine, no log message
-appears, no traceback. The work just doesn't happen.
+no `CancelledError` is raised in the coroutine and no exception
+reaches your code. The only signal is a `Task was destroyed but it
+is pending!` line from the `asyncio` logger, emitted whenever GC
+happens to run. The work just doesn't happen.
+
+The set pattern by itself fixes GC but never awaits its tasks. The
+docs note that if one fails, "its exception is never retrieved and
+asyncio logs a 'Task exception was never retrieved' message when the
+task is garbage collected" — too late, and nothing in your code sees
+it. That is why the done-callback above calls `task.exception()`.
 
 This is [CPython issue #117379](https://github.com/python/cpython/issues/117379)
 and is explicitly called out in the `asyncio.create_task` docs:
@@ -609,23 +730,30 @@ nothing keeps it alive. Under load, some fraction of `audit_log`
 calls will GC mid-await and the audit record will silently never
 land. You discover this by noticing the audit log is missing rows.
 
-`add_done_callback(background_tasks.discard)` is the cleanup hook:
-when the task finishes, it removes itself from the set so the set
-doesn't grow unbounded.
+The done-callback is also the cleanup hook: when the task finishes,
+it removes itself from the set so the set doesn't grow unbounded.
 
 **How.**
 
 ```python
 import asyncio
+import logging
+
+log = logging.getLogger(__name__)
 
 class Service:
     def __init__(self):
         self._background: set[asyncio.Task] = set()
 
+    def _done(self, task: asyncio.Task) -> None:
+        self._background.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            log.error("background task failed", exc_info=exc)
+
     def spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
         self._background.add(task)
-        task.add_done_callback(self._background.discard)
+        task.add_done_callback(self._done)
         return task
 
     async def handle(self, req):
@@ -634,9 +762,10 @@ class Service:
         return await respond(req)
 
     async def shutdown(self):
-        # Wait for all background work to finish before exit
+        # Wait for all background work to finish before exit; the
+        # done-callback has already logged each failure
         if self._background:
-            await asyncio.gather(*self._background, return_exceptions=True)
+            await asyncio.wait(self._background)
 ```
 
 If the work is *important* — must complete before the response is
@@ -648,6 +777,58 @@ all. Use `await` directly, or put it in an `asyncio.TaskGroup`
 reference goes out of scope, the rule is moot — the `await`
 guarantees the task lives until it completes. The rule targets
 genuine fire-and-forget paths.
+
+---
+
+## PY-099 — Await or schedule every coroutine call; a bare call never runs
+
+**What.** A call to an `async def` function returns a coroutine
+object; the body does not run. Every such call must be awaited
+(`await f()`) or scheduled (`tg.create_task(f())` in a `TaskGroup`,
+or `asyncio.create_task(f())` with a kept reference — PY-067). A
+bare `f()` statement inside async code is always a bug.
+
+**Why.** The asyncio docs say it plainly: "A coroutine object is
+created but not awaited, so it *won't run at all*"
+([docs](https://docs.python.org/3/library/asyncio-task.html#coroutine)).
+Nothing raises. The only signal is a warning when the coroutine
+object is garbage collected:
+
+```
+RuntimeWarning: coroutine 'f' was never awaited
+```
+
+The work silently never happens: the audit row is never written,
+the cache is never invalidated. The mistake is easy to make when a
+function changes from sync to async and an old call site is missed.
+Debug mode (PY-041) adds the traceback of where the coroutine was
+created
+([docs](https://docs.python.org/3/library/asyncio-dev.html#asyncio-coroutine-not-scheduled)).
+
+**How.**
+
+```python
+async def invalidate(key: str) -> None: ...
+
+async def handler(key: str) -> None:
+    invalidate(key)                    # WRONG — never runs
+    await invalidate(key)              # RIGHT — runs now
+
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(invalidate(key))  # RIGHT — runs concurrently
+```
+
+A type checker catches it at the call site. basedpyright 1.40.2
+reports `reportUnusedCoroutine` ("Result of async function call is
+not used; use "await" or assign result to variable"); mypy 2.4.1
+reports `error: Value of type "Coroutine[Any, Any, int]" must be
+used  [unused-coroutine]`. Keep these checks on.
+
+**When NOT to apply.** Code that builds a coroutine object to hand
+to something else that runs it (`asyncio.run(main())`,
+`loop.run_until_complete(coro)`, a list passed to `gather`) — that
+object is consumed, not dropped. The rule targets coroutine objects
+that nothing consumes.
 
 ---
 
@@ -677,18 +858,39 @@ async def fetch_with_deadline(url: str) -> bytes:
     return await asyncio.wait_for(fetch(url), timeout=5.0)
 ```
 
-**Why.** Three reasons `asyncio.timeout` is the better default:
+**Why.** Since Python 3.12, `wait_for` is itself implemented with
+`asyncio.timeout()`, and a coroutine passed to it "is no longer
+wrapped in a Task"
+([docs](https://docs.python.org/3/library/asyncio-task.html#asyncio.wait_for)).
+Both cancel the *current* task. The difference is scope:
 
-1. **No extra task.** `wait_for(coro, timeout=N)` schedules `coro` as a *new* task on the loop, then waits for it. `timeout()` cancels the *current* task instead — no extra scheduling, no extra context. Lower overhead and the traceback on timeout points at the actual blocking line.
-2. **Nests correctly.** Multiple nested `async with asyncio.timeout(...)` blocks compose — the innermost deadline that triggers first wins, and outer deadlines stay active afterward. Nested `wait_for` doesn't compose cleanly; you can lose timeouts.
-3. **Reschedulable.** The context manager exposes `cm.reschedule(new_deadline)` for adjusting the deadline mid-block — useful for "keep-alive-while-progress-is-happening" patterns:
+1. **Block vs expression.** `timeout()` bounds a region of several awaits, so one deadline covers the whole operation (connect, send, read). With `wait_for`, you must pack the region into one coroutine first.
+2. **Reschedulable.** The context manager exposes `cm.reschedule(new_deadline)` for adjusting the deadline mid-block — useful for "keep-alive-while-progress-is-happening" patterns:
 
    ```python
    async with asyncio.timeout(10) as cm:
        async for chunk in stream:
            await process(chunk)
-           cm.reschedule(asyncio.get_event_loop().time() + 10)  # reset on progress
+           cm.reschedule(asyncio.get_running_loop().time() + 10)  # reset on progress
    ```
+
+Catch the `TimeoutError` *outside* the `async with` block. The
+context manager is what converts the cancellation into
+`TimeoutError`, so a `try`/`except TimeoutError` inside the block
+never sees it.
+
+`asyncio.wait(aws, timeout=...)` and `asyncio.as_completed(aws,
+timeout=...)` are different: neither cancels what is still running
+when the timeout occurs. `wait` does not raise; it returns the
+unfinished tasks in its `pending` set. `as_completed` raises
+`TimeoutError` but leaves the remaining tasks running. Cancel the
+leftovers explicitly, or use `timeout()` around a `TaskGroup`:
+
+```python
+done, pending = await asyncio.wait(tasks, timeout=5.0)
+for t in pending:
+    t.cancel()      # otherwise they keep running after you return
+```
 
 `wait_for` remains the right tool when you specifically want **the
 return value of one coroutine, bounded by a timeout**:
@@ -722,11 +924,11 @@ async def fetch_or_default(url: str) -> bytes:
     try:
         async with asyncio.timeout(5.0):
             return await fetch(url)
-    except TimeoutError:               # 3.11+ — asyncio.TimeoutError aliased to builtin
+    except TimeoutError:               # caught outside the block; 3.11+ builtin
         return b""
 
 # Timeout against an absolute deadline (instead of "from now")
-deadline = asyncio.get_event_loop().time() + 30
+deadline = asyncio.get_running_loop().time() + 30
 async with asyncio.timeout_at(deadline):
     await do_long_work()
 
@@ -734,13 +936,13 @@ async with asyncio.timeout_at(deadline):
 async with asyncio.timeout(10) as cm:
     async for chunk in stream:
         await process(chunk)
-        cm.reschedule(asyncio.get_event_loop().time() + 10)
+        cm.reschedule(asyncio.get_running_loop().time() + 10)
 ```
 
-**When NOT to apply.** Two cases:
-
-1. **Python < 3.11.** `asyncio.timeout()` doesn't exist. Use `wait_for` or `anyio.fail_after` (which back-ports the same shape and works on 3.10).
-2. **You explicitly want the "run as a new task" semantics of `wait_for`** — for example, when the surrounding code should *not* be cancelled if the timeout fires. This is rare; usually cancelling the current task is what you want.
+**When NOT to apply.** Python < 3.11: `asyncio.timeout()` doesn't
+exist. Use `wait_for` or `anyio.fail_after` (which back-ports the
+same shape and works on 3.10). When you want one coroutine's return
+value bounded by a timeout, `wait_for` is equally correct.
 
 ---
 
@@ -871,6 +1073,60 @@ Grep for `get_event_loop()` when raising your floor to 3.14+.
 **When NOT to apply.** No real exception — `get_event_loop()` is the
 wrong call. The only legacy context is *inside* a running loop, where
 `get_running_loop()` is strictly better anyway.
+
+---
+
+## PY-100 — Configure the loop with `loop_factory`, not event loop policies
+
+**Requires.** python>=3.12
+
+**What.** Don't call `asyncio.set_event_loop_policy()` or subclass
+the `*EventLoopPolicy` classes to choose or configure the event
+loop. Pass a `loop_factory` instead:
+`asyncio.run(main(), loop_factory=...)` or
+`asyncio.Runner(loop_factory=...)`. For example,
+`loop_factory=uvloop.new_event_loop` replaces `uvloop.install()`,
+and `loop_factory=asyncio.SelectorEventLoop` replaces
+`WindowsSelectorEventLoopPolicy`.
+
+**Why.** The policy system is deprecated and "will be removed
+in Python 3.16; from there on, an explicit *loop_factory* is needed
+to configure the event loop"
+([docs](https://docs.python.org/3/library/asyncio-runner.html#asyncio.run)).
+The docs already recommend "to use *loop_factory* to configure the
+event loop instead of policies". On 3.15.2 the call warns:
+
+```
+DeprecationWarning: 'asyncio.set_event_loop_policy' is deprecated and slated for removal in Python 3.16
+```
+
+Code that still sets a policy breaks on the first 3.16 upgrade.
+Policies are also process-global, so one library's
+`set_event_loop_policy` call silently changes the loop for the
+whole program.
+
+**How.**
+
+```python
+import asyncio
+
+async def main() -> None: ...
+
+# was: asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+asyncio.run(main(), loop_factory=asyncio.SelectorEventLoop)
+
+# was: uvloop.install(); asyncio.run(main())
+import uvloop
+asyncio.run(main(), loop_factory=uvloop.new_event_loop)
+```
+
+Grep for `set_event_loop_policy`, `EventLoopPolicy` and
+`uvloop.install` to find the call sites.
+
+**When NOT to apply.** Projects that still support Python 3.11,
+where `asyncio.run()` has no `loop_factory` parameter (3.12 added
+it). `asyncio.Runner(loop_factory=...)` exists from 3.11 and is the
+bridge there.
 
 ---
 

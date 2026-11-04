@@ -7,11 +7,14 @@
 - PY-061 — Derive version from git tags; declare `dynamic = ["version"]`
 - PY-062 — Publish via Trusted Publishing (OIDC), not API tokens
 - PY-063 — Build with `uv build` or `python -m build`; produce sdist + wheel
+- PY-107 — Typed libraries ship a `py.typed` marker inside the package
 - PY-064 — Verify on TestPyPI before publishing to PyPI
-- PY-065 — Dev deps in `[project.optional-dependencies]`, never `[project.dependencies]`
+- PY-065 — Dev tools go in `[dependency-groups]`, never `[project.dependencies]`
+- PY-109 — Build aggregate extras by self-reference
 - PY-066 — `warnings.warn(..., DeprecationWarning, stacklevel=2)` for public API deprecations
 - PY-070 — `@warnings.deprecated` (PEP 702) for type-checker-visible deprecations
 - PY-072 — PEP 723 inline script metadata for standalone scripts
+- PY-108 — Never pass `--break-system-packages`; create a virtual environment
 - PY-073 — Use `datetime.now(UTC)`; never `datetime.utcnow()`
 - PY-075 — Enable PEP 740 build provenance attestations
 - PY-077 — Audit dependencies for known CVEs in CI
@@ -23,7 +26,8 @@
 
 Detailed entries for `PY-060..PY-066` plus newer
 packaging-and-security-adjacent rules (`PY-070`, `PY-072`,
-`PY-073`, `PY-075`, `PY-077`, `PY-078`). Each follows the four-part
+`PY-073`, `PY-075`, `PY-077`, `PY-078`, `PY-089`, `PY-090`, `PY-095`,
+`PY-107`, `PY-108`, `PY-109`). Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 Citations point at the
@@ -33,6 +37,9 @@ Citations point at the
 [PEP 702 — deprecated decorator](https://peps.python.org/pep-0702/),
 [PEP 723 — inline script metadata](https://peps.python.org/pep-0723/),
 [PEP 740 — provenance attestations](https://peps.python.org/pep-0740/),
+[the pyproject.toml specification](https://packaging.python.org/en/latest/specifications/pyproject-toml/),
+[dependency groups](https://packaging.python.org/en/latest/specifications/dependency-groups/),
+[the typing guide for libraries](https://typing.python.org/en/latest/guides/libraries.html),
 [PyPI Trusted Publishers docs](https://docs.pypi.org/trusted-publishers/),
 [pip-audit](https://pypi.org/project/pip-audit/),
 [scalene](https://github.com/plasma-umass/scalene),
@@ -43,10 +50,14 @@ and [PEP 440](https://peps.python.org/pep-0440/) (versioning).
 
 ## PY-060 — `license` is an SPDX string (PEP 639); table form deprecated
 
+**Requires.** hatchling>=1.27 or setuptools>=77.0.3 or flit-core>=3.12 or pdm-backend>=2.4 or poetry-core>=2.2 or uv-build>=0.7.19
+
 **What.** Declare your project's license as an SPDX expression
-string. The old `{text = "MIT"}` and `{file = "LICENSE"}` table
-forms are deprecated by PEP 639 (accepted, rollout deadline
-February 2026):
+string, list the license files explicitly in `license-files`, and
+put a PEP 639-capable backend floor in `[build-system] requires`.
+The old `{text = "MIT"}` and `{file = "LICENSE"}` table forms are
+deprecated by PEP 639. When `license` is a string, drop any
+`License ::` trove classifiers:
 
 ```toml
 # RIGHT — PEP 639 SPDX string
@@ -63,13 +74,22 @@ license-files = ["LICENSE-APACHE", "LICENSE-MIT"]
 [project]
 license = {text = "MIT"}
 license = {file = "LICENSE"}
+
+# WRONG — deprecated classifier next to a license string
+classifiers = ["License :: OSI Approved :: MIT License"]
 ```
 
-**Why.** Three concrete failures from the old format:
+**Why.** Three concrete failures:
 
-1. **setuptools ≥77 emits deprecation warnings** for the table form. setuptools 80+ may make it an error. Newer build backends (hatchling 1.27+) accept both but prefer the string form.
-2. **PyPI rejects uploads with deprecated metadata.** As of the PEP 639 rollout, PyPI's verification flags table-form license and refuses the release. The error message points at the metadata fields, not the pyproject.toml form, so it's confusing to debug.
+1. **An older backend rejects the string form.** The [packaging guide](https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license-and-license-files) lists the first PEP 639 release of each backend: hatchling 1.27.0, setuptools 77.0.3, flit-core 3.12, pdm-backend 2.4.0, poetry-core 2.2.0, uv-build 0.7.19. With `setuptools==75.0.0`, `license = "MIT"` fails the build with ``configuration error: `project.license` must be valid exactly by one definition (2 matches found)``; 77.0.3 builds it and writes `License-Expression: MIT`. A floor in `[build-system] requires` turns that into a clear resolver constraint.
+2. **`License ::` classifiers are deprecated.** The [spec](https://packaging.python.org/en/latest/specifications/pyproject-toml/#pyproject-toml-classifiers) says build tools MAY raise an error when the `license` string and `License ::` classifiers are both used. hatchling 1.33 still builds such a project, so this is a spec rule and not something your current backend catches.
 3. **License scanners (Snyk, FOSSA, Trivy) understand SPDX.** Composite expressions like `"Apache-2.0 OR MIT"` are machine-parseable; `{text = "MIT (with patent grant; see LICENSE)"}` is not. Auditors lose machine readability when you encode license logic in prose.
+
+Set `license-files` explicitly. When it is absent, the spec lets each
+tool decide which files to include, if any. The guide also says each
+glob must match at least one file, but hatchling 1.33 built a wheel
+with `license-files = ["NOPE*"]` and no error, so check the
+`License-File:` lines in the built `METADATA` yourself.
 
 For composite licenses, SPDX expressions support `AND`, `OR`, and
 `WITH`:
@@ -82,6 +102,10 @@ license = "(Apache-2.0 OR MIT) AND BSD-3-Clause"
 **How.**
 
 ```toml
+[build-system]
+requires = ["hatchling>=1.27"]     # or setuptools>=77.0.3, etc.
+build-backend = "hatchling.build"
+
 # Simple
 [project]
 license = "MIT"
@@ -106,18 +130,20 @@ license = "LicenseRef-MyCompany-Internal"
 license-files = ["LICENSE"]
 ```
 
-**When NOT to apply.** Build backends that don't yet support PEP 639
-(some older Poetry versions). Most contemporary backends support
-it; check your build-backend's minimum version requirement.
+**When NOT to apply.** A project pinned to a backend older than the
+floor above, which cannot take the string form. Raise the pin
+instead of keeping the table form for long.
 
 ---
 
 ## PY-061 — Derive version from git tags; declare `dynamic = ["version"]`
 
 **What.** Don't hand-maintain a version string in both
-`pyproject.toml` and `__init__.py` (they will drift). Use a build
-backend plugin that derives the version from git tags at build
-time, and declare the version as `dynamic`:
+`pyproject.toml` and `__init__.py` (they will drift). The preferred
+setup is a build backend plugin that derives the version from git
+tags at build time. Whatever computes the version, list it in
+`dynamic`: the [spec](https://packaging.python.org/en/latest/specifications/pyproject-toml/#pyproject-toml-dynamic)
+says a backend CANNOT fill in a key that `dynamic` does not list.
 
 ```toml
 [build-system]
@@ -161,6 +187,26 @@ runtime) reads from package metadata:
 from importlib.metadata import version
 __version__ = version("mypackage")
 ```
+
+When a project keeps a version in source *and* in metadata (a
+`__version__` the backend reads, or one written to `_version.py`),
+the [packaging guide](https://packaging.python.org/en/latest/discussions/single-source-version/)
+recommends a test that the two agree:
+
+```python
+import importlib.metadata
+import mypackage
+
+def test_version_matches_metadata():
+    assert mypackage.__version__ == importlib.metadata.version("my-package")
+```
+
+To read *another* distribution's version, call
+`importlib.metadata.version("dist-name")`. Import packages are not
+required to define `__version__` ([versioning
+discussion](https://packaging.python.org/en/latest/discussions/versioning/)),
+so read a third-party `__version__` only from a package known to
+provide it.
 
 **How.** hatch-vcs setup:
 
@@ -212,7 +258,7 @@ uv build
 
 **When NOT to apply.** Two real cases:
 
-1. **No git repo.** Internal tooling distributed without VCS — hardcode in `pyproject.toml` only (not `__init__.py`).
+1. **No git repo.** Internal tooling distributed without VCS — hardcode in `pyproject.toml` only (not `__init__.py`), or let the backend read `__version__` with `dynamic = ["version"]` plus the agreement test above.
 2. **Calendar versioning.** If you release on a schedule (`2026.05.01`) and want explicit control, hardcoded versions in pyproject.toml are simpler. Even then, don't duplicate the string in `__init__.py`.
 
 ---
@@ -222,7 +268,12 @@ uv build
 **What.** Configure PyPI Trusted Publishing for your GitHub Actions
 workflow. The publish step uses
 `pypa/gh-action-pypi-publish` with `id-token: write` permission —
-no API token needed.
+no API token needed. Build in its own job and pass `dist/` to the
+publish job as an artifact: the
+[PyPA guide](https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/)
+says building distributions in a publishing job is unsupported, and
+publishing jobs should only download the built artifacts and upload
+them.
 
 ```yaml
 # .github/workflows/publish.yml
@@ -233,19 +284,28 @@ on:
     types: [published]
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
-    environment: pypi              # require manual approval in repo settings
     permissions:
-      id-token: write              # MANDATORY for OIDC trusted publishing
       contents: read
     steps:
       - uses: actions/checkout@<sha>     # v5
         with:
           fetch-depth: 0                  # need full history for hatch-vcs
       - uses: astral-sh/setup-uv@<sha>    # v8
-      - name: Build
-        run: uv build
+      - run: uv build
+      - uses: actions/upload-artifact@<sha>
+        with: { name: dist, path: dist/ }
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi              # require manual approval in repo settings
+    permissions:
+      id-token: write              # MANDATORY for OIDC trusted publishing
+    steps:
+      - uses: actions/download-artifact@<sha>
+        with: { name: dist, path: dist/ }
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@<sha>    # release/v1
         # No `with: password:` — OIDC handles auth
@@ -268,7 +328,14 @@ Register the trusted publisher at
 
 The GitHub environment requirement (`environment: pypi`) adds a
 manual-approval gate — combined with OIDC, even a compromised
-workflow can't publish without the approval step.
+workflow can't publish without the approval step. The guide requires
+manual approval on the `pypi` environment and calls it typically
+unnecessary on `testpypi`.
+
+Once Trusted Publishing works, remove the old `PYPI_API_TOKEN` and
+`TEST_PYPI_API_TOKEN` repository secrets and revoke those tokens in
+your PyPI and TestPyPI account settings. A token left in place is
+still a working credential.
 
 **How.** End-to-end shape:
 
@@ -328,14 +395,6 @@ Setup: register the publishers at
 `https://pypi.org/manage/account/publishing/` and
 `https://test.pypi.org/manage/account/publishing/` matching the
 environment names.
-
-**PEP 740 attestations come along for free** in
-`pypa/gh-action-pypi-publish` v1.11+ when Trusted Publishing is
-active — but only if the publish job has `permissions:
-attestations: write`. Without that permission, the action falls
-back to publishing without attestations and prints a one-line
-warning that is easy to miss. See PY-075 for the full
-attestation rule and the permission block.
 
 **When NOT to apply.** Two cases:
 
@@ -402,16 +461,75 @@ twine check dist/*
 
 Common `twine check` failures:
 
-- Missing `Description-Content-Type` — your `readme` needs `content-type`:
+- Wrong `Description-Content-Type`. A `.md` or `.rst` readme path
+  already sets it (`text/markdown`, `text/x-rst`; the
+  [spec](https://packaging.python.org/en/latest/specifications/pyproject-toml/#pyproject-toml-readme)
+  makes that inference a MUST), so `readme = "README.md"` needs no
+  table. Any other suffix needs the table:
   ```toml
-  readme = {file = "README.md", content-type = "text/markdown"}
+  readme = {file = "README.txt", content-type = "text/markdown"}
   ```
+  The spec says the build must error on an unrecognized suffix with no
+  content type, but hatchling 1.33 builds `readme = "README.txt"` with
+  `Description-Content-Type: text/plain` and no error, so Markdown in
+  that file shows as plain text on PyPI. Do not rely on the backend to
+  catch it.
 - Deprecated license format (PY-060).
 - Long description fails to render as Markdown (PyPI parses it server-side).
 
 **When NOT to apply.** Single-file scripts and internal tooling
 that don't ship anywhere — no need to build at all. The rule
 applies to packages destined for PyPI or an internal index.
+
+---
+
+## PY-107 — Typed libraries ship a `py.typed` marker inside the package
+
+**What.** A published library with inline annotations, or with
+`.pyi` stubs inside the package, ships an empty `py.typed` file in
+its import package directory, beside `__init__.py`. Confirm that the
+built wheel contains it.
+
+```text
+pyproject.toml
+src/
+  my_great_package/
+    __init__.py
+    stuff.py
+    py.typed        # empty marker
+```
+
+**Why.** The [typing guide for libraries](https://typing.python.org/en/latest/guides/libraries.html#marking-a-package-as-providing-type-information)
+says that, as PEP 561 specifies, tools will not treat a package as
+providing type information unless it includes the `py.typed` marker,
+and that the marker belongs inside the package, along with
+`__init__.py`. Without it, the annotations are thrown away for every
+user. With mypy 2.4.1 against an installed, annotated package with no
+marker:
+
+```text
+use.py:1: error: Skipping analyzing "tpkg": module is installed, but missing library stubs or py.typed marker  [import-untyped]
+use.py:2: note: Revealed type is "Any"
+```
+
+After adding an empty `src/tpkg/py.typed` and reinstalling, the
+same `reveal_type` showed `"int"` and mypy reported no issues.
+
+**How.**
+
+```bash
+touch src/my_great_package/py.typed
+uv build --wheel
+unzip -l dist/*.whl | grep py.typed      # must list my_great_package/py.typed
+```
+
+hatchling 1.33 included the file in the wheel with no extra config.
+With other backends, check the wheel listing above.
+
+**When NOT to apply.**
+
+1. **The public interface is not annotated yet.** The guide advises making the library's interface fully annotated before you add the marker. Finish the annotations first.
+2. **A stub-only package** (`<name>-stubs`). The guide says the marker is not necessary there.
 
 ---
 
@@ -478,22 +596,30 @@ For new projects, also register the package name on TestPyPI
 first — names are reserved on a first-come-first-served basis on
 each index, so confirm yours is available before announcing it.
 
+Upload to TestPyPI once per release or release candidate, not on
+every push to a busy branch. The
+[PyPA publishing guide](https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/)
+warns that uploading every push can exceed the PyPI project size
+limit. To check the pipeline on every commit, run a PyPI-compatible
+server such as `pypiserver` inside CI and upload to that.
+
 **When NOT to apply.** Subsequent patch releases of a long-stable
 package where you're only changing code, not metadata, and the
 release pipeline is well-tested. The TestPyPI step is most
 valuable for new packages and metadata changes. Even then, the
-cost is low (one extra CI job); leaving it in the pipeline
-permanently is fine.
+cost is low (one extra CI job); leaving the per-release TestPyPI
+upload in the pipeline permanently is fine.
 
 ---
 
-## PY-065 — Dev deps in `[project.optional-dependencies]`, never `[project.dependencies]`
+## PY-065 — Dev tools go in `[dependency-groups]`, never `[project.dependencies]`
 
 **What.** `[project.dependencies]` is what end users get when they
-`pip install my-package`. Dev / test / docs tools (pytest, mypy,
-ruff, mkdocs) go in `[project.optional-dependencies]` or, for uv
-projects, `[dependency-groups]` (see UVP-001 in `uv-best-practices`).
-Never in `[project.dependencies]`.
+`pip install my-package`. Dev, test and docs tools (pytest, mypy,
+ruff, mkdocs) go in `[dependency-groups]` (PEP 735), in every
+project, uv or not. Keep `[project.optional-dependencies]` for
+optional *runtime* features that consumers install as extras
+(`my-package[gui]`). Never put dev tools in `[project.dependencies]`.
 
 ```toml
 # RIGHT
@@ -504,9 +630,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gui = ["PyQt5"]           # optional runtime feature: my-package[gui]
+
+[dependency-groups]
 dev = ["pytest>=8", "mypy>=1.10", "ruff"]
 docs = ["mkdocs", "mkdocs-material"]
-test = ["pytest-cov", "hypothesis"]
 
 # WRONG
 [project]
@@ -515,61 +643,41 @@ dependencies = [
   "pytest>=8",            # gets installed for every user!
   "mypy>=1.10",
 ]
-```
 
-**Why.** Two failure modes:
-
-1. **Dependency tree explosion.** Your library is supposed to be lightweight. Putting pytest in `[project.dependencies]` means every user who `pip install my-package` also installs pytest, pluggy, iniconfig, py, and pytest's transitive deps — adding megabytes and dozens of packages they didn't ask for. In large dependency trees this causes version conflicts.
-2. **Confusing "what does this library need?"** A user reading your library's dependencies should see runtime deps. If they see pytest, they might assume you use it at runtime (data-fixture loading? test-mode behavior?). The mistake leaks into how downstream consumers reason about your package.
-
-For uv projects, prefer `[dependency-groups]` over
-`[project.optional-dependencies]` (see UVP-001 in `uv-best-practices`):
-dependency groups are PEP 735, locally scoped, and don't ship as PyPI
-"extras."
-
-**How.**
-
-```toml
-# Pure pyproject (no uv) — old PEP 621 extras
-[project]
-dependencies = ["httpx>=0.27"]
-
+# ALSO WRONG — dev tools published as an extra
 [project.optional-dependencies]
 dev = ["pytest>=8", "mypy>=1.10", "ruff"]
-docs = ["mkdocs", "mkdocs-material"]
-test = ["pytest-cov", "hypothesis"]
-
-# Users install dev tools via extras:
-# pip install "my-package[dev]"
-# pip install "my-package[dev,docs]"
 ```
 
+**Why.** Three failure modes:
+
+1. **Dependency tree explosion.** Your library is supposed to be lightweight. Putting pytest in `[project.dependencies]` means every user who `pip install my-package` also installs pytest, pluggy, iniconfig and pytest's other transitive deps — dozens of packages they didn't ask for. In large dependency trees this causes version conflicts.
+2. **Confusing "what does this library need?"** A user reading your library's dependencies should see runtime deps. If they see pytest, they might assume you use it at runtime. The mistake leaks into how downstream consumers reason about your package.
+3. **A `dev` extra is published.** Extras are written into the built metadata (`Provides-Extra`), so `my-package[dev]` becomes part of your public interface. The [dependency groups spec](https://packaging.python.org/en/latest/specifications/dependency-groups/) defines groups as requirements stored in `pyproject.toml` that are "not included in project metadata when it is built", and names linting and testing as their use case. A wheel built from a project with only a `dev` group had no `Requires-Dist` line at all.
+
+**How.** pytest's [good practices](https://docs.pytest.org/en/stable/explanation/goodpractices.html)
+use this shape:
+
 ```toml
-# uv projects — prefer dependency-groups for dev concerns
-[project]
-dependencies = ["httpx>=0.27"]
-
-# Extras still belong in [project.optional-dependencies] when you
-# want consumers to install them via `pip install "my-package[name]"`:
-[project.optional-dependencies]
-async = ["aiohttp"]            # extra runtime feature
-
-# Dev concerns go in dependency-groups (see UVP-001):
 [dependency-groups]
-dev = ["pytest>=8", "mypy>=1.10", "ruff"]
-docs = ["mkdocs", "mkdocs-material"]
+dev = ["pytest"]
 ```
 
-The distinction:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e . --group dev      # pip 25.1+
+pytest
+```
 
-- **`optional-dependencies`** is for runtime *extras* consumers might install (`my-package[async]`).
-- **`dependency-groups`** is for *your* dev workflow — never shipped to PyPI consumers.
+`pip install --group` needs pip 25.1 or newer. pip 25.1 itself does
+not start on Python 3.15 (`AttributeError: module 'typing' has no
+attribute 'no_type_check_decorator'`); upgrade pip in the venv first
+(`python -m pip install -U pip`; pip 26.3 installed a group on
+3.15.2). uv projects use `uv sync` and `uv run`, which install the
+`dev` group by default (see UVP-001 in `uv-best-practices`).
 
-Dependency groups are a PyPA standard, not a uv feature, so they fit
-non-uv projects too. pip 25.1+ installs one with `pip install --group
-dev`, and a group can include another with `{include-group = "test"}`.
-The spec forbids shipping them: "Build backends MUST NOT include
-Dependency Group data in built distributions as package metadata".
+A group can include another:
 
 ```toml
 [dependency-groups]
@@ -577,9 +685,50 @@ test = ["pytest>=8", "pytest-cov"]
 dev = [{include-group = "test"}, "mypy>=1.10", "ruff"]
 ```
 
-**When NOT to apply.** Pre-PEP-735 tooling that doesn't understand
-`[dependency-groups]` — but in 2026 nearly all current tooling
-does (pip ≥25.1, uv, hatch, PDM). The rule applies universally.
+Don't give a group the same name as an extra. The spec advises
+users against it and lets tools treat the match as an error.
+
+**When NOT to apply.** A project whose installers predate PEP 735
+(pip older than 25.1 and no uv, hatch or PDM) cannot install groups;
+keep the dev tools out of `[project.dependencies]` anyway, and move
+them to groups when the tooling is upgraded.
+
+---
+
+## PY-109 — Build aggregate extras by self-reference
+
+**What.** An aggregate extra (`all`, `full`) lists the project's own
+extras by name, `all = ["your-project[gui,cli]"]`, instead of
+repeating their dependencies.
+
+```toml
+[project]
+name = "your-project"
+
+[project.optional-dependencies]
+gui = ["PyQt5"]
+cli = ["rich", "click"]
+all = ["your-project[gui,cli]"]       # RIGHT — cannot drift
+
+# WRONG — a hand-kept copy
+# all = ["PyQt5", "rich", "click"]
+```
+
+**Why.** The [packaging guide](https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#self-referential-extras)
+notes that a hand-kept copy of each extra's dependencies "can
+otherwise fall out of sync after a few years of maintenance and bug
+fixes": a version range or a new dependency is added to `cli` and
+never to `all`. A self-reference always means "everything in these
+extras". The guide lists pip, uv, poetry, hatch, pdm and pipenv as
+supporting it. With uv, `uv pip install --dry-run '.[all]'` for a
+project with `gui = ["six"]`, `cli = ["idna"]` and
+`all = ["selfx[gui,cli]"]` resolved both `six` and `idna`.
+
+**How.** Use the project's own `[project] name` in the reference, and
+list every extra the aggregate should cover.
+
+**When NOT to apply.** A project with a single extra, where an
+aggregate adds nothing.
 
 ---
 
@@ -922,6 +1071,56 @@ are fine when the script is robust to minor-version drift.
 
 ---
 
+## PY-108 — Never pass `--break-system-packages`; create a virtual environment
+
+**What.** When pip refuses with `error: externally-managed-environment`
+(PEP 668), create a virtual environment and install there. Never
+work around the refusal with `pip install --break-system-packages`
+or `PIP_BREAK_SYSTEM_PACKAGES=1` in scripts, Dockerfiles, CI or
+READMEs.
+
+```bash
+# WRONG
+pip install --break-system-packages httpx
+
+# RIGHT
+python3 -m venv .venv
+.venv/bin/pip install httpx
+```
+
+**Why.** pytest's [good practices](https://docs.pytest.org/en/stable/explanation/goodpractices.html)
+note that many systems, such as recent Debian, Ubuntu and Fedora
+releases, refuse a plain `pip install` outside a virtual environment,
+and say: "Do not work around this with `--break-system-packages`,
+which can break tools of your operating system; create a virtual
+environment instead." uv-managed interpreters carry the same marker:
+pip 26.3 against uv's CPython 3.15.2 stopped with
+
+```text
+error: externally-managed-environment
+
+× This environment is externally managed
+╰─> This Python installation is managed by uv and should not be modified.
+```
+
+and with `PIP_BREAK_SYSTEM_PACKAGES=1` set, the same `--dry-run`
+went through (`Would install six-1.17.0`), so the variable removes
+the guard just as the flag does.
+
+**How.** Use a venv (`python3 -m venv .venv`), `uv venv` / `uv sync`,
+or `uv tool install` / `pipx` for command-line tools. Find existing
+workarounds with:
+
+```bash
+grep -rnE 'break-system-packages|PIP_BREAK_SYSTEM_PACKAGES' .
+```
+
+**When NOT to apply.** A throwaway single-purpose container whose
+distro Python tooling is never used. Even there a venv stays the
+default (see `containers-best-practices`).
+
+---
+
 ## PY-073 — Use `datetime.now(UTC)`; never `datetime.utcnow()`
 
 **What.** Always construct timezone-aware datetimes. `datetime.utcnow()`
@@ -1015,32 +1214,31 @@ enable it.
 
 ## PY-075 — Enable PEP 740 build provenance attestations
 
-**What.** When publishing via Trusted Publishing (PY-062), PyPI
-also accepts **PEP 740 build provenance attestations** — a signed
-record that ties this artifact back to the exact GitHub Actions
-workflow + commit SHA that produced it. As of
-`pypa/gh-action-pypi-publish` v1.11+ this is **automatic** when
-Trusted Publishing is active, *provided* the publish job has
-`permissions: attestations: write`. Without that permission, the
-action falls back to publishing without attestations and prints a
-warning that is easy to miss in CI logs.
+**What.** Publish through Trusted Publishing (PY-062) with
+`pypa/gh-action-pypi-publish` v1.11.0 or newer, and PyPI receives
+**PEP 740 attestations** for each distribution: signed records
+that tie the artifact back to the workflow and commit that produced
+it. The [PyPA publishing guide](https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/)
+says that from v1.11.0 the action "generates and uploads PEP
+740-compatible attestations for each distribution by default. No
+additional manual signing steps are required." The publish job needs
+only `id-token: write`. Do not set `attestations: false` on the
+action, which turns them off.
 
 ```yaml
 publish-pypi:
+  needs: build                   # PY-062 — build in its own job
   runs-on: ubuntu-latest
   environment:
     name: pypi
     url: https://pypi.org/p/my-package
   permissions:
-    id-token: write              # PY-062 — Trusted Publishing
-    attestations: write          # PY-075 — PEP 740 attestations
-    contents: read
+    id-token: write              # Trusted Publishing; attestations ride on it
   steps:
     - uses: actions/download-artifact@<sha>
       with: { name: dist, path: dist/ }
-    - uses: pypa/gh-action-pypi-publish@release/v1   # v1.11+
-      # No extra `with:` block — attestations are automatic when
-      # `id-token: write` AND `attestations: write` are both granted.
+    - uses: pypa/gh-action-pypi-publish@<sha>   # release/v1, v1.11.0+
+      # No `with:` block — attestations are on by default.
 ```
 
 **Why.** Without attestations, anyone with publish rights — or
@@ -1056,49 +1254,20 @@ Concretely, a PEP 740 attestation records:
 - The commit SHA the build was produced from.
 - The runner identity (GitHub-hosted vs. self-hosted).
 
-Consumers can verify the attestation at install time with `pip
-install --require-hashes ...` plus `pip-audit` or `sigstore-python`
-checks, and downstream projects (Linux distros, conda-forge,
-internal mirrors) can validate the chain before accepting the
-artifact. See [the PyPI announcement](https://blog.pypi.org/posts/2024-11-14-pypi-now-supports-digital-attestations/)
-and [PEP 740](https://peps.python.org/pep-0740/) for the full
-spec.
+Downstream projects (Linux distros, conda-forge, internal mirrors)
+can validate the chain before accepting the artifact. See
+[the PyPI announcement](https://blog.pypi.org/posts/2024-11-14-pypi-now-supports-digital-attestations/)
+and [PEP 740](https://peps.python.org/pep-0740/) for the full spec.
 
-The silent failure mode is the permissions slip: if
-`attestations: write` is missing, `gh-action-pypi-publish` still
-succeeds (it falls back to non-attested upload). You get a release
-that looks fine until a consumer asks "where's the attestation?"
-and you have to re-cut from the same SHA with the permission
-added — which works, but is annoying.
+The ways to lose them are an old action pin (before v1.11.0), an
+explicit `attestations: false`, or publishing with an API token: the
+action's `attestations` input is documented as "Only works with PyPI
+and TestPyPI via Trusted Publishing."
 
-**How.**
-
-```yaml
-# .github/workflows/publish.yml
-name: Publish to PyPI
-
-on:
-  release:
-    types: [published]
-
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/my-package
-    permissions:
-      id-token: write              # OIDC for Trusted Publishing
-      attestations: write          # PEP 740
-      contents: read
-    steps:
-      - uses: actions/checkout@<sha>
-        with:
-          fetch-depth: 0
-      - uses: astral-sh/setup-uv@<sha>
-      - run: uv build
-      - uses: pypa/gh-action-pypi-publish@release/v1
-```
+**How.** Use PY-062's workflow unchanged: a `build` job that uploads
+`dist/` as an artifact, and a publish job with `id-token: write`
+that downloads it and runs `pypa/gh-action-pypi-publish` pinned to a
+v1.11.0-or-newer commit. Nothing else is needed.
 
 Verify after publish:
 
@@ -1117,7 +1286,7 @@ provenance layer that rides on the same OIDC token.
 
 **When NOT to apply.** Two cases:
 
-1. **Private indexes that don't speak PEP 740.** Same boundary as PY-062 — Artifactory / internal Pulp don't yet ingest the attestation. The flag is harmless (action silently skips), so leaving it enabled is fine; just don't expect verification on the private side.
+1. **Private indexes.** Same boundary as PY-062 — the action documents attestations as working only with PyPI and TestPyPI via Trusted Publishing, so don't expect them on Artifactory or an internal Pulp.
 2. **Non-GitHub CI without Sigstore signing.** PEP 740 attestations are produced via Sigstore; the GitHub Action handles this transparently. GitLab + Sigstore is possible but more setup; CircleCI etc. have varied support. If your CI doesn't have a clean Sigstore path, you can ship without attestations — but you give up the provenance signal until you can.
 
 ---
