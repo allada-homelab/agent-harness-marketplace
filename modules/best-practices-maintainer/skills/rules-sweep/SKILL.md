@@ -71,6 +71,9 @@ PR. Read `meta-best-practices` and the module's `CONVENTIONS.md` first.
 - Treat every verdict as a hypothesis. Open its quoted source before you write
   the rule, and quote the live output for every behavioral claim. A ledger line
   is not evidence (b78f587 records five wrong rationales in one report).
+- When one editor owns each reference file, collect the verdicts filed under
+  one topic that change a rule living in another topic's file, and give them
+  to that file's editor. Otherwise both editors skip them as out of scope.
 - Record each source's pinned ref and commit in the rule set's SKILL.md, so
   the next sweep knows its base.
 - Bump the module version, run `tools/lint.sh` and `bin/check.sh`, and name the
