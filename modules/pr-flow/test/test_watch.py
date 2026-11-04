@@ -74,6 +74,19 @@ def test_checks_failed_prints_log_and_counts_attempt(repo):
     assert state["attempts"] == 1 and state["pr"] == 7
 
 
+@pytest.mark.parametrize(("rerun_started", "rc", "verdict"), [
+    ("2026-01-01T00:02:00Z", 0, "green"),           # a later run of the job replaced the cancelled one
+    ("2026-01-01T00:00:00Z", 10, "checks-failed"),  # the cancelled run is the latest: a real failure
+])
+def test_cancelled_run_counts_only_when_not_superseded(repo, rerun_started, rc, verdict):
+    _, wt = opened(repo)
+    cancelled = {**check("CANCELLED"), "workflowName": "wf", "startedAt": "2026-01-01T00:01:00Z"}
+    rerun = {**check("SUCCESS"), "workflowName": "wf", "startedAt": rerun_started}
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[cancelled, rerun])]})
+    assert r.returncode == rc, r.stderr
+    assert last(r) == f"pr-flow: watch {verdict} https://github.com/o/r/pull/7"
+
+
 def test_conflict(repo):
     _, wt = opened(repo)
     r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], mergeable="CONFLICTING")]})
