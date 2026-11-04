@@ -1,0 +1,10 @@
+{
+  "name": "@allada-homelab/simplify",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Review changed code — the working tree, a branch or a pull request — through reuse, simplification, efficiency and altitude lenses in parallel, then apply the fixes without changing behavior. pi and dsh only.",
+  "license": "MIT",
+  "pi": { "skills": ["skills/*"] },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

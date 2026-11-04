@@ -40,6 +40,8 @@ importers:
 
   modules/rea: {}
 
+  modules/simplify: {}
+
   modules/sleep-guard: {}
 
   modules/ste-writing: {}
