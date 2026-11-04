@@ -4,21 +4,25 @@
 **Contents:**
 
 - DOCKER-001 — Use multi-stage builds for compiled or dependency-heavy apps
+- DOCKER-039 — Name build stages and `COPY --from` by name, not index
 - DOCKER-002 — Pin base images by digest
 - DOCKER-003 — Order layers cache-friendly: dependency manifests first, source last
 - DOCKER-004 — `COPY` only what's needed; rely on `.dockerignore`
 - DOCKER-005 — Run as a non-root user in the final stage
+- DOCKER-038 — Don't install or use `sudo` in runtime images
 - DOCKER-006 — Use `tini`/`dumb-init` (or `--init`) for proper PID 1 / signal handling
 - DOCKER-007 — Add `HEALTHCHECK` for long-lived services
 - DOCKER-009 — Use `RUN --mount=type=cache` for package managers (BuildKit)
 - DOCKER-010 — Don't bake secrets into layers; use `RUN --mount=type=secret`
 - DOCKER-011 — Minimize the final image: distroless / alpine / slim
-- DOCKER-012 — Set `WORKDIR` explicitly
+- DOCKER-012 — Set an absolute `WORKDIR` explicitly
 - DOCKER-013 — Prefer `ENTRYPOINT` (exec form) + `CMD` over shell-form commands
 - DOCKER-014 — Use HereDoc syntax for multi-line `RUN` statements
 - DOCKER-015 — Use `set -o pipefail` for piped commands inside `RUN`
 - DOCKER-016 — Prefer `COPY --link` for content that doesn't depend on prior `RUN` mutations
 - DOCKER-017 — Multi-platform builds: scope BuildKit cache IDs by `TARGETARCH`
+- DOCKER-036 — Redeclare global and platform `ARG`s inside each stage that uses them
+- DOCKER-037 — Use `ARG` or an inline `RUN` prefix for build-only values, not `ENV`
 - DOCKER-018 — Disable `docker-clean` before mounting an APT cache
 - DOCKER-019 — `apt-get update` and `apt-get install` must share a `RUN`
 - DOCKER-020 — `apt-get install` needs `--no-install-recommends`
@@ -88,6 +92,47 @@ tools at runtime (uncommon — usually a sign something is wrong).
 
 ---
 
+## DOCKER-039 — Name build stages and `COPY --from` by name, not index
+
+**What.** Give each stage a name (`FROM … AS build`) and refer to it by
+that name (`COPY --from=build`). Don't copy from a stage by its integer
+index (`COPY --from=0`).
+
+**Why.** Unnamed stages are numbered from 0 in `FROM` order. Insert a
+stage (a new `deps` or `test` stage) or reorder two, and every index
+shifts: `COPY --from=0` now copies from a different stage. Nothing in the
+Dockerfile changed on that line, so review doesn't catch it. Docker's
+multi-stage guide recommends naming because "even if the instructions in
+your Dockerfile are re-ordered later, the `COPY` doesn't break"
+([Name your build stages](https://docs.docker.com/build/building/multi-stage/#name-your-build-stages)).
+
+**How.**
+
+```dockerfile
+# bad — breaks silently when a stage is added above
+FROM golang:1.25
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -o /bin/app ./cmd/app
+FROM scratch
+COPY --from=0 /bin/app /app
+
+# good
+FROM golang:1.25 AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -o /bin/app ./cmd/app
+FROM scratch AS final
+COPY --from=build /bin/app /app
+```
+
+Find offenders with `grep -nE -- '--from=[0-9]+' Dockerfile`.
+
+**When NOT to apply.** Never. A name costs one word per stage, and
+`docker build --target` selects stages by name.
+
+---
+
 ## DOCKER-002 — Pin base images by digest
 
 **What.** Reference base images as `image@sha256:...`, not by tag alone.
@@ -106,9 +151,21 @@ reproducibility see DOCKER-030.
 FROM python:3.12-slim@sha256:740d94a19218c8dd584b92f804b1158f85b0d241e5215ea26ed2dcade2b9d138 AS builder
 ```
 
-Tooling like [Renovate](https://docs.renovatebot.com/docker/) or [Dependabot](https://docs.github.com/en/code-security/dependabot)
-can keep digests up-to-date automatically. For repos without that tooling,
-keep the tag as a comment for readability: `FROM python:3.12-slim@sha256:... # 3.12-slim, updated 2026-05-01`.
+A digest pin is not set-and-forget. The best-practices guide warns that
+with a pin "you're opting out of automated security fixes"
+([Pin base image versions](https://docs.docker.com/build/building/best-practices/#pin-base-image-versions)):
+the base keeps its CVEs until someone changes the digest. So every pin
+needs two companions:
+
+- **An update bot that rewrites the digest.** [Renovate](https://docs.renovatebot.com/docker/)
+  updates digests and keeps the tag in the `FROM` line for readability.
+  With [Dependabot](https://docs.github.com/en/code-security/dependabot)
+  (`package-ecosystem: "docker"`), confirm it opens digest PRs for your
+  files.
+- **Scheduled rebuilds.** "Building an image is taking a snapshot of that
+  image at that moment"
+  ([Rebuild your images often](https://docs.docker.com/build/building/best-practices/#rebuild-your-images-often)),
+  so rebuild on a schedule even when the Dockerfile does not change.
 
 **When NOT to apply.** Quick local experiments, ephemeral CI images that
 don't need reproducibility, base images you control yourself and tag
@@ -183,8 +240,8 @@ is more self-documenting.
 ## DOCKER-005 — Run as a non-root user in the final stage
 
 **What.** The final stage must end with a `USER` directive that points at a
-non-root account. Use a numeric UID (e.g. `USER 10001`) for compatibility
-with Kubernetes `runAsNonRoot` policies.
+non-root account. Use a numeric UID and GID (e.g. `USER 10001:10001`) for
+compatibility with Kubernetes `runAsNonRoot` policies.
 
 **Why.** A container that runs as root and is then compromised gives the
 attacker root inside the container — and on misconfigured hosts, that's a
@@ -196,12 +253,22 @@ refuses to run root containers by default.
 
 ```dockerfile
 # create a real user (so /etc/passwd entry exists for libraries that need it)
-RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app
+RUN groupadd --system --gid 10001 app \
+ && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin app
 
-USER 10001
+USER 10001:10001
 WORKDIR /app
 ENTRYPOINT ["/app/entrypoint"]
 ```
+
+Name the group too. The Dockerfile reference warns: "When the user doesn't
+have a primary group then the image (or the next instructions) will be run
+with the `root` group"
+([USER](https://docs.docker.com/reference/dockerfile/#user)). A bare
+`USER 10001` with no `/etc/passwd` entry gets exactly that: `docker run`
+on such an image prints `uid=10001 gid=0(root) groups=0(root)`, so every
+file the process creates is root-group owned. Copied files are `0:0`
+unless the `COPY` passes `--chown`.
 
 For distroless: use the `:nonroot` variant (`gcr.io/distroless/cc-debian12:nonroot`),
 which ships with UID 65532 already configured.
@@ -209,10 +276,66 @@ which ships with UID 65532 already configured.
 Watch for files that need to be readable/writable by the non-root user —
 `chown` them in the build stage before the `USER` switch.
 
-**When NOT to apply.** When the workload genuinely needs root (binding to
-ports <1024 without `CAP_NET_BIND_SERVICE`, kernel modules, system-level
-debugging containers). In those cases, document *why* and consider whether
-Linux capabilities (`--cap-add NET_BIND_SERVICE`) would suffice instead.
+**When NOT to apply.** When the workload genuinely needs root (kernel
+modules, system-level debugging containers). Document *why*.
+
+A port below 1024 is not such a reason on a bridge network. Current Engine
+sets `net.ipv4.ip_unprivileged_port_start=0` in the container's network
+namespace, so a non-root `USER` binds port 80 with no capability. Observed
+on Engine 29.9.0: `docker run --user 65534 alpine` reads `0` from
+`/proc/sys/net/ipv4/ip_unprivileged_port_start` and `nc -l -p 80` listens.
+`--cap-add NET_BIND_SERVICE` does not help a non-root process: its
+effective set stays empty (`CapEff: 0000000000000000`) unless the binary
+carries file capabilities. The exception is `network_mode: host`
+(`--network host`), where the host's floor of 1024 applies and the bind
+fails with `Permission denied`. There, grant the binary
+`cap_net_bind_service` as a file capability
+([Linux kernel capabilities](https://docs.docker.com/engine/security/#linux-kernel-capabilities))
+rather than run as root.
+
+---
+
+## DOCKER-038 — Don't install or use `sudo` in runtime images
+
+**What.** Don't install `sudo` in a shipped image or call it from `RUN`,
+`ENTRYPOINT`, `CMD` or an entrypoint script. Do root-only setup in `RUN`
+steps before the `USER` switch (DOCKER-005). When a process must start as
+root and then drop privileges, end the entrypoint script with
+`exec gosu <user> "$@"`.
+
+**Why.** Docker's build guide: "Avoid installing or using `sudo` as it has
+unpredictable TTY and signal-forwarding behavior that can cause problems"
+([USER](https://docs.docker.com/build/building/best-practices/#user)). The
+usual setup, a passwordless sudoers entry for the app user, also undoes
+DOCKER-005: anyone who gets code execution as that user is one `sudo`
+away from root in the container.
+
+**How.**
+
+```dockerfile
+# bad — sudo plus a NOPASSWD rule makes the non-root user root-equivalent
+RUN apt-get update && apt-get install -y --no-install-recommends sudo \
+ && echo 'app ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/app \
+ && rm -rf /var/lib/apt/lists/*
+USER app
+ENTRYPOINT ["sudo", "-E", "/app/start"]
+```
+
+```dockerfile
+# good — root work happens at build time; the image runs as the app user
+RUN mkdir -p /var/lib/app && chown 10001:10001 /var/lib/app
+USER 10001:10001
+ENTRYPOINT ["/app/start"]
+```
+
+For the start-as-root case (fix ownership of a mounted volume, then run
+the daemon), Docker's guide uses `gosu`, as its postgres entrypoint does:
+`exec gosu postgres "$@"`
+([ENTRYPOINT](https://docs.docker.com/build/building/best-practices/#entrypoint)).
+
+**When NOT to apply.** Dev-container images where a human works
+interactively and needs `sudo` to install tools. Those images are not
+shipped to production.
 
 ---
 
@@ -354,9 +477,35 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 Requires BuildKit (SEC-002) and the `# syntax=` directive at the top of the file.
 
+A cache mount is for speed only, never for correctness. The reference:
+"Your build should work with any contents of the cache directory as
+another build may overwrite the files or GC may clean it if more storage
+space is needed"
+([RUN --mount=type=cache](https://docs.docker.com/reference/dockerfile/#run---mounttypecache)).
+Never leave a build output in a cache mount for a later step to pick up.
+
+A new cache directory is owned by `uid` 0 and `gid` 0, with mode `0755`.
+A `RUN` after a non-root `USER` (DOCKER-005) cannot write to it, and the
+step fails (`touch: /c/x: Permission denied`). Give the mount the step's
+IDs:
+
+```dockerfile
+USER 10001:10001
+RUN --mount=type=cache,target=/cache/uv,uid=10001,gid=10001 \
+    UV_CACHE_DIR=/cache/uv uv sync --locked --no-install-project --no-dev
+```
+
 **When NOT to apply.** When builds happen on a fresh CI runner with no cache
 persistence — the cache mount won't help and the syntax overhead isn't worth
-it. (Though many CI providers persist BuildKit caches with the right config.)
+it. Cache mounts live in the builder's local storage; `--cache-to` and
+`--cache-from` do not export or restore them
+([RUN --mount=type=cache](https://docs.docker.com/reference/dockerfile/#run---mounttypecache)),
+so on a fresh runner every build starts with an empty mount. A second
+builder that imported a `mode=max` cache marked the writing step `CACHED`
+and still saw an empty mount. On GitHub Actions, persist them with
+`actions/cache` plus `reproducible-containers/buildkit-cache-dance`
+(pinned by SHA) ([Cache mounts](https://docs.docker.com/build/ci/github-actions/cache/#cache-mounts)),
+or use a persistent builder.
 
 ---
 
@@ -442,15 +591,26 @@ tools there). Workloads that need many system libraries — sometimes the
 
 ---
 
-## DOCKER-012 — Set `WORKDIR` explicitly
+## DOCKER-012 — Set an absolute `WORKDIR` explicitly
 
-**What.** Always declare `WORKDIR` before `COPY` or `RUN` operations that
-expect a specific directory. Don't rely on the default (`/`).
+**What.** Always declare an absolute `WORKDIR` (leading `/`) before `COPY`
+or `RUN` operations that expect a specific directory. Don't rely on the
+default, which is `/` or whatever the base image set. Use `WORKDIR`
+rather than `RUN cd … && …`.
 
 **Why.** Running as `/` is brittle: relative paths resolve against root,
 package managers may scatter files, and security policies often disallow
 writing to `/`. `WORKDIR` also creates the directory if missing — `cd`
 inside a `RUN` step would fail if the dir doesn't exist.
+
+A relative `WORKDIR` resolves against the base image's working directory,
+which "may change upstream without warning, resulting in a completely
+different directory hierarchy for your build"
+([WorkdirRelativePath](https://docs.docker.com/reference/build-checks/workdir-relative-path/)).
+`WORKDIR` also does no shell expansion: `WORKDIR ~/app` creates a literal
+`/~/app` (a following `RUN pwd` prints `/~/app`). Docker's guide asks for
+absolute paths and for `WORKDIR` over `RUN cd … && do-something`
+([WORKDIR](https://docs.docker.com/build/building/best-practices/#workdir)).
 
 **How.**
 
@@ -459,6 +619,9 @@ WORKDIR /app
 COPY . .
 RUN make build
 ```
+
+The `WorkdirRelativePath` build check flags a relative `WORKDIR`
+(DOCKER-029).
 
 **When NOT to apply.** Single-stage images that genuinely do nothing but run
 `/usr/local/bin/foo` and have no working-directory expectations (rare).
@@ -487,6 +650,24 @@ CMD ["--port", "8080"]
 # bad — sh -c wraps the process; signals don't reach python
 ENTRYPOINT python -m src.main
 ```
+
+Three ways an exec form silently stops being one (see
+[ENTRYPOINT](https://docs.docker.com/reference/dockerfile/#entrypoint)):
+
+- **Single quotes.** Exec form "is parsed as a JSON array, which means that
+  you must use double-quotes". `ENTRYPOINT ['echo','hi']` is not an
+  error: it becomes shell form. `docker image inspect` shows
+  `["/bin/sh","-c","['echo','hi']"]`.
+- **Shell-form `CMD` under an exec-form `ENTRYPOINT`.** The `CMD` is
+  wrapped in `/bin/sh -c` and handed to the entrypoint as arguments.
+  `ENTRYPOINT ["echo"]` plus `CMD hello world` prints
+  `/bin/sh -c hello world`. Write both in exec form.
+- **`ENTRYPOINT` in a derived image.** "If `CMD` is defined from the base
+  image, setting `ENTRYPOINT` will reset `CMD` to an empty value." Redeclare
+  `CMD` after `ENTRYPOINT` when the image needs default arguments.
+
+Where shell form is unavoidable, start the command with `exec`
+(`ENTRYPOINT exec top -b`) so the process replaces the shell.
 
 When you need shell features (env var expansion, command chaining), use an
 entrypoint script:
@@ -646,23 +827,38 @@ COPY --link scripts/ ./scripts/
 ```
 
 ```dockerfile
-# also fine — the COPY after a chown depends on the RUN, so it can't use --link
+# also fine — with --link, --chown must be numeric
 FROM python:3.12-slim AS app
 WORKDIR /app
 RUN useradd --system --uid 10001 app
 COPY --link pyproject.toml uv.lock ./
-# depends on the user from RUN; --link wouldn't help
-COPY --chown=10001:10001 src/ ./src/
+COPY --link --chown=10001:10001 src/ ./src/
 ```
 
-The key rule: **don't use `--link` when the copy needs to see filesystem
-state created by an earlier `RUN`** in the same stage (chmod, chown,
-mkdir of a target dir, etc.) — linked layers don't see RUN-introduced
-changes from below.
+The key rule, in the reference's terms: a linked `COPY`/`ADD` is "not
+allowed to read any files from the previous state", so it cannot follow a
+symlink in the destination path. "If you don't rely on the behavior of
+following symlinks in the destination path, using `--link` is always
+recommended"
+([COPY --link](https://docs.docker.com/reference/dockerfile/#copy---link)).
+Two consequences catch people:
+
+- **`--chown` must be numeric.** A linked copy lands in an empty
+  filesystem, so user and group names can't be looked up.
+  `COPY --link --chown=nobody:nobody` fails the build with
+  `user and group names can't be resolved when used with --link, use numeric uid[:gid] instead`.
+  Without `--link`, a name needs `/etc/passwd` and `/etc/group` in the
+  target, so `scratch` and distroless stages need numeric IDs either way
+  ([COPY --chown](https://docs.docker.com/reference/dockerfile/#copy---chown)).
+- **Directory modes are overwritten.** "When copying a directory, the
+  existing mode is overridden with the new mode from the copied path."
+  `COPY --link d/ /tmp/` turned `/tmp` from `1777` into `755`, which
+  breaks every non-root writer. Add `--chmod`, or drop `--link` for that
+  copy.
 
 **When NOT to apply.**
 
-- The `COPY` depends on a prior `RUN` (ownership, permissions, target directory created mid-stage).
+- The copy relies on earlier filesystem state: a symlink in the destination path, or the mode of an existing directory it copies into (`/tmp`).
 - The stage has only one `COPY` step and no base to rebase against (`FROM scratch` with a single artifact) — the optimization has no effect.
 - BuildKit isn't enabled (legacy builder ignores `--link`).
 
@@ -710,6 +906,101 @@ writes at a time within a single arch — combine both for safety.
 **When NOT to apply.** Single-platform builds — `TARGETARCH` is fine to
 include defensively, but the bug it prevents won't occur. If you only
 ever build linux/amd64 on a single runner, the unscoped form is harmless.
+
+---
+
+## DOCKER-036 — Redeclare global and platform `ARG`s inside each stage that uses them
+
+**What.** An `ARG` declared before the first `FROM`, and the predefined
+platform arguments (`TARGETPLATFORM`, `TARGETOS`, `TARGETARCH`,
+`BUILDPLATFORM`, …), live in the global scope. `FROM` lines can use them,
+but stages don't inherit them. Add a bare `ARG NAME` (no value) inside
+every stage that reads one. It then takes the global default or the
+`--build-arg` value.
+
+**Why.** Without the redeclaration the variable expands to an empty
+string, with no error. A stage that ran
+`echo "v=[$V] arch=[$TARGETARCH]"` under a global `ARG V=1` printed
+`v=[] arch=[]`, and `docker buildx build --check` on that file reported
+"Check complete, no warnings found." The result is a download URL like
+`tool-linux-.tar.gz` or an empty label, found long after the build passed.
+The reference says the platform arguments "are not automatically available
+inside build stages or for your `RUN` commands. To expose one of these
+arguments inside the build stage redefine it without value"
+([Automatic platform ARGs](https://docs.docker.com/reference/dockerfile/#automatic-platform-args-in-the-global-scope),
+[variable scoping](https://docs.docker.com/build/building/variables/#scoping)).
+
+**How.**
+
+```dockerfile
+# syntax=docker/dockerfile:1
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim AS build
+# redeclare without a value: takes the global default or --build-arg
+ARG PYTHON_VERSION
+ARG TARGETARCH
+RUN echo "python ${PYTHON_VERSION} for ${TARGETARCH}"
+```
+
+A stage built `FROM` another stage in the same file inherits the `ARG`s
+that stage declared, so declaring them once in a shared base stage also
+works. DOCKER-017's per-arch cache `id=` depends on this rule.
+
+**When NOT to apply.** A global `ARG` used only in `FROM` lines needs no
+redeclaration. Neither does a stage that inherits the `ARG` from a parent
+stage in the same Dockerfile.
+
+---
+
+## DOCKER-037 — Use `ARG` or an inline `RUN` prefix for build-only values, not `ENV`
+
+**What.** A value only the build needs (`DEBIAN_FRONTEND=noninteractive`,
+a compiler flag) goes in an `ARG` or a per-command prefix, not in `ENV`.
+When an `ENV` must be overridable at build time, declare `ARG X` and
+write `ENV X=${X:-default}`, not `ENV X=default`.
+
+**Why.** Two failure modes:
+
+1. **`ENV` leaks into runtime.** `ENV` values "persist when a container is
+   run from the resulting image", and the reference names this exact case:
+   "setting `ENV DEBIAN_FRONTEND=noninteractive` changes the behavior of
+   `apt-get`, and may confuse users of your image"
+   ([ENV](https://docs.docker.com/reference/dockerfile/#env)). The image's
+   `Config.Env` carries `DEBIAN_FRONTEND=noninteractive` into every
+   container and `docker exec` session.
+2. **`ENV` silently beats `--build-arg`.** "Environment variables defined
+   using the `ENV` instruction always override an `ARG` instruction of the
+   same name"
+   ([Using ARG variables](https://docs.docker.com/reference/dockerfile/#using-arg-variables)).
+   With `ARG X` then `ENV X=dflt`, a build with `--build-arg X=cli` saw
+   `X=[dflt]`. With `ENV X=${X:-dflt}` it saw `X=[cli]`.
+
+**How.**
+
+```dockerfile
+# bad — DEBIAN_FRONTEND stays set in every container from this image
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata
+
+# good — an ARG applies to every later RUN in the stage and is not in the image's Env
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata
+```
+
+```dockerfile
+# an ENV that callers can override with --build-arg NODE_ENV=...
+ARG NODE_ENV
+ENV NODE_ENV=${NODE_ENV:-production}
+```
+
+A per-command prefix (`RUN DEBIAN_FRONTEND=noninteractive apt-get …`)
+works too, but it covers only the one command it precedes. In
+`A=1 cmd1 && cmd2`, `cmd2` does not see `A`, so prefix each command or use
+the `ARG`.
+
+**When NOT to apply.** Values the running container needs (`PATH`,
+`PYTHONUNBUFFERED`, a runtime `NODE_ENV`) belong in `ENV`. Secrets belong
+in neither (DOCKER-010).
 
 ---
 
@@ -929,7 +1220,7 @@ Same pattern applies to other Python tools:
 - `pip wheel` — `--no-cache-dir` (or cache-mount `/root/.cache/pip`)
 - `pipx install` — cache-mount `/root/.cache/pip` works; `--no-cache-dir` propagates through if exported
 - `poetry install` — set `POETRY_CACHE_DIR=/tmp/poetry-cache` + clean, or cache-mount it
-- `uv` — see UV-002/UV-003 (uses its own cache, BuildKit-aware)
+- `uv` — wrap in `--mount=type=cache,target=/root/.cache/uv` (UV-002/UV-003), or pass `--no-cache` / set `ENV UV_NO_CACHE=1` when there is no cache mount ([uv in Docker](https://docs.astral.sh/uv/guides/integration/docker/#caching)). Without either, the cache stays in the layer: `uv pip install --system six` left 140K in `/root/.cache/uv`; with `UV_NO_CACHE=1` the directory was absent.
 
 **When NOT to apply.** `pip install` inside a *builder* stage in a
 multi-stage build where the final stage uses `COPY --from=builder
@@ -941,17 +1232,22 @@ keeping for habit.
 
 ## DOCKER-022 — Replace `MAINTAINER` with `LABEL`
 
-**What.** The `MAINTAINER` instruction was [deprecated in Docker 1.13](https://docs.docker.com/reference/dockerfile/#maintainer-deprecated)
-(January 2017). Use OCI-standard labels instead:
+**What.** The `MAINTAINER` instruction is
+[deprecated](https://docs.docker.com/reference/dockerfile/#maintainer-deprecated).
+Use OCI-standard labels instead:
 
 ```dockerfile
 LABEL org.opencontainers.image.authors="Jane Smith <jane@example.com>"
 ```
 
-**Why.** Two reasons:
+**Why.** The reference calls `LABEL` "a much more flexible version" of
+`MAINTAINER` that "you should use instead", and the `MaintainerDeprecated`
+build check flags it
+([MaintainerDeprecated](https://docs.docker.com/reference/build-checks/maintainer-deprecated/)).
+Neither instruction adds a filesystem layer (`docker history` shows both
+as `0B`), so the cost is not size but metadata:
 
-1. **`MAINTAINER` adds a layer.** `LABEL` writes to image metadata without adding a layer; `MAINTAINER` historically created a layer (mostly harmless, but unnecessary).
-2. **Tooling alignment.** OCI image-spec labels (`org.opencontainers.image.*`) are read by registries (GitHub Container Registry uses `org.opencontainers.image.source` to link image → repo), security scanners (Trivy reports the maintainer from the OCI label, not `MAINTAINER`), and SBOM tools. `MAINTAINER` is ignored by all of them.
+- **Tooling alignment.** OCI image-spec labels (`org.opencontainers.image.*`) are read by registries (GitHub Container Registry uses `org.opencontainers.image.source` to link image → repo), security scanners (Trivy reports the maintainer from the OCI label, not `MAINTAINER`), and SBOM tools. `MAINTAINER` is ignored by all of them.
 
 The directive still works — Docker hasn't removed it — but it produces
 a deprecation warning and provides no value over `LABEL`.
@@ -1005,9 +1301,19 @@ license, or a release notes URL. Concrete consequences:
 - **Renovate / Dependabot context.** Bots can read these labels to identify which image is which.
 
 **How.** Pass build metadata as `--build-arg`s and write them into
-labels:
+labels. Declare the per-build `ARG`s in the final stage, after its last
+`RUN` and just before the `LABEL`s. Every `RUN` after an `ARG` receives it
+as an environment variable, so a new value "can cause a cache miss" for
+each of them
+([Impact on build caching](https://docs.docker.com/reference/dockerfile/#impact-on-build-caching)).
+With `ARG GIT_SHA` above a `RUN`, a new SHA re-ran that `RUN`. With the
+`ARG` below it, the `RUN` stayed `CACHED`.
 
 ```dockerfile
+FROM python:3.12-slim AS final
+# ... COPY and RUN steps ...
+
+# per-build values last, so a new commit doesn't bust the RUN cache above
 ARG GIT_SHA
 ARG VERSION
 # commit time (the SOURCE_DATE_EPOCH value), not the wall clock
@@ -1034,6 +1340,13 @@ Take `created` from the commit timestamp — the same value as
 `SOURCE_DATE_EPOCH` (DOCKER-030) — not the wall clock: a wall-clock
 `created` changes on every rebuild of the same commit, so the image
 config, and therefore its digest, is never reproducible.
+
+Without build args, `BUILDX_GIT_LABELS=full docker buildx build .` stamps
+`org.opencontainers.image.revision` and `org.opencontainers.image.source`
+(plus `com.docker.image.source.entrypoint`) from the local Git checkout.
+`BUILDX_GIT_LABELS=1` adds only the entrypoint and revision. On a dirty
+tree, the revision gets a `-dirty` suffix
+([BUILDX_GIT_LABELS](https://docs.docker.com/build/building/variables/#buildx_git_labels)).
 
 In GitHub Actions, `docker/metadata-action` populates these
 automatically from the workflow context — but it sets `created` from the
@@ -1332,19 +1645,28 @@ Don't pin a minor to "require" a feature: `:1` always resolves to the
 newest stable 1.x, so `:1.8` is a *downgrade* that freezes you out of
 every later flag (`--exclude`, `--parents`, `env=` secrets) and security
 fix. Pin a full version (or digest) only for a hard reproducibility
-requirement, and bump it deliberately.
+requirement, or when the file sets `# check=error=true` (below), and bump
+it deliberately.
 
-Docker's [frontend docs](https://docs.docker.com/build/buildkit/dockerfile-frontend/)
-say: "We recommend using `docker/dockerfile:1`, which always points to
-the latest stable release of the version 1 syntax." That tracks both
-minor and patch updates, so you get new features and security fixes
-without manual bumps.
+Docker's [Dockerfile overview](https://docs.docker.com/build/concepts/dockerfile/#dockerfile-syntax)
+says: "We recommend using `docker/dockerfile:1`, which always points to
+the latest release of the version 1 syntax." The reference adds that `:1`
+"causes BuildKit to pull the latest stable version of the Dockerfile
+syntax before the build"
+([syntax](https://docs.docker.com/reference/dockerfile/#syntax)). That
+tracks both minor and patch updates, so you get new features and security
+fixes without manual bumps.
 
-**When NOT to apply.** Never. Even one-line throwaway Dockerfiles cost
-nothing to annotate, and the line is the difference between "works on
-my laptop" and "works on every BuildKit ≥0.10 host." The directive is
-ignored by the legacy (pre-BuildKit) builder, so there's no
-compatibility downside.
+**When NOT to apply.** Never omit the directive. Even one-line throwaway
+Dockerfiles cost nothing to annotate, and the line is the difference
+between "works on my laptop" and "works on every BuildKit ≥0.10 host."
+The directive is ignored by the legacy (pre-BuildKit) builder, so there's
+no compatibility downside. The one exception is to the floating `:1`, not
+to the directive: a file that sets `# check=error=true` (DOCKER-029)
+should pin a full version (`# syntax=docker/dockerfile:1.28.0`).
+The reference recommends this because otherwise "your build may start to
+fail when new checks are added in the future versions"
+([check](https://docs.docker.com/reference/dockerfile/#check)).
 
 ---
 
@@ -1451,7 +1773,7 @@ Cite: [Build checks](https://docs.docker.com/build/checks/),
 caught by `--check`:
 
 - `JSONArgsRecommended` — flags shell-form `ENTRYPOINT`/`CMD` (DOCKER-013).
-- `LegacyKeyValueFormat` — flags `LABEL key value` style (DOCKER-022 adjacent).
+- `LegacyKeyValueFormat` — flags the space-separated `ENV key value` / `ARG key value` form. The bundled frontend in BuildKit 0.34 flags `LABEL key value` too.
 - `MaintainerDeprecated` — flags `MAINTAINER` (DOCKER-022).
 - `SecretsUsedInArgOrEnv` — flags secret-shaped `ARG`/`ENV` names (SEC-014).
 - `UndefinedVar` — catches typo'd `${VAR}` references.
@@ -1462,6 +1784,8 @@ caught by `--check`:
 - `ExposeInvalidFormat` / `ExposeProtoCasing` — malformed or wrong-cased `EXPOSE` (DOCKER-025-adjacent).
 - `RedundantTargetPlatform`, `FromPlatformFlagConstDisallowed` — `--platform` smells in `FROM` that defeat multi-platform builds.
 - `UndefinedArgInFrom` — a `${VAR}` in a `FROM` line referencing an `ARG` that was never declared.
+- `InvalidDefaultArgInFrom` — a global `ARG` used in `FROM` with no default, so the build only works when `--build-arg` is passed (`ARG TAG` / `FROM busybox:${TAG}`). Give it a default that makes a valid image reference.
+- `FromAsCasing` — `FROM … as name` with mismatched keyword casing (style).
 
 `--check` runs in seconds (no build) and provides a uniform PR-time
 signal. Treating Dockerfile lint as "run if you remember" misses the
@@ -1491,13 +1815,20 @@ To fail regular builds as well, put the directive at the top of the
 Dockerfile:
 
 ```dockerfile
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.28.0
 # check=error=true
 ```
 
+With `error=true`, pin the syntax to a full version (DOCKER-027) rather
+than `:1`. The reference recommends this because otherwise "your build may
+start to fail when new checks are added in the future versions"
+([check](https://docs.docker.com/reference/dockerfile/#check)).
+
 `# check=skip=<RuleName>[,<RuleName>...]` disables checks for the **whole
 file** — there is no per-instruction form — so document the reason next
-to it:
+to it. Check names are case-sensitive Pascal case: the reference calls
+`#check=skip=jsonargsrecommended` invalid, and a build with it still
+reported `JSONArgsRecommended`, with no error about the bad name:
 
 ```dockerfile
 # syntax=docker/dockerfile:1
@@ -1511,6 +1842,9 @@ ENTRYPOINT /entrypoint.sh
 Experimental checks are off by default; enable them with
 `# check=experimental=all` (or the same value in the build-arg). Combine
 parameters with `;`: `# check=skip=JSONArgsRecommended;error=true`.
+`experimental=` takes precedence over `skip=`: with
+`skip=all;experimental=all`, the experimental checks still run
+([Build checks](https://docs.docker.com/build/checks/#experimental-checks)).
 
 **When NOT to apply.**
 
@@ -1623,6 +1957,7 @@ Caveats worth knowing:
 
 - **Non-deterministic build steps.** If a `RUN` step calls `date`, embeds random UUIDs, or fetches "latest" from a moving URL, those still vary. `SOURCE_DATE_EPOCH` only fixes mtimes — your build itself has to be reproducible too. Most language ecosystems (`uv sync --locked`, `npm ci`, `cargo build --locked`, `go build`) are reproducible by default; trouble comes from custom scripts.
 - **Some package managers ignore the epoch.** apt's `dpkg` records install timestamps from its own clock unless you patch the database after install. For most images this is acceptable noise; for strict L3 reproducibility, install all packages in a single layer and `touch -d @${SOURCE_DATE_EPOCH}` the dpkg status file at the end.
+- **A commit-time epoch discards the layer cache on every commit.** BuildKit treats `SOURCE_DATE_EPOCH` as a cache input for `WORKDIR`: "Changing `SOURCE_DATE_EPOCH` between builds invalidates the cache for `WORKDIR` and all subsequent instructions" ([WORKDIR and SOURCE_DATE_EPOCH](https://docs.docker.com/build/cache/invalidation/#workdir-and-source_date_epoch)). A rebuild with the epoch moved from `1` to `2` re-ran both `WORKDIR /app` and the `RUN` after it. When cache reuse matters more than commit-dated timestamps, use a fixed value (`--build-arg SOURCE_DATE_EPOCH=0`, as the [Unix epoch example](https://docs.docker.com/build/ci/github-actions/reproducible-builds/#unix-epoch-timestamps) does).
 
 **When NOT to apply.**
 

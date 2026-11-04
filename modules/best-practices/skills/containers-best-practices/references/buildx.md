@@ -8,12 +8,16 @@
 - BUILDX-003 — Know `--load` vs `--push` vs `--output`
 - BUILDX-004 — Use `docker buildx bake` for multi-target / declarative builds
 - BUILDX-005 — Pick the right builder driver
-- BUILDX-006 — Prefer native multi-arch runners over QEMU emulation
+- BUILDX-006 — Cross-compile or build natively instead of QEMU emulation for multi-arch
 - BUILDX-007 — Use `docker buildx debug build` for interactive step-through of failing builds
 - BUILDX-008 — `--sbom=true --provenance=mode=max` + registry-compatibility caveats
 - BUILDX-009 — Use `bake` matrix targets + composable attributes for multi-variant builds
-- BUILDX-010 — Pin the Docker GitHub Actions by commit SHA
+- BUILDX-010 — Pin the Docker GitHub Actions by commit SHA, and the Buildx/BuildKit they install
 - BUILDX-011 — Gate build inputs with a build policy (`Dockerfile.rego`), loaded explicitly in CI
+- BUILDX-012 — Omit `cache-to: type=gha` in workflows with read-only cache access
+- BUILDX-013 — Set `context: .` in build-push-action when earlier steps generate files
+- BUILDX-014 — On `pull_request`, build but don't log in or push
+- BUILDX-015 — Copy multi-platform images between registries with `buildx imagetools create`
 <!-- /toc -->
 
 Detailed explanation for each `BUILDX-NNN` rule. These cover the
@@ -44,7 +48,7 @@ backend types. The right choice depends on where the build runs:
 | `type=inline` | Image-exporter builds where you push to a registry anyway | Any; `docker` driver only with the containerd image store |
 | `type=registry` | Cross-CI portability; biggest fit when you push to a registry | Any; `docker` driver only with the containerd image store |
 | `type=gha` | GitHub Actions specifically — built-in cache backend with action support | Any; `docker` driver only with the containerd image store |
-| `type=local` | Single-machine builds with a persistent cache dir | Any; `docker` driver only with the containerd image store |
+| `type=local` | Single-machine builds with a persistent cache dir; export with `reset=true` when the dir persists between runs | Any; `docker` driver only with the containerd image store |
 | `type=s3` | AWS-native CI (still flagged unreleased; preview only) | `docker-container` / `kubernetes` |
 | `type=azblob` | Azure-native CI (also still preview) | `docker-container` / `kubernetes` |
 
@@ -68,6 +72,25 @@ Cite: [Cache storage backends](https://docs.docker.com/build/cache/backends/).
 - **Building on any other CI, pushing to a registry?** Use `type=registry`. Tag the cache image at `myrepo/myimage:buildcache` (or per-branch).
 - **Inline-only is acceptable?** Use `type=inline`. Simplest, embeds cache metadata in the pushed image — but mode is fixed at `min` and it doesn't separate cache from artifact.
 - **Local dev, want a persistent cache dir between builds?** Use `type=local,dest=./buildcache` and `type=local,src=./buildcache`.
+
+**A persisted `type=local` directory grows forever.** Each export leaves
+the previous export's blobs behind ("the local cache directory grows
+over time"), so a directory carried between runs by `actions/cache` or
+a CI volume fills the cache quota. Export with `reset=true` (Buildx
+0.35.0 or later) to delete blobs no tag references:
+
+```bash
+docker buildx build \
+  --cache-from type=local,src=./buildcache \
+  --cache-to   type=local,dest=./buildcache,mode=max,reset=true .
+```
+
+On older Buildx, prune the directory or export to a fresh one and swap
+it in. Checked live (Buildx v0.38.0, BuildKit v0.34.2): two exports to
+one directory left 7 blobs without `reset=true` and 4 with it.
+
+Cite: [Local cache backend](https://docs.docker.com/build/cache/backends/local/),
+[GitHub Actions cache — local cache](https://docs.docker.com/build/ci/github-actions/cache/#local-cache).
 
 **When NOT to apply.** Single ephemeral build with no future runs — no
 cache backend needed. Air-gapped environments where registry/cloud
@@ -126,9 +149,21 @@ docker buildx build --push \
 Two important details from that example:
 
 1. **Two `--cache-from` sources** — branch cache (most likely hit) with fallback to the `main` cache. First PR on a new branch still benefits from main's cache.
-2. **Per-branch cache tag** — each branch writes its own cache (`buildcache-${BRANCH}`). Without this, parallel CI runs on different branches overwrite each other.
+2. **A cache location per export** — "No location can be written to twice, without overwriting the previously cached data." So:
+   - a `type=registry` cache `ref` must differ from the image you push (`myapp:buildcache`, not `myapp:latest`), or the cache export overwrites the image;
+   - each branch writes its own cache (`buildcache-${BRANCH}`), or parallel CI runs on different branches overwrite each other;
+   - with `type=gha`, set `scope=<image or target>` when one workflow builds more than one image. The default scope is `buildkit`, so each build overwrites the previous image's cache:
 
-ECR / AWS-incompatible registry — add `image-manifest=true`:
+     ```yaml
+     cache-from: type=gha,scope=api
+     cache-to: type=gha,scope=api,mode=max
+     ```
+
+ECR and other registries that reject an image index as a cache image
+need `image-manifest=true`. It is the default since BuildKit v0.21
+(checked live on BuildKit v0.34.2: the cache export was an
+`application/vnd.oci.image.manifest.v1+json`). Set it explicitly only
+for an older BuildKit:
 
 ```bash
 --cache-to type=registry,ref=...,mode=max,oci-mediatypes=true,image-manifest=true
@@ -328,14 +363,22 @@ driver is fine there.
 
 ---
 
-## BUILDX-006 — Prefer native multi-arch runners over QEMU emulation
+## BUILDX-006 — Cross-compile or build natively instead of QEMU emulation for multi-arch
 
 **What.** `docker buildx build --platform linux/amd64,linux/arm64`
 under a single-node builder uses QEMU to emulate the non-native
 architecture. This is *slow* for CPU-heavy builds — often many times
-slower than native. For non-trivial builds, set up a
-multi-node builder with one native node per architecture, or use
-per-arch CI runners that combine into a manifest list.
+slower than native. Docker names three strategies: QEMU, a builder
+with multiple native nodes, and cross-compilation with multi-stage
+builds. For compiled languages with cross-compilers (Go, Rust, C),
+cross-compile first: pin the build stage to the builder's own platform
+with `FROM --platform=$BUILDPLATFORM` and pass `TARGETOS` /
+`TARGETARCH` to the compiler. Only the final stage's `RUN` steps (if
+any) then run under QEMU, and no extra runners are needed. For builds
+that cannot cross-compile (native extensions, `apt-get install` of
+compiled dependencies), set up a multi-node builder with one native
+node per architecture, or use per-arch CI runners that combine into a
+manifest list.
 
 **Why.** QEMU emulation tax is real:
 
@@ -346,7 +389,29 @@ per-arch CI runners that combine into a manifest list.
 For small images (single `apt-get install` + scripts), QEMU is fine —
 the build is I/O bound, not CPU bound.
 
-**How.** Option 1 — multi-node buildx builder (one builder, multiple
+**How.** Option 1 — cross-compile in a build stage that runs on the
+builder's native platform:
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+ARG TARGETOS TARGETARCH
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/server .
+
+FROM gcr.io/distroless/static-debian12
+COPY --from=build /out/server /server
+ENTRYPOINT ["/server"]
+```
+
+`TARGETOS` and `TARGETARCH` are predefined in the global scope but not
+inherited by stages, so the `ARG` line is required. Checked live (Buildx
+v0.38.0): a `FROM --platform=$BUILDPLATFORM` stage built for
+`linux/arm64` on an x86_64 host ran as `x86_64` with
+`TARGETARCH=arm64`.
+
+Option 2 — multi-node buildx builder (one builder, multiple
 backends):
 
 ```bash
@@ -361,7 +426,7 @@ docker buildx build --platform linux/amd64,linux/arm64 --push -t myimage .
 # amd64 stage runs on local node, arm64 stage runs on remote, in parallel
 ```
 
-Option 2 — separate CI jobs per arch, then merge into a manifest list:
+Option 3 — separate CI jobs per arch, then merge into a manifest list:
 
 ```yaml
 # .github/workflows/build.yml — sketched
@@ -399,7 +464,10 @@ GitHub now offers free `ubuntu-*-arm` native ARM runners for public
 repos; AWS Graviton, Oracle Ampere, and similar cover production-scale
 needs.
 
-Cite: [Multi-platform builds](https://docs.docker.com/build/building/multi-platform/),
+Cite: [Multi-platform builds — strategies](https://docs.docker.com/build/building/multi-platform/#strategies),
+[cross-compilation](https://docs.docker.com/build/building/multi-platform/#cross-compilation),
+[Dockerfile `FROM --platform`](https://docs.docker.com/reference/dockerfile/#from),
+[multi-platform build arguments](https://docs.docker.com/build/building/variables/#multi-platform-build-arguments),
 [buildx imagetools create](https://docs.docker.com/reference/cli/docker/buildx/imagetools/create/).
 
 **When NOT to apply.** Builds where QEMU overhead is small (tiny
@@ -533,12 +601,24 @@ or "unsupported media type." It's misdiagnosed as a build problem when
 it's actually a registry-compatibility problem.
 
 Note that *every* `buildx build` that pushes already carries an
-attestation: buildx adds a **min-mode provenance attestation by default**,
-and it is stored the same way — as an extra manifest in an image
-**index**, even for a single-platform image. So `mode=min` is not a
+attestation: the buildx CLI adds a **min-mode provenance attestation by
+default**, and it is stored the same way — as an extra manifest in an
+image **index**, even for a single-platform image. So `mode=min` is not a
 compatibility fallback; only turning attestations off avoids the index.
+SBOMs are never added by default; they need `--sbom=true` (`sbom: true`
+in `docker/build-push-action`).
 
-The fix has two paths depending on what your registry supports:
+**Attestations need an image index, which the classic image store
+cannot hold.** With the default `docker` driver on a daemon that still
+uses the classic store, an attested build fails (documented; not
+reproduced live, as the checked host used the containerd store), and
+`--load` of an attested image needs the containerd store on any driver.
+Push from a `docker-container`, `kubernetes` or `remote` builder, turn
+on the containerd image store, or opt out with
+`--provenance=false --sbom=false`.
+
+The registry problem has three fixes, depending on what your registry
+supports:
 
 1. **Set OCI media types explicitly.**
    Modern OCI-compliant registries (ghcr.io, Docker Hub, GitLab,
@@ -552,7 +632,27 @@ The fix has two paths depending on what your registry supports:
      .
    ```
 
-2. **Turn attestations off for that registry.** `--provenance=false`
+2. **Store attestations as plain manifests, not OCI artifacts.**
+   Since BuildKit v0.32.0, attestations are stored as OCI artifacts
+   when OCI media types are on: the attestation manifest gets an
+   `artifactType` (`application/vnd.docker.attestation.manifest.v1+json`),
+   an empty config and a `subject`. A registry or scanner that rejects
+   OCI artifact manifests needs the older form. Set `oci-artifact=false`
+   on the exporter, or `BUILDX_NO_DEFAULT_OCI_ARTIFACT=1` in the
+   environment, before you turn attestations off:
+
+   ```bash
+   docker buildx build \
+     --sbom=true --provenance=mode=max \
+     --output type=image,name=registry.example.com/myapp:${TAG},push=true,oci-mediatypes=true,oci-artifact=false \
+     .
+   ```
+
+   Checked live (Buildx v0.38.0, BuildKit v0.34.2, `type=oci` exporter):
+   the default attestation manifest had that `artifactType`;
+   `oci-artifact=false` or `BUILDX_NO_DEFAULT_OCI_ARTIFACT=1` removed it.
+
+3. **Turn attestations off for that registry.** `--provenance=false`
    (and no `--sbom`), or `BUILDX_NO_DEFAULT_ATTESTATIONS=1` in the
    environment, pushes a plain image manifest with no index. Sign the
    image out-of-band with cosign (SEC-022) if you still need a
@@ -568,11 +668,42 @@ The fix has two paths depending on what your registry supports:
 **`mode=max` records build-arg values.** Max-mode provenance includes
 the values of every build argument, and build arguments are visible in
 image history too — never pass a secret as `--build-arg` (DOCKER-010,
-SEC-006), least of all under `mode=max`.
+SEC-006), least of all under `mode=max`. `docker/build-push-action`
+(v4+) adds provenance by default with a different level than the CLI:
+**`mode=max` for a public repository** and `mode=min` for a private
+one, so a public repo publishes its build-arg values with no flag set.
+A private repo must set `provenance: mode=max` for the fuller record.
+The action adds no attestations with `load: true`, the `docker`
+exporter, or `BUILDX_NO_DEFAULT_ATTESTATIONS` set.
+
+**The SBOM scans only the final stage.** Build-time dependencies in
+earlier stages (or a `FROM scratch` final stage) are missing from it.
+Declare `ARG BUILDKIT_SBOM_SCAN_STAGE=true` in each stage to scan (and
+`ARG BUILDKIT_SBOM_SCAN_CONTEXT=true` for the build context). Passing
+either only as `--build-arg`, without the `ARG`, has no effect:
+
+```dockerfile
+FROM alpine AS build
+ARG BUILDKIT_SBOM_SCAN_STAGE=true
+RUN apk add --no-cache build-base && make
+
+FROM scratch
+COPY --from=build /out/app /app
+```
+
+Checked live (Buildx v0.38.0, `--sbom=true` to a local output): with
+no `ARG` and with `--build-arg` only, only `sbom.spdx.json` was written;
+with the `ARG` declared, `sbom-build.spdx.json` for the build stage was
+written too.
 
 Cite: [Build attestations](https://docs.docker.com/build/metadata/attestations/),
+[driver and image store support](https://docs.docker.com/build/metadata/attestations/#driver-and-image-store-support),
+[attestations as OCI artifacts](https://docs.docker.com/build/metadata/attestations/#attestations-as-oci-artifacts),
+[SBOM — scan stages](https://docs.docker.com/build/metadata/attestations/sbom/#scan-stages),
 [SLSA provenance — max](https://docs.docker.com/build/metadata/attestations/slsa-provenance/#max),
-[build variables — BUILDX_NO_DEFAULT_ATTESTATIONS](https://docs.docker.com/build/building/variables/#buildx_no_default_attestations).
+[attestations with GitHub Actions](https://docs.docker.com/build/ci/github-actions/attestations/),
+[build variables — BUILDX_NO_DEFAULT_ATTESTATIONS](https://docs.docker.com/build/building/variables/#buildx_no_default_attestations),
+[BUILDX_NO_DEFAULT_OCI_ARTIFACT](https://docs.docker.com/build/building/variables/#buildx_no_default_oci_artifact).
 
 **How.** Decision: do you control the registry?
 
@@ -582,13 +713,12 @@ Cite: [Build attestations](https://docs.docker.com/build/metadata/attestations/)
 
   ```bash
   docker buildx imagetools inspect ghcr.io/myorg/myapp:${TAG} --raw \
-    | jq '.manifests[] | {mediaType, digest, "platform.architecture": .platform.architecture, "annotations.in-toto": .annotations."in-toto.io/predicate-type"}'
+    | jq '.manifests[] | {mediaType, digest, arch: .platform.architecture, type: .annotations."vnd.docker.reference.type"}'
   ```
 
-  You should see entries with `mediaType:
-  application/vnd.oci.image.manifest.v1+json` and an `in-toto.io/predicate-type`
-  annotation for the attestations. If they're missing, the registry
-  stripped them.
+  You should see one entry per platform plus, for each, an entry with
+  `type: "attestation-manifest"` (platform `unknown/unknown`). If those
+  are missing, the registry stripped them.
 
 BUILDX-008 is the "how to actually push attestations without breaking
 the registry" detail; for the broader signing + SBOM workflow (cosign,
@@ -597,7 +727,7 @@ syft, sigstore keyless), reach for the dedicated tooling docs.
 **When NOT to apply.**
 
 - Projects with no supply-chain threat model — `mode=max` produces large attestations that nobody reads; the default min-mode provenance is enough until there's a reason.
-- Single-arch builds being loaded into the local daemon (`--load`) instead of pushed — the daemon's image store handles attestations differently, and you mostly don't care about attestations for local-only images.
+- Local-only images loaded with `--load` — attestations matter for what you publish. Loading an attested image needs the containerd image store; on the classic store, build with `--provenance=false --sbom=false`.
 - Registries that genuinely refuse attestations entirely (some air-gapped self-hosted setups) — disable them (`--provenance=false`) and sign the image out-of-band with cosign instead. The cosign signature lands in a separate ref, sidestepping the manifest-index issue.
 
 ## BUILDX-009 — Use `bake` matrix targets + composable attributes for multi-variant builds
@@ -637,11 +767,16 @@ rule is specifically about the matrix/composable features.
 
 ---
 
-## BUILDX-010 — Pin the Docker GitHub Actions by commit SHA
+## BUILDX-010 — Pin the Docker GitHub Actions by commit SHA, and the Buildx/BuildKit they install
 
 **What.** Pin `docker/setup-buildx-action`, `docker/build-push-action`,
 and `docker/bake-action` (current majors v4 / v7 / v7) to a full commit
-SHA, not a floating `@v7` tag.
+SHA, not a floating `@v7` tag. The action SHA pins only the action: by
+default `setup-buildx-action` installs the latest Buildx and the latest
+BuildKit release. When the build depends on a minimum feature version
+(BUILDX-011 build policies, `reset=true` local cache export in BUILDX-001,
+OCI-artifact attestations in BUILDX-008), also pin Buildx with
+`version:` and BuildKit with `driver-opts: image=moby/buildkit:<tag>`.
 
 **Why.** A version tag is mutable — a compromised or hijacked tag runs
 attacker-controlled code in your build with registry credentials in
@@ -654,12 +789,19 @@ the pin doubles as a floor.
 
 ```yaml
 - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+  with:
+    version: v0.38.0                          # Buildx (the client)
+    driver-opts: image=moby/buildkit:v0.34.2  # BuildKit (the builder)
 - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
 ```
 
 Resolve the SHA with
 `gh api repos/docker/build-push-action/git/refs/tags/v7.0.0 --jq .object.sha`,
-and let Dependabot/Renovate bump the SHA with the version comment.
+and let Dependabot/Renovate bump the SHA with the version comment. Pin
+the BuildKit image by digest (`moby/buildkit:v0.34.2@sha256:...`) where
+you can.
+
+Cite: [Configure your builder — version pinning](https://docs.docker.com/build/ci/github-actions/configure-builder/#version-pinning).
 
 **When NOT to apply.** Nothing real for CI pipelines — always pin. A
 throwaway local experiment that never runs in CI can float.
@@ -728,5 +870,183 @@ experimental, so its input fields and flags can change (the strict-mode
 behavior above already differs from the docs). Pin the buildx version in
 CI before relying on it (BUILDX-010). Local exploratory builds can rely on
 auto-loading alone.
+
+---
+
+## BUILDX-012 — Omit `cache-to: type=gha` in workflows with read-only cache access
+
+**What.** Workflows triggered by `issue_comment`, `pull_request_target`,
+or `pull_request` with `types: [closed]` (on merge) run in the
+default-branch context with **read-only** Actions cache access by
+default. In those workflows keep `cache-from: type=gha`, omit
+`cache-to`, and fill the cache from a workflow that has write access,
+such as a `push` workflow on the default branch. Do not hide the
+failure with `ignore-error=true`.
+
+**Why.** The export fails with `failed to reserve cache` "even after the
+image has been built and pushed", so the job goes red after the publish
+happened. `ignore-error=true` "suppresses all cache export errors, not
+only access errors" and still saves nothing, so the cache never fills
+and real export errors on other workflows go silent too. Only the
+caches of the current branch, the base branch and the default branch
+are readable, so a default-branch `push` workflow is the cache every
+other run can use. Granting write access to untrusted triggers through
+GitHub's `cache-mode` setting is workflow policy (repo-best-practices)
+and opens cache poisoning.
+
+**How.**
+
+```yaml
+# .github/workflows/pr-comment-build.yml — triggered by issue_comment
+- uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+  with:
+    cache-from: type=gha
+    # no cache-to: this trigger has read-only cache access
+
+# .github/workflows/build.yml — on: push: branches: [main]
+- uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+  with:
+    cache-from: type=gha
+    cache-to: type=gha,mode=max
+```
+
+For builds after a merge, trigger on `push` to the target branch instead
+of `pull_request` with `types: [closed]`.
+
+Cite: [GitHub Actions cache — cache write restrictions](https://docs.docker.com/build/ci/github-actions/cache/#cache-write-restrictions),
+[GitHub Actions cache backend — scope](https://docs.docker.com/build/cache/backends/gha/#scope).
+
+**When NOT to apply.** Regular `pull_request` runs on a merge ref and
+default-branch `push` runs, which keep read-write cache access. Workflows
+that don't use `type=gha`.
+
+---
+
+## BUILDX-013 — Set `context: .` in build-push-action when earlier steps generate files
+
+**What.** Without a `context` input, `docker/build-push-action` builds
+from the **Git context** of the ref that triggered the workflow:
+BuildKit fetches the repository at that ref itself. Files that earlier
+steps generated or changed (codegen, version stamping, downloaded
+artifacts, a built frontend) are ignored. When the build needs them,
+check out the repository and set `context: .`.
+
+**Why.** "Changes to files made by earlier workflow steps are ignored
+because the build uses files from Git." The build succeeds, and the image
+silently ships stale or missing generated files. The action's source
+falls back to the Git context when `context` is empty
+(`src/context.ts`: `context: ... || defaultContext`, with
+`defaultContext = new Build().gitContext()`).
+
+**How.**
+
+```yaml
+steps:
+  - uses: actions/checkout@<sha> # vX
+  - run: make generate            # writes files the Dockerfile COPYs
+  - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+    with:
+      context: .                  # build from the workspace, not from Git
+      push: ${{ github.event_name != 'pull_request' }}
+      tags: ${{ steps.meta.outputs.tags }}
+```
+
+Cite: [GitHub Actions — set up your workflow](https://docs.docker.com/build/ci/github-actions/#set-up-your-github-actions-workflow).
+
+**When NOT to apply.** Builds that use only committed files. There the
+Git context is the better default: it needs no checkout step and builds
+exactly the committed tree.
+
+---
+
+## BUILDX-014 — On `pull_request`, build but don't log in or push
+
+**What.** In a workflow that runs on both `push` and `pull_request`,
+gate `docker/login-action` with `if: github.event_name != 'pull_request'`
+and set `push: ${{ github.event_name != 'pull_request' }}` on the build
+step. Pull requests still build the image (the Dockerfile is tested),
+but they need no registry secrets and publish nothing.
+
+**Why.** Pull-request builds that log in fail on fork PRs, which get no
+repository secrets. A PR build that pushes publishes an image built from
+unreviewed code to your registry, and a login step puts registry
+credentials in scope for that code. Docker's own workflows use this
+pattern: "Pull-request builds skip signing in to Docker Hub and pushing
+the image, so they don't require registry secrets, including for pull
+requests from forks."
+
+**How.**
+
+```yaml
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to the registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@<sha> # vX
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+```
+
+Cite: [GitHub Actions — set up your workflow](https://docs.docker.com/build/ci/github-actions/#set-up-your-github-actions-workflow),
+[manage tags and labels](https://docs.docker.com/build/ci/github-actions/manage-tags-labels/).
+
+**When NOT to apply.** Workflows that never run on `pull_request`. A
+deliberate preview-image flow for same-repo PRs, pushed to a separate
+repository with its own credentials and never from a fork.
+
+---
+
+## BUILDX-015 — Copy multi-platform images between registries with `buildx imagetools create`
+
+**What.** To mirror or promote a multi-platform image to another
+registry or tag, use `docker buildx imagetools create --tag <dst> <src>`.
+It copies the whole image index (every platform and its attestations)
+registry to registry. Don't `docker pull` + `docker tag` + `docker push`.
+
+**Why.** `docker pull` fetches content only for the host platform. On
+the containerd image store the other platforms are kept as index
+metadata with no content, so a re-push cannot republish them. The second
+registry ends up with a single-arch image without attestations, which
+hosts of the other architectures cannot pull. Checked live (Docker 29.9.0, containerd store): `alpine:latest`
+lists 16 `Platform:` entries in `imagetools inspect`. After a pull,
+`docker image ls --tree` showed content only for `linux/amd64`, and 0B
+for every other platform.
+
+**How.**
+
+```bash
+docker buildx imagetools create \
+  --tag registry.example.com/mirror/myapp:1.4.2 \
+  ghcr.io/myorg/myapp:1.4.2
+
+# Verify that every platform arrived
+docker buildx imagetools inspect registry.example.com/mirror/myapp:1.4.2
+```
+
+In GitHub Actions, push once with `docker/build-push-action`, then run
+`imagetools create` in a later step, after a login to both registries.
+
+Cite: [Copy image between registries with GitHub Actions](https://docs.docker.com/build/ci/github-actions/copy-image-registries/),
+[buildx imagetools create](https://docs.docker.com/reference/cli/docker/buildx/imagetools/create/).
+
+**When NOT to apply.** Single-platform images with no attestations,
+where pull/tag/push copies everything there is. Copies between
+registries you don't have credentials for on both sides at once.
+Prefer `build-push-action` with several `tags:` across registries
+when you are building anyway.
 
 ---

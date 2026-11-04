@@ -5,29 +5,41 @@
 
 - COMPOSE-001 — Use `depends_on` with `condition: service_healthy`
 - COMPOSE-002 — Pick named volumes vs bind mounts deliberately
-- COMPOSE-003 — Use `env_file` for secrets-adjacent values
+- COMPOSE-003 — Use `env_file` for non-secret, per-environment config
 - COMPOSE-004 — Gate optional services with `profiles`
 - COMPOSE-005 — Commit `compose.override.yml` as the shared dev overlay
+- COMPOSE-035 — Override files append to lists; use `!override` / `!reset` to replace
 - COMPOSE-006 — Remove the top-level `version:` key
+- COMPOSE-033 — Choose the Compose project name deliberately
+- COMPOSE-039 — An explicit `name:` on a volume, network or config is global
 - COMPOSE-007 — Define explicit networks for multi-service apps
+- COMPOSE-036 — Address services as `<service>:<container port>`; never hard-code IPs
+- COMPOSE-037 — Keep services off `network_mode: host` and `network_mode: bridge`
+- COMPOSE-041 — Publish only the ports the host needs, bound to `127.0.0.1` unless exposure is intended
 - COMPOSE-009 — Use `restart: unless-stopped` for long-lived services
 - COMPOSE-010 — Use YAML anchors / `extends` instead of duplicating service definitions
 - COMPOSE-011 — Healthchecks belong on the services that need to be waited on
-- COMPOSE-012 — Use `service_completed_successfully` for one-shot init containers
+- COMPOSE-012 — Run init work as `pre_start` steps or a `service_completed_successfully` one-shot
 - COMPOSE-013 — Postgres: mount the data volume at the path for your major version
 - COMPOSE-014 — Use a local-only healthcheck endpoint for reverse proxies
 - COMPOSE-015 — Use `develop.watch` for hot-reload, not bare bind mounts
 - COMPOSE-016 — Use the `configs:` block for non-secret configuration files
 - COMPOSE-017 — Set `pull_policy` explicitly for shared / production stacks
+- COMPOSE-034 — Declare inter-service base images with `build.additional_contexts`
 - COMPOSE-018 — Know the `--env-file` and `.env` precedence
-- COMPOSE-023 — Set `security_opt: ["no-new-privileges:true"]` on production services
+- COMPOSE-031 — Mark required interpolated variables with `${VAR:?message}`
+- COMPOSE-032 — Escape literal `$` in compose and env files
+- COMPOSE-023 — Set `no-new-privileges` and `cap_drop: [ALL]` on production services
 - COMPOSE-026 — Configure `logging:` with size + rotation on long-lived services
+- COMPOSE-038 — Set memory, CPU and pids limits on long-lived services on shared hosts
+- COMPOSE-040 — Put container labels under `labels:`, not `deploy.labels`
 - COMPOSE-019 — Use `include:` for modular compose stacks
 - COMPOSE-020 — Use the `gpus:` shorthand for GPU services
 - COMPOSE-021 — Use the top-level `models:` block for AI model dependencies
 - COMPOSE-027 — Use `post_start` / `pre_stop` lifecycle hooks for privileged setup/teardown
-- COMPOSE-028 — Require Compose ≥2.40.2 (or v5) before using `include:` with OCI/registry sources
+- COMPOSE-028 — Pin remote compose sources by digest, review the resolved model, and require Compose ≥2.40.2
 - COMPOSE-029 — Set `init: true` on services whose image has no init process
+- COMPOSE-042 — Raise `stop_grace_period` for services that flush on shutdown
 - COMPOSE-030 — Validate the merged model in CI with `docker compose config --quiet`
 <!-- /toc -->
 
@@ -160,21 +172,63 @@ volumes:
   api_cache:
 ```
 
+Two short-syntax traps for bind mounts (both checked on Compose v5.6.0):
+
+- **Start a relative source with `./` or `../`.** Without it Compose reads
+  the source as a named volume: `missing.conf:/etc/app.conf` fails with
+  `service "s" refers to undefined volume missing.conf`.
+- **A missing source becomes a root-owned directory.** The short syntax
+  creates any missing host path as a directory (`drwxr-xr-x root root`),
+  so a single-file mount of a file that doesn't exist yet hands the app an
+  empty directory instead of an error. For a source that must exist, use
+  the long syntax with `create_host_path: false`; a missing source then
+  fails with `bind source path does not exist`. For config files,
+  `configs:` (COMPOSE-016) is often the better fit.
+
+```yaml
+    volumes:
+      - type: bind
+        source: ./nginx/default.conf
+        target: /etc/nginx/conf.d/default.conf
+        read_only: true
+        bind:
+          create_host_path: false   # missing file is an error, not a new directory
+```
+
+Cite: [compose reference — volumes](https://docs.docker.com/reference/compose-file/services/#volumes).
+
 **When NOT to apply.** When you genuinely need to inspect database files
 from the host (rare and usually a smell — use a DB client instead).
 
 ---
 
-## COMPOSE-003 — Use `env_file` for secrets-adjacent values
+## COMPOSE-003 — Use `env_file` for non-secret, per-environment config
 
-**What.** Put environment variables in a separate file referenced via
-`env_file`, especially anything secret or environment-dependent. Don't
-inline them in `environment:`.
+**What.** Put non-secret configuration that changes between environments
+(log level, feature flags, hostnames) in a file referenced by
+`env_file:` rather than inline in `environment:`. Passwords, tokens and
+keys go in neither: pass them as Compose secrets (SEC-009).
 
-**Why.** Inline `environment:` values live in the checked-in `compose.yml`.
-`env_file` references can point at a `.env` (gitignored) for secrets or
-`.env.example` (committed) for documentation. This separates *what the
-service needs* from *what the value is*.
+**Why.** Docker's guidance is explicit: "Don't use environment variables
+to pass sensitive information, such as passwords, in to your containers.
+Use secrets instead." Moving a credential into an `env_file` still hands
+it to the container as an environment variable. For non-secret values,
+`env_file` separates *what the service needs* from *what the value is*
+in each environment.
+
+Three precedence rules decide which value wins, and each can silently
+give the wrong one:
+
+1. `environment:` overrides `env_file` for the same name, "even if those
+   values are empty or undefined". A leftover `X: ""` in compose.yaml
+   masks the file's `X=fromfile` (checked on Compose v5.6.0).
+2. An `env_file` list is read top-down, and a later file overrides an
+   earlier one.
+3. The image's Dockerfile `ENV` has the lowest precedence; any
+   `environment:` or `env_file` entry replaces it.
+
+A listed file that doesn't exist is an error (`env file .../missing.env
+not found`, rc=1), so a developer-local file needs `required: false`.
 
 **How.**
 
@@ -183,27 +237,33 @@ services:
   api:
     build: .
     env_file:
-      - .env                # gitignored, real values
-      - .env.shared         # committed, shared defaults
-    environment:
-      LOG_LEVEL: info       # ok to inline if truly non-secret and stable
+      - .env.shared               # committed, non-secret defaults
+      - path: ./.env.local        # gitignored, per-developer overrides
+        required: false           # skipped when missing instead of failing
+    secrets:
+      - db_password               # credentials go through SEC-009, not env_file
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
 ```
 
 ```
-# .env.example (committed)
-DATABASE_URL=postgres://postgres:postgres@postgres:5432/app
-OPENAI_API_KEY=replace-me
+# .env.shared (committed)
+LOG_LEVEL=info
+FEATURE_NEW_CHECKOUT=false
+DB_HOST=postgres
 ```
 
-```
-# .env (gitignored, copied from .env.example by each contributor)
-DATABASE_URL=postgres://postgres:postgres@postgres:5432/app
-OPENAI_API_KEY=sk-real-value
-```
+Cite: [Set environment variables](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/),
+[environment variable precedence](https://docs.docker.com/compose/how-tos/environment-variables/envvars-precedence/),
+[compose reference — env_file](https://docs.docker.com/reference/compose-file/services/#env_file).
 
-**When NOT to apply.** Single-value, truly non-secret config can stay
-inline — it reads better than indirection through a file. But `env_file`
-scales better as the count grows.
+**When NOT to apply.** A single stable, non-secret value can stay inline
+in `environment:`; it reads better than a separate file. An image that
+reads a credential only from an environment variable (no `_FILE`
+variant) is a documented exception to SEC-009. It is not a reason to
+put the value in a committed file.
 
 ---
 
@@ -245,6 +305,17 @@ docker compose up                          # api + postgres only
 docker compose --profile debug up          # adds jaeger + mailhog
 docker compose --profile cache --profile debug up   # everything
 ```
+
+**Dependencies don't cross into an inactive profile.** A `depends_on`,
+`links`, `extends` or `service:` reference to a service whose profile is
+not active does not enable that service. Compose fails instead:
+`service "b" depends on undefined service "a": invalid compose project`
+(rc=1 on Compose v5.6.0). Put a service and its dependencies in a shared
+profile, leave the dependency without a profile, or mark the edge
+`required: false` (COMPOSE-001), which let the same project start.
+
+Cite: [Using profiles with Compose](https://docs.docker.com/compose/how-tos/profiles/),
+[compose reference — profiles](https://docs.docker.com/reference/compose-file/profiles/).
 
 **When NOT to apply.** When the variations are large enough to deserve
 their own `compose.override.yml` or `compose.prod.yml`. Profiles are for
@@ -320,6 +391,52 @@ there is nothing to put in an override; don't create an empty one.
 
 ---
 
+## COMPOSE-035 — Override files append to lists; use `!override` / `!reset` to replace
+
+**What.** When Compose merges files (several `-f` flags, or the
+auto-loaded `compose.override.yaml`), know which fields append and which
+replace. To replace a list in an override, tag it `!override`; to clear
+it, use `!reset []`.
+
+**Why.** An override that looks like it *changes* a value often *adds*
+one:
+
+- `ports`, `expose`, `external_links`, `dns`, `dns_search` and `tmpfs`
+  are concatenated.
+- `volumes`, `secrets` and `configs` merge by `target`; `ports` merge by
+  `{ip, target, published, protocol}`. An entry with a new key is
+  appended.
+- `command`, `entrypoint` and `healthcheck.test` are replaced by the
+  last file.
+- Relative paths in every file resolve from the directory of the first
+  `-f` file, not from the override's own directory.
+
+Checked on Compose v5.6.0: a base `ports: ["8080:80"]` plus an override
+`ports: ["8443:443"]` published both ports, while the override's
+`command` replaced the base one. With `ports: !override ["8443:443"]`
+only 8443 was published.
+
+**How.**
+
+```yaml
+# compose.prod.yaml
+services:
+  web:
+    ports: !override
+      - "8443:443"      # replaces the base list instead of adding to it
+    volumes: !reset []  # drops the base file's dev bind mounts
+```
+
+Review the merged result with `docker compose -f … config` (COMPOSE-030).
+
+Cite: [Merge Compose files](https://docs.docker.com/compose/how-tos/multiple-compose-files/merge/),
+[compose-file merge reference](https://docs.docker.com/reference/compose-file/merge/).
+
+**When NOT to apply.** When adding to the base list is what you want,
+such as an extra debug port in the dev overlay, plain merge is correct.
+
+---
+
 ## COMPOSE-006 — Remove the top-level `version:` key
 
 **What.** Compose v2 ignores the top-level `version:` key. Files starting
@@ -352,6 +469,84 @@ services:
 **When NOT to apply.** When you genuinely need backward compatibility with
 the deprecated Python `docker-compose` v1 binary. That binary is end-of-life
 — migrate instead.
+
+---
+
+## COMPOSE-033 — Choose the Compose project name deliberately
+
+**What.** The project name prefixes every container, network and volume
+Compose creates. By default it is the project directory's basename,
+lowercased and stripped of characters a project name can't contain.
+On a shared CI runner, set a unique name per build with `-p` or
+`COMPOSE_PROJECT_NAME`. Set a top-level `name:` only when the stack must
+keep the same volumes whatever directory it is checked out in.
+
+**Why.** Checked on Compose v5.6.0: a directory named `My App` gave
+project `myapp` and network `myapp_default`. Two CI jobs on the same
+runner from directories with the same name share containers, networks
+and volumes; Docker's docs recommend "setting the project name to a
+unique build number" to prevent that interference. The opposite
+mistake: a fixed `name:` makes every worktree and clone share one set of
+containers and volumes, so `docker compose down -v` in one wipes the
+database of another. Without `name:`, a re-clone into a differently
+named directory starts with fresh, empty volumes.
+
+**How.**
+
+```bash
+# CI: one isolated project per run, torn down with its volumes
+docker compose -p "ci-${GITHUB_RUN_ID}" up -d --wait
+docker compose -p "ci-${GITHUB_RUN_ID}" down -v
+```
+
+```yaml
+# Only when the data must follow the stack, not the checkout directory
+name: billing
+services:
+  db:
+    image: postgres:18-alpine
+```
+
+Cite: [Specify a project name](https://docs.docker.com/compose/how-tos/project-name/),
+[compose reference — name](https://docs.docker.com/reference/compose-file/version-and-name/),
+[COMPOSE_PROJECT_NAME](https://docs.docker.com/compose/how-tos/environment-variables/envvars/#compose_project_name).
+
+**When NOT to apply.** One developer and one checkout per stack: the
+default directory-based name is fine.
+
+---
+
+## COMPOSE-039 — An explicit `name:` on a volume, network or config is global
+
+**What.** Don't set `name:` on a top-level volume, network or config
+unless the resource is meant to be shared across projects.
+
+**Why.** A `name:` "is used as is and is not scoped with the stack
+name". Checked on Compose v5.6.0: projects `bpc47a` and `bpc47b` both
+resolved a volume declared `data: {name: bpc_shared_data}` to the same
+`bpc_shared_data` volume, while an unnamed `cache` volume became
+`bpc47a_cache` and `bpc47b_cache`. Two worktrees, branches or CI jobs
+with the first form write to one database volume.
+
+**How.**
+
+```yaml
+volumes:
+  pgdata: {}                     # becomes <project>_pgdata, isolated per project
+
+networks:
+  proxy:
+    name: shared-proxy           # deliberately shared with other projects
+    external: true               # created outside this project
+```
+
+Cite: [compose reference — volumes name](https://docs.docker.com/reference/compose-file/volumes/#name),
+[networks name](https://docs.docker.com/reference/compose-file/networks/#name),
+[configs](https://docs.docker.com/reference/compose-file/configs/).
+
+**When NOT to apply.** A resource that several projects share on
+purpose, such as a reverse-proxy network or an externally managed
+volume. Then name it and mark it `external: true` in the consumers.
 
 ---
 
@@ -404,6 +599,124 @@ complexity until it earns its keep.
 **When NOT to apply.** Single-service or trivial two-service compose files.
 Explicit networking is worth the cost once you have ≥3 services or any
 sensitive service that shouldn't be broadly reachable.
+
+---
+
+## COMPOSE-036 — Address services as `<service>:<container port>`; never hard-code IPs
+
+**What.** Services reach each other by service name and *container*
+port (`db:5432`), never by container IP and never by the published host
+port. Reach the host with
+`extra_hosts: ["host.docker.internal:host-gateway"]`, not a hard-coded
+address such as the default bridge gateway.
+
+**Why.** Docker assigns container IPs "dynamically from the network's
+subnet each time a container starts", so a hard-coded IP breaks after a
+restart or recreate. "Networked service-to-service communication uses
+the `CONTAINER_PORT`"; for `"8001:5432"`, other services use `db:5432`,
+and 8001 exists only on the host. When a peer is recreated, open
+connections to the old container are closed, and "it is each
+container's responsibility to detect this condition, look up the name
+again, and reconnect."
+
+**How.**
+
+```yaml
+services:
+  api:
+    environment:
+      DB_HOST: db               # service name, resolved by Compose DNS
+      DB_PORT: "5432"           # container port, not the published 8001
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # a process on the host
+  db:
+    image: postgres:18-alpine
+    ports: ["127.0.0.1:8001:5432"]            # for host tools only (COMPOSE-041)
+```
+
+Give the app a reconnect path (pool pre-ping, retry with backoff) so a
+recreated peer doesn't need an app restart.
+
+Cite: [Networking in Compose](https://docs.docker.com/compose/how-tos/networking/).
+
+**When NOT to apply.** Traffic from outside the Compose network, such as
+host tools or other machines, uses the published host port.
+
+---
+
+## COMPOSE-037 — Keep services off `network_mode: host` and `network_mode: bridge`
+
+**What.** Leave ordinary services on the project network. Use
+`network_mode: host` only for tools that need the host's network stack,
+and don't use `network_mode: bridge`.
+
+**Why.** With `host`, the container "shares the host's network stack":
+it can reach every port on the host and see host traffic. Port mapping
+and service-name DNS don't work. Any `ports:` on the service are dropped
+with only a warning. On Compose v5.6.0 `config` passed and `up` printed
+`Published ports are discarded when using host network mode`, then
+started the container (rc=0). So a reader who expects `18080:80` gets
+the app on host port 80 instead. `network_mode: bridge` puts the service
+on Docker's default bridge, where containers "cannot resolve each other
+by service name".
+
+**How.**
+
+```yaml
+services:
+  api:
+    build: .
+    ports: ["127.0.0.1:8000:8000"]   # project network + an explicit mapping
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    network_mode: host               # host metrics tool: needs the host stack
+```
+
+Cite: [Networking in Compose — network mode](https://docs.docker.com/compose/how-tos/networking/#change-the-network-mode),
+[compose reference — network_mode](https://docs.docker.com/reference/compose-file/services/#network_mode).
+
+**When NOT to apply.** System-level tools that need the host network,
+such as network monitors and node exporters, and high-throughput
+services where you have measured the NAT cost.
+
+---
+
+## COMPOSE-041 — Publish only the ports the host needs, bound to `127.0.0.1` unless exposure is intended
+
+**What.** Don't publish database, cache or queue ports: other services
+reach them over the project network without `ports:` (COMPOSE-036).
+Publish dev-only ports as `127.0.0.1:HOST:CONTAINER`. Use an unqualified
+mapping only for a service meant to be reachable from other machines.
+
+**Why.** "If you do not specify a host IP (such as `127.0.0.1`), Docker
+binds to all interfaces (`0.0.0.0`), bypassing host firewall rules."
+Checked: `ports: ["18081:8080"]` bound `0.0.0.0:18081`, while
+`"127.0.0.1:18082:8081"` bound `127.0.0.1:18082`. On a laptop on shared
+Wi-Fi or a VPS with a public IP, an unqualified Postgres or Redis
+mapping is reachable from the network, and ufw-style rules don't stop
+it.
+
+**How.**
+
+```yaml
+services:
+  web:
+    ports: ["443:8443"]               # public on purpose
+  postgres:
+    image: postgres:18-alpine
+    expose: ["5432"]                  # documentation only; nothing published
+  redis:
+    image: redis:7-alpine
+    ports: ["127.0.0.1:6379:6379"]    # dev access from the host only
+```
+
+The same applies to `docker run -p` in scripts.
+
+Cite: [compose reference — ports](https://docs.docker.com/reference/compose-file/services/#ports),
+[compose reference — expose](https://docs.docker.com/reference/compose-file/services/#expose).
+
+**When NOT to apply.** Services whose job is to accept outside traffic:
+the reverse proxy, a public API.
 
 ---
 
@@ -543,11 +856,17 @@ visibility (`docker compose ps` shows healthy/unhealthy state).
 
 ---
 
-## COMPOSE-012 — Use `service_completed_successfully` for one-shot init containers
+## COMPOSE-012 — Run init work as `pre_start` steps or a `service_completed_successfully` one-shot
 
-**What.** For services that run once and exit (migrations, schema setup,
-data seeding, config generation), use `restart: "no"` and gate downstream
-services with `condition: service_completed_successfully`.
+**What.** Setup that must finish before a service starts (migrations,
+schema setup, data seeding, volume ownership) has two forms:
+
+- **One service needs it:** declare it as `pre_start` steps on that
+  service (Compose ≥5.3.0). Docker's docs call this form "preferable"
+  for per-service setup.
+- **Several services need it, or it must be addressable on its own:** a
+  one-shot service with `restart: "no"`, and downstream services gated
+  with `condition: service_completed_successfully`.
 
 **Why.** Init containers don't fit the healthcheck model — they don't
 have a "healthy" steady state, they just need to *finish*.
@@ -596,10 +915,55 @@ restarting it after it exits; it does not stop `up` from starting it.
 The operation must therefore be idempotent: `alembic upgrade head`
 is; a seed script must use upserts or check for existing rows.
 
-Cite: [compose reference — depends_on](https://docs.docker.com/reference/compose-file/services/#depends_on),
-[compose up](https://docs.docker.com/reference/cli/docker/compose/up/).
+**`pre_start` for per-service setup.** Each step runs in its own
+ephemeral container (the service's image unless `image:` is set),
+after the service's `depends_on` conditions are met and before the
+service container starts. A non-zero exit stops the service and its
+dependents from starting. Steps join the service's networks and see its
+named volumes and bind mounts.
 
-**When NOT to apply.** Services that *do* run long enough to have a
+```yaml
+services:
+  api:
+    build: .
+    user: "1000:1000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - uploads:/data
+    pre_start:
+      - command: ["alembic", "upgrade", "head"]
+      - image: busybox:1.37
+        user: root                           # the service itself stays non-root
+        command: ["chown", "-R", "1000:1000", "/data"]
+
+volumes:
+  uploads:
+```
+
+Rerun behavior differs from the one-shot service. A step that succeeded
+is skipped on later `up` runs and when the container restarts under its
+`restart` policy. It runs again when its definition changes, when the
+last run failed, or when the service is recreated. Checked on Compose
+v5.6.0 with a step that appends a line to a volume: one line after the
+first `up -d`, still one after a second `up -d` and a `restart`, two
+after `up -d --force-recreate`. So steps must still be idempotent.
+
+Limits: a step runs once for the service, not once per replica, and
+can't see per-instance mounts (`tmpfs`, anonymous volumes). On v5.6.0
+its output appeared in neither the `up -d` output nor
+`docker compose logs`, so have a step print failures to somewhere you
+can read, or test it with a foreground `up`.
+
+Cite: [compose reference — depends_on](https://docs.docker.com/reference/compose-file/services/#depends_on),
+[compose up](https://docs.docker.com/reference/cli/docker/compose/up/),
+[Init containers](https://docs.docker.com/compose/how-tos/init-containers/),
+[compose reference — pre_start](https://docs.docker.com/reference/compose-file/services/#pre_start),
+[Compose v5.3.0 release](https://github.com/docker/compose/releases/tag/v5.3.0).
+
+**When NOT to apply.** On Compose older than 5.3.0, `pre_start` is not
+available; use the one-shot service. Services that *do* run long enough to have a
 meaningful healthy state — use `service_healthy` (COMPOSE-001) for those.
 Truly background sidecars use `service_started`.
 
@@ -839,7 +1203,33 @@ the container.
             command: ["kill", "-HUP", "1"]
 ```
 
-Cite: [compose-file develop — watch](https://docs.docker.com/reference/compose-file/develop/#watch).
+**Prerequisites and traps.**
+
+1. **The image needs `stat`, `mkdir` and `rmdir`, and the container
+   `USER` must be able to write the target.** When the Dockerfile drops
+   to a non-root user, copy the source with `COPY --chown=<user>` so
+   synced files can be updated. Minimal and distroless images can lack
+   the tools.
+2. **`ignore` patterns are relative to the rule's `path`**, not to the
+   project directory. Rules from the build context's `.dockerignore`
+   also apply.
+3. **Don't sync platform-native dependency directories.** Ignore
+   `node_modules/` and `.venv/` (uv's Docker guide ignores `.venv/`);
+   they can contain native code built for the host, and the container
+   installs its own on `rebuild`.
+4. **Quote `include` patterns that start with `*`.** An unquoted
+   leading `*` is a YAML alias.
+
+```yaml
+        - action: sync
+          path: .
+          target: /app
+          ignore:
+            - .venv/            # relative to path (.), not to the project directory
+```
+
+Cite: [compose-file develop — watch](https://docs.docker.com/reference/compose-file/develop/#watch),
+[uv in Docker — developing in a container](https://docs.astral.sh/uv/guides/integration/docker/#developing-in-a-container).
 
 **When NOT to apply.** When the app has no hot-reload mode and rebuild
 times are short — a plain `docker compose up --build` may be simpler.
@@ -969,6 +1359,47 @@ fine.
 
 ---
 
+## COMPOSE-034 — Declare inter-service base images with `build.additional_contexts`
+
+**What.** When service B's Dockerfile builds `FROM` an image that
+service A builds, declare it on B with
+`additional_contexts: {base: "service:a"}` and write `FROM base`. Don't
+rely on the `image:` name.
+
+**Why.** Compose v2 builds service images in parallel with BuildKit, and
+the docs say this "requires an explicit declaration". Checked on Compose
+v5.6.0: without it, B's `FROM bpc8-nbase:1` failed with `failed to
+resolve source metadata for docker.io/library/bpc8-nbase:1: ... not
+found`, even though A builds that tag. With `additional_contexts:
+{base: "service:a"}`, both images built (rc=0). The failure is the
+lucky case: if an older image with that name exists locally or in a
+registry, B quietly builds on the stale base.
+
+**How.**
+
+```yaml
+services:
+  base:
+    image: myorg/base:dev
+    build: ./base
+  api:
+    build:
+      context: ./api
+      additional_contexts:
+        base: "service:base"   # api/Dockerfile: FROM base
+```
+
+The alternative is one multi-stage Dockerfile with a `target:` per
+service, which shares layers without any cross-service reference.
+
+Cite: [Build dependent images](https://docs.docker.com/compose/how-tos/dependent-images/),
+[compose build — additional_contexts](https://docs.docker.com/reference/compose-file/build/#additional_contexts).
+
+**When NOT to apply.** A base image built by a separate pipeline and
+pulled by pinned tag or digest; it isn't built in this project.
+
+---
+
 ## COMPOSE-018 — Know the `--env-file` and `.env` precedence
 
 **What.** Compose has *two* unrelated `.env` mechanisms, and confusing
@@ -977,8 +1408,9 @@ them is a common source of "why isn't my variable picked up" debugging:
 1. **`.env` in the project directory** — substituted into the compose file at *parse time* (`${VAR}` in compose.yml). Auto-loaded.
 2. **`env_file:` in a service** — read by the *container* at runtime, into the service's environment. Not used for compose-file substitution.
 
-`--env-file FILE` (on the `docker compose` command line) changes which
-file feeds mechanism #1.
+`--env-file FILE` (on the `docker compose` command line) *replaces* the
+project `.env` for mechanism #1. When it is set, the project `.env` is not
+loaded at all.
 
 **Why.** Three real footguns:
 
@@ -986,8 +1418,13 @@ file feeds mechanism #1.
 2. **`--env-file` doesn't help containers.** It only changes the file used for compose-file substitution. Pass `env_file:` on the service to get values into the container.
 3. **Variable precedence** is not what most people guess. Highest to lowest:
    1. Variables set in the shell (`export FOO=bar; docker compose up`).
-   2. `--env-file FILE` on the command line.
-   3. `.env` file in the project directory.
+   2. The file given by `--env-file`.
+   3. Only when `--env-file` is not set: the `.env` file in the project directory.
+
+   So `--env-file` doesn't layer over `.env`; it replaces it. Checked
+   on Compose v5.6.0: with `.env` setting `A` and `B` and `ci.env` setting
+   only `B`, `--env-file ci.env` resolved `A` as unset and `B` from
+   `ci.env`. A stale `export`ed shell variable beats both files silently.
 
 **How.** Make the layering explicit:
 
@@ -1018,7 +1455,14 @@ docker compose --env-file .env.staging up
 LOG_LEVEL=warn DATABASE_URL=... docker compose up
 ```
 
-Cite: [compose env-file docs](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/).
+To see what Compose actually resolved, run `docker compose config` (the
+interpolated model) or `docker compose config --environment`, which lists
+the variables available for interpolation. That list includes the whole
+shell environment, so keep it out of CI logs and tickets: it can expose
+secrets.
+
+Cite: [compose env-file docs](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/),
+[variable interpolation](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/).
 
 **Two-file convention that works:**
 
@@ -1031,16 +1475,111 @@ files explicitly (`.env.example`) helps onboarding.
 
 ---
 
-## COMPOSE-023 — Set `security_opt: ["no-new-privileges:true"]` on production services
+## COMPOSE-031 — Mark required interpolated variables with `${VAR:?message}`
 
-**What.** Add the `no-new-privileges` security option to every service
-that doesn't have a documented reason to drop it:
+**What.** In compose files, write `${VAR:?message}` for every value the
+stack can't run without (image tags, ports, volume sources, `include`
+paths), and `${VAR:-default}` for optional ones. Don't write a bare
+`${VAR}`.
+
+**Why.** An unset variable becomes an empty string with only a warning.
+Checked on Compose v5.6.0: `image: "postgres:${PGV}"` with `PGV` unset
+printed `The "PGV" variable is not set. Defaulting to a blank string.`,
+resolved to `postgres:`, and exited 0. With `${PGV:?set PGV}` it failed
+with `required variable PGV is missing a value: set PGV` (rc=1), also
+when `PGV` was set but empty, because the colon forms treat empty as
+missing. A bare `- DEBUG` entry in `environment:` (no `=` and no `${}`)
+forwards the shell's value and gives no warning at all when it is unset.
+
+**How.**
+
+```yaml
+include:
+  - ${INFRA_PATH:?set INFRA_PATH to the infra checkout}/compose.yaml
+
+services:
+  api:
+    image: "ghcr.io/myorg/api:${API_TAG:?set API_TAG}"
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+```
+
+`docker compose config --quiet` in CI (COMPOSE-030) turns a missing
+required variable into a failed job instead of a broken deploy.
+
+Cite: [compose reference — interpolation](https://docs.docker.com/reference/compose-file/interpolation/),
+[variable interpolation](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/).
+
+**When NOT to apply.** When an empty value is valid and intended, use
+the colon-less forms: `${VAR-default}` falls back only when `VAR` is
+unset, and `${VAR?message}` fails only when it is unset.
+
+---
+
+## COMPOSE-032 — Escape literal `$` in compose and env files
+
+**What.** Write `$$` for a literal dollar sign in a compose file. This
+includes variables that the *container* should expand in `command`,
+`entrypoint` and `healthcheck`. In `.env` and `env_file` files,
+single-quote values that contain `$`, or set `format: raw` on the
+`env_file` entry.
+
+**Why.** Compose interpolates `$` everywhere in the compose file, and in
+unquoted and double-quoted env-file values. Checked on Compose v5.6.0
+with an env file holding `P=ab$cd`, `Q='ab$cd'` and `R="ab$cd"`: Compose
+warned `The "cd" variable is not set`, `P` and `R` arrived as `ab`, and
+only `Q` stayed `ab$cd`. A password with a `$` in it is silently cut
+short. In a healthcheck, `echo $HOME` was filled with the *host's* home
+directory at parse time, while `$$HOME` was left for the container's
+shell. `command` doesn't run through the image's shell, so
+container-side expansion also needs an explicit `sh -c`.
+
+**How.**
+
+```yaml
+services:
+  db:
+    image: postgres:18-alpine
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+  worker:
+    build: .
+    command: ["sh", "-c", "exec worker --queue \"$$QUEUE_NAME\""]
+    env_file:
+      - path: ./worker.env
+        format: raw          # values passed as-is: no interpolation
+```
+
+```
+# app.env (default format)
+SIGNING_SALT='ab$cd'   # single quotes keep the $ literal
+```
+
+With `format: raw`, quotes are part of the value too (`Q='ab$cd'`
+arrived with its quotes in the same check), so leave raw values
+unquoted.
+
+Cite: [compose reference — interpolation](https://docs.docker.com/reference/compose-file/interpolation/),
+[variable interpolation — .env syntax](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/),
+[compose reference — env_file format](https://docs.docker.com/reference/compose-file/services/#env_file).
+
+**When NOT to apply.** When you *want* a host value substituted at parse
+time; that is what `${VAR}` is for (COMPOSE-031).
+
+---
+
+## COMPOSE-023 — Set `no-new-privileges` and `cap_drop: [ALL]` on production services
+
+**What.** Add the `no-new-privileges` security option and drop every
+Linux capability, adding back only what the process needs, on every
+service that doesn't have a documented reason to skip them:
 
 ```yaml
 services:
   api:
     security_opt:
       - "no-new-privileges:true"
+    cap_drop: [ALL]
 ```
 
 This sets the kernel's `PR_SET_NO_NEW_PRIVS` bit on the container's
@@ -1063,6 +1602,14 @@ need `setuid` transitions at runtime. It's also the foundation
 Kubernetes' `securityContext.allowPrivilegeEscalation: false` relies
 on; compose-level setups should match that posture.
 
+Docker's default capability set is more than most apps use. Docker's
+security docs: "The best practice for users would be to remove all
+capabilities except those explicitly required for their processes."
+With `cap_drop: [ALL]`, even a process running as root in the container
+can't chown files, bind ports below 1024 or bypass file permissions. A
+live check showed `chown` failing with `Operation not permitted` under
+`--cap-drop ALL` and succeeding by default.
+
 A useful mental model: this is the "lock the door even though you also
 have an alarm" rule. DOCKER-005 (non-root user) is the alarm;
 `no-new-privileges` is the deadbolt. The combination is much stronger
@@ -1080,7 +1627,8 @@ services:
     security_opt:
       - "no-new-privileges:true"  # COMPOSE-023 — can't escalate even if setuid is reachable
     cap_drop:
-      - ALL                        # related — drop all caps then add back what's needed
+      - ALL                        # COMPOSE-023 — drop every capability
+    # cap_add: [NET_BIND_SERVICE]  # add back only what the process needs
     read_only: true                # related — read-only rootfs
     tmpfs:
       - /tmp
@@ -1107,17 +1655,24 @@ services:
     user: "10001:10001"
 ```
 
-Note the syntax: `security_opt` is a list of strings, and the colon
-between key and value (`no-new-privileges:true`) is part of the
-string — *not* YAML key:value. Quote the whole entry to keep the YAML
-parser from getting clever.
+Note the syntax: `security_opt` is a list of strings. `no-new-privileges`,
+`no-new-privileges=true` and `no-new-privileges:true` are equivalent;
+all three set `NoNewPrivs: 1` in a live check. This file uses the colon
+form as house style. Quote it so YAML doesn't read it as a key:value.
+Reviewers and containers-audit must accept all three spellings.
 
-**When NOT to apply.** Two real cases:
+Cite: [compose reference — security_opt](https://docs.docker.com/reference/compose-file/services/#security_opt),
+[compose reference — cap_drop](https://docs.docker.com/reference/compose-file/services/#cap_drop),
+[Docker security — kernel capabilities](https://docs.docker.com/engine/security/#linux-kernel-capabilities).
+
+**When NOT to apply.** Three real cases:
 
 1. **Services that genuinely need `setuid` transitions at runtime.** Rare — usually only true for containers running traditional Unix daemons that drop privileges via `setuid` (some legacy MTAs, certain sshd configurations). If you don't know whether your service needs it, it almost certainly doesn't.
 2. **Dev containers that run `sudo` interactively.** A devcontainer where the human user invokes `sudo` from a shell needs privilege escalation to work. Omit `no-new-privileges` *only* for dev containers; never for production services.
 
-In both cases, leave a comment in the compose file explaining the
+3. **`cap_drop: [ALL]` on images whose entrypoint starts as root, then chowns or switches user.** Add back what the entrypoint needs; don't skip the drop. The official postgres image is the common case: `postgres:18-alpine` exited with `chown: /var/lib/postgresql/18/docker: Operation not permitted` under `cap_drop: [ALL]`, and started on a fresh volume with `cap_add: [CHOWN, SETUID, SETGID]`. Find the exact set by testing the image.
+
+In every case, leave a comment in the compose file explaining the
 exception so the next reviewer doesn't "fix" it back.
 
 ---
@@ -1261,6 +1816,80 @@ territory) should always declare `logging:` explicitly.
 
 ---
 
+## COMPOSE-038 — Set memory, CPU and pids limits on long-lived services on shared hosts
+
+**What.** Give long-lived services on a shared host resource limits under
+`deploy.resources.limits` (`memory`, `cpus`, `pids`). Use one source per
+limit: either the `deploy` block or the service-level
+`mem_limit` / `cpus` / `pids_limit`, not both.
+
+**Why.** Without a limit, one leaking or fork-bombing container can
+starve the whole host. Plain Compose applies these limits to standalone
+containers, not only under Swarm. Checked on Compose v5.6.0:
+`memory: 64M`, `cpus: "0.5"` and `pids: 50` set `Memory=67108864`,
+`NanoCpus=500000000` and `PidsLimit=50`, and a 32M memory reservation
+set `MemoryReservation`. The reference requires `mem_limit` to match
+`limits.memory` when both are set, which is why one source is enough.
+On rootless Docker, cgroup limits work only with cgroup v2 and systemd.
+Check `docker info` for `Cgroup Driver` and `Cgroup Version`; a
+`Cgroup Driver` of `none` means the limits are not enforced.
+
+**How.**
+
+```yaml
+services:
+  worker:
+    build: .
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+          pids: 256
+        reservations:
+          memory: 256M
+```
+
+Cite: [compose deploy — resources](https://docs.docker.com/reference/compose-file/deploy/#resources),
+[compose reference — mem_limit](https://docs.docker.com/reference/compose-file/services/#mem_limit),
+[rootless mode tips — limiting resources](https://docs.docker.com/engine/security/rootless/tips/).
+
+**When NOT to apply.** A single-tenant dev machine running one stack;
+there, limits mostly cause confusing OOM kills. Set them from measured
+usage, not guesses.
+
+---
+
+## COMPOSE-040 — Put container labels under `labels:`, not `deploy.labels`
+
+**What.** Labels that a tool reads from containers (Traefik routing,
+autoheal, monitoring discovery) go under the service's `labels:`.
+
+**Why.** `deploy.labels` "are only set on the service and not on any
+containers for the service". Under plain Compose there is no service
+object for them to land on, so Traefik never sees a router defined there
+and nothing reports an error. Checked on Compose v5.6.0: a container
+carried the `labels:` entry `com.example.svc` but not the
+`deploy.labels` entry `com.example.dep`.
+
+**How.**
+
+```yaml
+services:
+  api:
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.api.rule: "Host(`api.example.com`)"
+```
+
+Cite: [compose deploy — labels](https://docs.docker.com/reference/compose-file/deploy/#labels),
+[compose reference — labels](https://docs.docker.com/reference/compose-file/services/#labels).
+
+**When NOT to apply.** Swarm stacks where the tool reads *service*
+labels (Traefik's Swarm provider); those belong in `deploy.labels`.
+
+---
+
 ## COMPOSE-019 — Use `include:` for modular compose stacks
 
 **What.** Compose v2.20+ supports a top-level `include:` directive that
@@ -1289,7 +1918,8 @@ each sub-application is self-contained — its `build:` contexts,
 `env_file:` paths, and `volumes:` host paths all stay relative to where
 it lives.
 
-Cite: [compose-file/include](https://docs.docker.com/reference/compose-file/include/).
+Cite: [compose-file/include](https://docs.docker.com/reference/compose-file/include/),
+[Include how-to](https://docs.docker.com/compose/how-tos/multiple-compose-files/include/).
 
 **Why.** Before `include:`, two patterns existed for splitting a
 compose project across files, both with real downsides:
@@ -1371,6 +2001,24 @@ include:
     env_file: ./.env                     # vars available to the included file
 ```
 
+**A redeclared service merges with the included one.** If the including
+file declares a service that an included file also declares, Compose
+v5.6.0 neither errors nor warns, although the docs say it does (the
+how-to says error, the reference says warning). The two definitions
+merge: scalars from the including file win, and lists and maps combine.
+In a live check the main file's `image:` won, the included file's
+`command:` survived, and both files' `environment:` entries were
+present. To customize an included model on purpose, list an override
+file in that include's `path:`. Alternatively use `compose.override.yaml`.
+Either way, review the result with `docker compose config`.
+
+```yaml
+include:
+  - path:
+      - third-party/compose.yaml
+      - third-party.override.yaml   # local override for the included model
+```
+
 `include:` differs from `extends:` (COMPOSE-010) in scope:
 
 | Feature | Scope | Use when |
@@ -1439,12 +2087,11 @@ services:
     gpus: all
 ```
 
-The old form lives under `deploy.resources`, which behaves differently
-between Swarm and standalone Compose — `deploy.resources.reservations`
-is silently ignored outside Swarm for *most* fields but **was** honored
-specifically for `devices.gpu`. That inconsistency was confusing.
-`gpus:` is a top-level service field with spec-documented
-standalone-Compose semantics, no Swarm caveats.
+The old form lives under `deploy.resources`, which reads as
+Swarm-only but is applied by plain Compose too. A live check on Compose
+v5.6.0 showed memory limits and reservations set on a standalone
+container. `gpus:` is simply the shorter spelling, and it implies the
+`gpu` capability.
 
 The [Compose file reference](https://docs.docker.com/reference/compose-file/services/#gpus)
 documents `gpus:` ("Requires: Docker Compose 2.30.0 and later") as
@@ -1485,8 +2132,17 @@ services:
         capabilities: [compute, utility]    # skip the `graphics` capability
 ```
 
+**Scope the reservation on shared hosts.** An unset `count` (or
+`count: all`) reserves every matching GPU on the host. On a multi-GPU
+host shared between services, set either `count:` or `device_ids:`,
+never both: Compose rejects the pair with `"count" and "device_ids"
+attributes are exclusive` (rc=1, in both `gpus:` and the longhand). The
+longhand must also list `capabilities`, or config fails with
+`devices.0 missing property 'capabilities'`.
+
 Cite: [Compose GPU support](https://docs.docker.com/compose/how-tos/gpu-support/),
-[compose-file/gpus](https://docs.docker.com/reference/compose-file/services/#gpus).
+[compose-file/gpus](https://docs.docker.com/reference/compose-file/services/#gpus),
+[compose deploy — devices](https://docs.docker.com/reference/compose-file/deploy/#devices).
 
 The container still needs the NVIDIA Container Toolkit installed on
 the host (`nvidia-container-runtime` / `nvidia-ctk`) — Compose only
@@ -1497,7 +2153,7 @@ the host toolkit isn't installed, not a compose issue.
 **When NOT to apply.**
 
 - Compose <2.30 — the `gpus:` field is unknown. Stay on the `deploy.resources.reservations.devices` longhand until you can bump Compose.
-- Swarm mode deployments — `deploy.resources` is the Swarm-native interface; keep using it. `gpus:` is for standalone Compose.
+- Files also deployed with `docker stack deploy` — Swarm reads `deploy.resources`, so keep the longhand there.
 - Non-NVIDIA GPUs (AMD ROCm, Intel) — the `driver:` field accepts other strings, but the ecosystem support is thinner. Verify your runtime supports the driver string before relying on the shorthand.
 
 ---
@@ -1618,8 +2274,8 @@ that the Model Runner understands.
 
 **What.** Compose ≥2.30 supports per-service `post_start` and `pre_stop`
 lifecycle hooks — commands that run after the container starts and before
-it's stopped, each able to set `privileged: true` independently of the
-service's own privilege level.
+it's stopped, each able to run as `user: root` or with `privileged: true`
+independently of the service's own privilege level.
 
 **Why.** The usual ways to do post-boot registration (announce to a
 service registry, warm a cache) or pre-stop work (flush a buffer, take a
@@ -1638,16 +2294,24 @@ services:
       - command: /usr/local/bin/register-with-mesh.sh
     pre_stop:
       - command: /usr/local/bin/drain-and-flush.sh
+        user: root          # the hook runs as root; the service does not
 ```
 
-**When NOT to apply.** `pre_stop` does **not** run on a crash or `kill`
+Cite: [Use lifecycle hooks](https://docs.docker.com/compose/how-tos/lifecycle/),
+[compose reference — post_start](https://docs.docker.com/reference/compose-file/services/#post_start).
+
+**When NOT to apply.** `post_start` has no ordering guarantee relative
+to the container's entrypoint, so use it only for work the app does not
+wait on, such as registering with an external system. Setup the app
+needs before it starts belongs in `pre_start` (COMPOSE-012).
+`pre_stop` does **not** run on a crash or `kill`
 (only on graceful stop), so don't rely on it for correctness-critical
 teardown — that belongs in a supervisor or an idempotent external job.
 On Compose older than 2.30 the keys are ignored; gate on the version.
 
 ---
 
-## COMPOSE-028 — Require Compose ≥2.40.2 (or v5) before using `include:` with OCI/registry sources
+## COMPOSE-028 — Pin remote compose sources by digest, review the resolved model, and require Compose ≥2.40.2
 
 **Requires.** compose>=2.40.2
 
@@ -1665,7 +2329,15 @@ overwrite `~/.ssh/authorized_keys` — and it triggered even on a read-only
 command like `docker compose ps` or `config`. Pulling a poisoned shared
 compose module was enough; no `up` required. Fixed in Compose v2.40.2.
 
-Cite: [GHSA-gv8h-7v7w-r22q](https://github.com/docker/compose/security/advisories/GHSA-gv8h-7v7w-r22q).
+The version floor closes one bug, not the trust problem. Docker's
+Compose trust model treats compose files as trusted input: "Compose does
+not confine reads to the project directory. Treat a Compose project as
+code you run, not data you inspect." A remote `include:` or `extends:`
+can mount host paths, add capabilities or publish ports, and a tag can
+be repointed after you reviewed it.
+
+Cite: [GHSA-gv8h-7v7w-r22q](https://github.com/docker/compose/security/advisories/GHSA-gv8h-7v7w-r22q),
+[Compose trust model](https://docs.docker.com/compose/trust-model/).
 
 **How.**
 
@@ -1673,9 +2345,27 @@ Cite: [GHSA-gv8h-7v7w-r22q](https://github.com/docker/compose/security/advisorie
 docker compose version        # ensure >= v2.40.2 (or any v5.x)
 ```
 
-Pin the Compose/CLI version in CI images and developer setup; treat
-remote `include:` sources with the same supply-chain caution as base
-images (SEC-010, SEC-021).
+Pin the Compose/CLI version in CI images and developer setup, then
+treat remote sources with the same supply-chain caution as base images
+(SEC-010, SEC-021):
+
+1. **Pin by digest.** Reference `include:`, `extends:` and `-f oci://`
+   sources by `@sha256:` digest, not by tag, and review a digest bump
+   like a code change.
+2. **Review the resolved model before `up`.** Read the full
+   `docker compose config` output, nested includes and extends included,
+   and audit every transitive remote reference, not just the top-level
+   file.
+3. **Don't run unverified remote configurations in CI**, and don't
+   auto-accept Compose's confirmation prompts for remote includes,
+   interpolation variables and environment values.
+4. **Host shared artifacts on a registry your organization controls**,
+   and restrict who can push to it.
+
+```yaml
+include:
+  - oci://registry.example.com/platform/observability@sha256:<digest>
+```
 
 **When NOT to apply.** Stacks that only `include:` **local** files are
 not exposed to this specific vector — but the fix is free and the version
@@ -1716,6 +2406,39 @@ Cite: [compose reference — init](https://docs.docker.com/reference/compose-fil
 `ENTRYPOINT` (DOCKER-006 applied) — a second init adds nothing. It does
 not replace DOCKER-006 for images you build: bake the init into the image
 so it behaves the same under `docker run`, Kubernetes and Compose.
+
+---
+
+## COMPOSE-042 — Raise `stop_grace_period` for services that flush on shutdown
+
+**What.** Set `stop_grace_period` on databases, queue consumers and
+workers to cover their real shutdown time.
+
+**Why.** Compose waits 10 seconds after `SIGTERM`, then sends
+`SIGKILL`. A service still flushing or finishing a job is killed partway
+through on every `stop`, `down` and redeploy. Checked on Compose v5.6.0:
+a container that ignored `SIGTERM` took 10.3 s to stop and exited 137
+(killed); with `stop_grace_period: 3s` it took 3.5 s. The same cut-off
+applies to a slow but well-behaved shutdown.
+
+**How.**
+
+```yaml
+services:
+  postgres:
+    image: postgres:18-alpine
+    stop_grace_period: 1m        # checkpoint before shutdown
+  worker:
+    build: .
+    init: true                   # signals reach the app (COMPOSE-029)
+    stop_grace_period: 2m        # longest job's drain time
+```
+
+Cite: [compose reference — stop_grace_period](https://docs.docker.com/reference/compose-file/services/#stop_grace_period).
+
+**When NOT to apply.** Stateless services that exit promptly on `SIGTERM`;
+the default is fine. A longer grace period doesn't fix an app that never
+handles `SIGTERM` (COMPOSE-029, DOCKER-006); it only delays the kill.
 
 ---
 
