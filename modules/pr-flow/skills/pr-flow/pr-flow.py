@@ -166,7 +166,10 @@ def worktreeinclude_matches(root):
 
     Refuses (Fail) any pattern that is absolute, `~`-rooted, or whose glob match resolves
     outside the repo (e.g. `../secret`) — such a pattern would read or write outside both
-    the main checkout and the worktree it's meant to seed.
+    the main checkout and the worktree it's meant to seed. Also refuses a match that is, holds
+    or sits inside a virtualenv (a `pyvenv.cfg`): its scripts' shebangs and editable `.pth`
+    entries are absolute paths into the main checkout, so the worktree would silently run
+    and import main's code.
     """
     inc = root / ".worktreeinclude"
     if not inc.is_file():
@@ -187,6 +190,12 @@ def worktreeinclude_matches(root):
                 raise Fail(f".worktreeinclude: {pattern!r} resolves outside the repo ({resolved})")
             if rel.parts and rel.parts[0] in (".git", ".claude"):
                 continue
+            ancestors = [root_r / Path(*rel.parts[:i]) for i in range(1, len(rel.parts) + 1)]
+            if any((a / "pyvenv.cfg").is_file() for a in ancestors) or (
+                    resolved.is_dir() and next(resolved.rglob("pyvenv.cfg"), None)):
+                raise Fail(f".worktreeinclude: {pattern!r} copies a virtualenv ({rel}); its absolute paths "
+                           "point into the main checkout. Drop it and let the worktree build its own "
+                           "(uv builds one on first `uv run`).")
             if rel not in matches:
                 matches.append(rel)
     return matches
