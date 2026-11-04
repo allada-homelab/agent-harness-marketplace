@@ -551,7 +551,7 @@ modules:
     command: true
     summary: Reverse-engineer a compiled target with REA (Reverse Engineer Anything).
 - name: simplify
-  version: 0.1.0
+  version: 0.2.0
   kinds:
   - skills
   - dsh-plugin
