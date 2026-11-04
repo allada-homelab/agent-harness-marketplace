@@ -5,16 +5,19 @@
 
 - PY-050 — Module-level `logger = logging.getLogger(__name__)`
 - PY-051 — Positional args in log calls; never f-strings
+- PY-106 — Logging wrappers pass `stacklevel=`
 - PY-052 — Libraries add only `NullHandler`; never configure logging
 - PY-053 — Applications use `dictConfig` with `disable_existing_loggers: False`
-- PY-054 — `logger.exception()` only inside `except`; `exc_info=True` elsewhere
+- PY-105 — Attach handlers once, at the top of the logger hierarchy
+- PY-054 — `logger.exception()` only inside `except`; `exc_info=exc` elsewhere
 - PY-055 — Context via `contextvars`; redact secrets at filter/formatter
 - PY-056 — Production: JSON to stdout, no in-process rotation, structlog for apps
 - PY-076 — Use `QueueHandler` / `QueueListener` for low-latency async logging
 <!-- /toc -->
 
-Detailed entries for `PY-050..PY-056` plus `PY-076` (async-safe
-logging via `QueueHandler`). Each follows the four-part
+Detailed entries for `PY-050..PY-056`, `PY-076` (async-safe
+logging via `QueueHandler`), `PY-105` (handler placement) and
+`PY-106` (`stacklevel` in wrappers). Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 Citations point at the
@@ -43,13 +46,15 @@ Never call `logging.info(...)`, `logging.error(...)` etc. directly
 **Why.** Three reasons:
 
 1. **`logging.info(...)` is unidentifiable.** It logs through the root logger with no module context — you can't tell from output which file emitted the message. With a module-level logger, `__name__` becomes the logger name (e.g. `mypackage.handlers.users`), and every output line includes that name.
-2. **The root logger has no handlers by default** (or gets whatever `basicConfig` was called with). `logging.info("foo")` either drops the message silently or goes somewhere unexpected, depending on what was called before.
+2. **`logging.info(...)` configures logging behind your back.** When the root logger has no handlers, the module-level `logging.debug/info/warning/error/critical` functions call `basicConfig()` first ([logging docs](https://docs.python.org/3/library/logging.html#logging.debug)), installing a stderr handler. The entry point's later `basicConfig(...)` is then a no-op (PY-053 has the detail). On 3.15.2, after one `logging.info("x")`, `basicConfig(level=logging.DEBUG)` left the root at level 30 with that one stderr handler.
 3. **Module-level loggers enable hierarchical filtering.** With `mypackage.handlers.users` as the logger name, you can set `[loggers]` config to silence `mypackage.handlers.*` to WARNING while keeping `mypackage.core.*` at INFO. Root-logger calls can't be filtered this way.
 
-The `__name__` idiom is the Python convention. PyCharm, VS Code,
-and every other linter knows it. Anything else is non-idiomatic.
+The `__name__` idiom is the convention the
+[logging HOWTO](https://docs.python.org/3/howto/logging.html#advanced-logging-tutorial)
+recommends.
 
-**How.**
+**How.** Ruff's [`LOG015`](https://docs.astral.sh/ruff/rules/root-logger-call/)
+(`root-logger-call`, stable) flags calls on the root logger.
 
 ```python
 # src/mypackage/handlers/users.py
@@ -97,12 +102,15 @@ form of pre-formatting the message string.
 
 **Why.** Three concrete failures from f-strings in log calls:
 
-1. **Interpolation cost is paid even when level is disabled.**
-   `logger.debug(f"State: {expensive_compute()}")` calls
-   `expensive_compute()` *every time*, even if the logger is set
-   to INFO and DEBUG messages are discarded. With positional args,
-   the interpolation only happens if the message is actually
-   emitted.
+1. **Formatting cost is paid even when the level is disabled.**
+   An f-string is built before the call, every time. Positional args
+   defer only the `%`-formatting: the argument expressions still run.
+   `logger.debug("State: %s", expensive_compute())` calls
+   `expensive_compute()` on every call, even with the logger at INFO
+   (confirmed on 3.15.2). Guard expensive arguments with
+   `if logger.isEnabledFor(logging.DEBUG):`, as the
+   [logging HOWTO's Optimization section](https://docs.python.org/3/howto/logging.html#optimization)
+   shows.
 2. **Sentry / log aggregator grouping breaks.** Sentry, Datadog,
    and similar tools group log events by the *message template*.
    With positional args, the template is `"User %s logged in from %s"`
@@ -110,9 +118,12 @@ form of pre-formatting the message string.
    `user_id` produces a different message string, and the aggregator
    sees each as a unique event. You lose the ability to count "how
    many users logged in," and the issue list becomes useless.
-3. **Pylint's `W1203` (logging-fstring-interpolation)** flags this
-   automatically. Ignoring the warning is choosing to pay the costs
-   above.
+3. **Linters flag it automatically.** Ruff's
+   [`G004`](https://docs.astral.sh/ruff/rules/logging-f-string/)
+   (`logging-f-string`) catches f-strings, and `G001` / `G002` / `G003`
+   catch `.format()`, `%` and `+` (all stable in ruff 0.17.3); pylint's
+   `W1203` (logging-fstring-interpolation) is the pylint equivalent.
+   Ignoring the warning is choosing to pay the costs above.
 
 The performance and grouping costs together are significant in
 production logging. For a high-volume application, this difference
@@ -122,10 +133,10 @@ overwhelmed by cardinality."
 **How.**
 
 ```python
-# Positional args — defers interpolation
+# Positional args — defers the %-formatting (not the argument expressions)
 logger.info("User %s logged in from %s", user_id, ip)
 
-# For expensive args, also guard explicitly:
+# For expensive args, guard explicitly:
 if logger.isEnabledFor(logging.DEBUG):
     logger.debug("Full state: %s", compute_debug_state())
 
@@ -145,6 +156,42 @@ kwargs pattern is fine — structlog handles deferral internally,
 and the kwargs *are* the structured fields, not interpolation
 placeholders. The rule is "never f-strings"; structlog kwargs
 aren't f-strings.
+
+---
+
+## PY-106 — Logging wrappers pass `stacklevel=`
+
+**What.** A helper function or method that calls `logger.*` on its
+caller's behalf passes `stacklevel=` — `2` for a direct wrapper, plus
+one per extra layer — so the record reports the caller's file, line
+and function, not the helper's.
+
+**Why.** `%(funcName)s`, `%(lineno)d` and `%(pathname)s` come from the
+frame that called the logging method. Without `stacklevel`, every
+record from a wrapper points at the wrapper, so the location field
+names the same line for every call site. The
+[`Logger.debug` docs](https://docs.python.org/3/library/logging.html#logging.Logger.debug)
+describe `stacklevel` for exactly this: "used in logging helpers so
+that the function name, filename and line number recorded are not
+the information for the helper function/method, but rather its
+caller." On 3.15.2, a wrapper without it logged `bare:9`; with
+`stacklevel=2` it logged `caller:13`.
+
+**How.**
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+def warn(msg: str, *args: object) -> None:
+    logger.warning(msg, *args, stacklevel=2)   # report warn()'s caller
+```
+
+**When NOT to apply.** Code that calls the logger directly needs
+nothing — the default `stacklevel=1` is already the call site. A
+`LoggerAdapter` or `Logger` subclass that only overrides `process()` or
+`makeRecord()` is not a wrapper frame and needs no adjustment.
 
 ---
 
@@ -186,11 +233,15 @@ application that imports it:
    library's StreamHandler runs *and* the application's handlers
    run; every log line is duplicated.
 
-`NullHandler` exists precisely for this: it's a no-op handler that
-satisfies stdlib's "must have at least one handler or you get
-'No handlers could be found' warnings on Python <3.2" rule, without
-actually emitting anything. The application can then add real
-handlers and control the library's output.
+`NullHandler` exists precisely for this. With no handler anywhere in
+the hierarchy, stdlib falls back to
+[`logging.lastResort`](https://docs.python.org/3/library/logging.html#logging.lastResort),
+which prints WARNING and above to stderr. A library's no-op
+`NullHandler` stops its warnings leaking to stderr when the
+application has not configured logging (on 3.15.2, a `warning()`
+before adding it printed; one after did not), and leaves the choice
+to the application, which adds real handlers and controls the
+library's output.
 
 **How.**
 
@@ -282,8 +333,8 @@ logging.config.dictConfig(LOGGING)
 
 **Why.** Two failure modes:
 
-1. **`disable_existing_loggers: True` (the legacy default)** silences any logger created before `dictConfig` ran — which is nearly every module-level logger in a typical app. The application starts up, configures logging, and then half the modules can no longer log because their loggers were created during import (before `dictConfig`).
-2. **`basicConfig` is one-shot and limited.** It can configure exactly one handler on the root logger, with no per-logger level overrides. It's fine for a 50-line script; it's wrong for any real application.
+1. **`disable_existing_loggers: True` (the default, kept for backward compatibility)** silences any logger created before `dictConfig` ran — which is nearly every module-level logger in a typical app. The application starts up, configures logging, and then half the modules can no longer log because their loggers were created during import (before `dictConfig`).
+2. **`basicConfig` is one-shot and root-only.** It configures only the root logger (it accepts several handlers via `handlers=`), with no per-logger level overrides, and it [does nothing once the root logger already has handlers](https://docs.python.org/3/library/logging.html#logging.basicConfig) unless `force=True`. So an earlier `logging.info()` (which calls `basicConfig()` itself, see PY-050) or an imported library's `basicConfig` silently wins. On 3.15.2 a second `basicConfig(level=logging.DEBUG)` left the root at level 30; with `force=True` it set 10. It's fine for a 50-line script; it's wrong for any real application.
 
 `dictConfig` lets you:
 
@@ -344,12 +395,61 @@ modules and any operational complexity.
 
 ---
 
-## PY-054 — `logger.exception()` only inside `except`; `exc_info=True` elsewhere
+## PY-105 — Attach handlers once, at the top of the logger hierarchy
+
+**What.** Configure handlers on the root logger (or one top-level
+application logger) and let child loggers propagate to it. Never add
+a handler to a module logger that keeps `propagate=True` while an
+ancestor also has one.
+
+**Why.** A record is offered to every handler on the path from its
+logger up to the root, so a handler on `app.mod` *and* one on the
+root emit each record twice. The
+[`Logger.propagate` docs](https://docs.python.org/3/library/logging.html#logging.Logger.propagate)
+warn that attaching a handler to a logger and one of its ancestors
+"may emit the same record multiple times", and the
+[HOWTO](https://docs.python.org/3/howto/logging.html#loggers) says it
+is sufficient to configure handlers for a top-level logger. On
+3.15.2, `basicConfig()` plus a `StreamHandler` on `app.mod` printed
+one `warning("twice")` as both `twice` and `WARNING:app.mod:twice`.
+PY-052 covers this for libraries; this rule covers application code.
+
+**How.** Put every handler in the one `dictConfig` (PY-053) and give
+child loggers only a level:
+
+```python
+import logging.config
+
+logging.config.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "stdout": {"class": "logging.StreamHandler", "stream": "ext://sys.stdout"},
+    },
+    "root": {"level": "INFO", "handlers": ["stdout"]},
+    "loggers": {
+        "myapp.db": {"level": "DEBUG"},   # level only; propagates to root's handler
+    },
+})
+```
+
+Audit: grep for `addHandler(` and for `"handlers"` under `loggers`
+entries; each hit on a non-root logger needs `propagate: False` or
+removal.
+
+**When NOT to apply.** A logger that deliberately routes to its own
+destination (an audit trail, `uvicorn.access` in PY-053) may carry its
+own handler, provided it sets `propagate: False` so the record does
+not also reach the root handler.
+
+---
+
+## PY-054 — `logger.exception()` only inside `except`; `exc_info=exc` elsewhere
 
 **What.** Two related rules:
 
 - `logger.exception("msg")` captures the current exception and traceback. Use it **only inside an `except` block** — it's shorthand for `logger.error("msg", exc_info=True)`.
-- For logging exceptions stored elsewhere (caught in one function, logged in another), use `logger.error("msg", exc_info=the_exc)` explicitly.
+- For logging exceptions stored elsewhere (caught in one function, logged in another), pass the exception object: `logger.error("msg", exc_info=the_exc)`. `exc_info=True` outside `except` logs `NoneType: None`, just like `exception()` (confirmed on 3.15.2).
 
 ```python
 # RIGHT — inside except
@@ -368,11 +468,15 @@ logger.exception("Something happened")   # logs "NoneType: None" as the tracebac
 
 **Why.** Three failure modes:
 
-1. **`logger.exception()` outside `except`** logs the literal string `NoneType: None` as the "traceback" — there is no current exception, so `sys.exc_info()` returns `(None, None, None)`. This is loud confusing noise; the message looks like an error but the "traceback" is meaningless.
+1. **`logger.exception()` — or `exc_info=True` — outside `except`** logs the literal string `NoneType: None` as the "traceback" — there is no current exception, so `sys.exc_info()` returns `(None, None, None)`. This is loud confusing noise; the message looks like an error but the "traceback" is meaningless.
 2. **`logger.error("msg")` inside `except` without `exc_info`** logs the message *without the traceback*. The actual cause is invisible. This is the most common form of "we logged an error but I can't tell what went wrong" — the message says "Failed to do X" but the actual exception (`ConnectionRefusedError`? `JSONDecodeError`? `AssertionError`?) is lost.
 3. **Bare `raise` in `except` after logging** logs the exception at the catch site *and* lets it propagate to be logged again at the framework level. Pick one: catch + log + handle, or let it propagate. Logging it twice produces duplicate stack traces in production logs.
 
-**How.**
+**How.** Ruff enforces both halves:
+[`LOG004`](https://docs.astral.sh/ruff/rules/log-exception-outside-except-handler/)
+(`log-exception-outside-except-handler`) and
+[`LOG014`](https://docs.astral.sh/ruff/rules/exc-info-outside-except-handler/)
+(`exc-info-outside-except-handler`), both stable in ruff 0.17.3.
 
 ```python
 import logging
@@ -551,16 +655,37 @@ import structlog
 structlog.configure(
     processors=[
         structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
+        structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.dict_tracebacks,   # without it: {"exc_info": true, ...}
         structlog.processors.JSONRenderer(),
     ],
     wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-    logger_factory=structlog.PrintLoggerFactory(),
+    logger_factory=structlog.WriteLoggerFactory(),
     cache_logger_on_first_use=True,
 )
 ```
+
+Use `WriteLoggerFactory`, not `PrintLoggerFactory`: when structlog and
+a stdlib `StreamHandler` share stdout or stderr, `PrintLogger`'s
+`print()` writes the message and the newline separately, so its output
+can interleave with the handler's
+([structlog: standard library](https://www.structlog.org/en/stable/standard-library.html)).
+`structlog.stdlib.add_logger_name` needs a stdlib logger; with
+`WriteLoggerFactory` or `PrintLoggerFactory` it raises
+`AttributeError: 'WriteLogger' object has no attribute 'name'`
+(structlog 26.1.0), so the stdlib-backed How below is where it goes.
+
+Keep `structlog.processors.dict_tracebacks` (or `format_exc_info`)
+before the renderer. Without it, `JSONRenderer` emits
+`{"exc_info": true, "event": "boom", ...}` and the traceback is lost
+([structlog: logging best practices](https://www.structlog.org/en/stable/logging-best-practices.html)).
+
+Do not configure `wrapper_class=structlog.stdlib.AsyncBoundLogger`: the
+docs mark it deprecated since 23.1.0. Keep the normal bound logger and
+call the `a`-prefixed methods (`await log.ainfo(...)`) where processing
+must not block the event loop. This is a documented deprecation only;
+structlog 26.1.0 emits no `DeprecationWarning` for it.
 
 **Why.** Three failure modes from getting this wrong:
 
@@ -581,8 +706,8 @@ structlog.configure(
    uses it, and an application's `dictConfig` can capture all of
    it. But for application code, structlog adds: structured kwargs
    per call, easier context propagation (contextvars merge), a
-   composable processor pipeline (redaction, sampling, enrichment),
-   and ~2x throughput.
+   and a composable processor pipeline (redaction, sampling,
+   enrichment).
 
 The full picture: stdlib `logging` is the *transport*, structlog
 is the *application API* on top of it. Configure stdlib to capture
@@ -612,6 +737,8 @@ def configure_logging(level: str = "INFO") -> None:
                     structlog.stdlib.add_log_level,
                     structlog.stdlib.add_logger_name,
                     structlog.processors.TimeStamper(fmt="iso"),
+                    # so stdlib-origin exceptions render as JSON too
+                    structlog.processors.dict_tracebacks,
                 ],
             },
         },
@@ -632,6 +759,7 @@ def configure_logging(level: str = "INFO") -> None:
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
             structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.dict_tracebacks,
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),

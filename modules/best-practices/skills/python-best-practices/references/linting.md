@@ -6,8 +6,11 @@
 - PY-020 — Use `ruff` for both lint and format; drop `black`, `isort`, `flake8`, `pyupgrade`
 - PY-021 — Recommended ruff rule selection + `target-version`
 - PY-022 — Per-file ignores for tests and `__init__.py`
+- PY-102 — One ruff config per scope; a nested config must `extend` the root
 - PY-023 — Line length: 88 default
 - PY-024 — pre-commit hook order: `ruff` (--fix) before `ruff-format`
+- PY-103 — Pass `--force-exclude` when a hook or script hands ruff explicit file paths
+- PY-104 — Never apply ruff's unsafe fixes unattended
 - PY-025 — Enable `RUF100` to flag unused `noqa` directives
 - PY-088 — Use ruff range suppression for multi-line blocks
 - PY-091 — Never `return` / `break` / `continue` out of a `finally` block
@@ -88,12 +91,18 @@ plugin*. Don't keep flake8 for "general linting" — ruff covers that.
 
 ## PY-021 — Recommended ruff rule selection + `target-version`
 
-**What.** Ruff's default selection (`E`, `F`) is too minimal. A
-sensible baseline for new projects:
+**What.** With no `select`, ruff 0.17 runs its default set: the
+`correctness`, `suspicious`, `complexity`, `performance` and `style`
+categories (407 rules on 0.17.3, including bugbear's `B006`, `I001`
+and many `UP`, `SIM` and `RUF` rules). The `security`, `formatting`,
+`pedantic` and `restriction` categories stay off. An explicit `select`
+replaces that default set entirely (`select = ["F"]` enables 43 rules
+on 0.17.3), so the list must name every family you want. A sensible
+baseline for new projects:
 
 ```toml
 [tool.ruff]
-target-version = "py311"     # critical — UP rules respect this
+target-version = "py311"     # UP rules respect this; inferred from requires-python when omitted
 
 [tool.ruff.lint]
 select = [
@@ -111,16 +120,31 @@ select = [
 
 **Why.** Each family catches a different class of real bug:
 
-- **`B` (bugbear)** — catches `def foo(x=[])` (mutable default arg), `except:` (bare except), `assert isinstance` discipline, and other footguns. The single highest-value non-default family.
+- **`B` (bugbear)** — catches `def foo(x=[])` (mutable default arg), `except:` (bare except), `assert isinstance` discipline, and other footguns. The single highest-value family to select in full.
 - **`I` (isort)** — sorted, grouped imports. Reduces merge conflicts in import blocks.
 - **`UP` (pyupgrade)** — `Union[X, Y]` → `X | Y`, `typing.List` → `list`, `super(MyClass, self)` → `super()`. Enforces PY-010 mechanically.
 - **`S` (bandit)** — flags `pickle.loads`, `eval`, `subprocess(shell=True)`, hardcoded passwords. Real security wins.
 - **`SIM` (simplify)** — flags `if x == True:` → `if x:`, redundant `if/else` patterns. Mostly cosmetic but reduces code volume.
 - **`RUF`** — ruff-specific rules including `RUF100` (unused noqa, see PY-025).
 
-`target-version` is critical: without it, `UP` rules suggest 3.12+
-syntax for a 3.9-targeted library, breaking the build for users on
-older Python. Match it to your `requires-python` floor.
+`UP` rules suggest syntax for the configured Python floor, so ruff must
+know it. With no `target-version` set, ruff infers it from
+`requires-python` in a nearby `pyproject.toml`
+([Inferring the Python version](https://docs.astral.sh/ruff/configuration/#inferring-the-python-version)).
+The inference fails or drifts in two cases:
+
+- A config passed directly with `--config ruff.toml` gets no inference.
+  (`--config pyproject.toml` still reads its own `requires-python`.)
+- No config found at all. Ruff then reads the nearest ancestor
+  `pyproject.toml` of the working directory, so the result depends on
+  where ruff runs.
+
+With neither `target-version` nor `requires-python`, ruff 0.17.3
+assumes Python 3.11. It then suggests 3.10+ syntax such as `X | None`
+(`UP045`) for code that must still run on 3.9. Always declare
+`requires-python`. Set `target-version` explicitly when ruff runs with
+`--config ruff.toml`, or when no `pyproject.toml` declares
+`requires-python`.
 
 **How.** The config above is a good starting point. Tune as needed:
 
@@ -203,6 +227,48 @@ relax it where it doesn't. Three common patterns:
 genuine issues — if every file in `src/mypackage/handlers/` needs
 `S105` ignored, you have a real problem (hardcoded passwords in
 production), not a per-file-ignore problem.
+
+---
+
+## PY-102 — One ruff config per scope; a nested config must `extend` the root
+
+**What.** Keep one ruff config at the repository root. Every nested
+config — a sub-package `pyproject.toml` with a `[tool.ruff]` table, a
+`ruff.toml`, or a `.ruff.toml` — sets `extend` to the root config, so
+it inherits the root's settings and overrides only what differs.
+
+**Why.** Ruff does not merge configs. For each file, the closest config
+wins and every parent config is ignored
+([Config file discovery](https://docs.astral.sh/ruff/configuration/#config-file-discovery)).
+In one directory, `.ruff.toml` beats `ruff.toml`, which beats
+`pyproject.toml`. A sub-package `pyproject.toml` that adds a
+`[tool.ruff]` table for one setting, or a stale `ruff.toml`, silently
+drops the root's `select`, `ignore` and `target-version` for that
+whole subtree. A `pyproject.toml` with no `[tool.ruff]` table is
+skipped, so it does not cause this. On ruff 0.17.3, with a root
+`select = ["S101"]`, a `sub/pyproject.toml` holding only
+`[tool.ruff] line-length = 100` made `sub/` report the default set
+(`F401`, `I001`) instead of `S101`. Adding `extend` restored `S101`.
+
+**How.**
+
+```toml
+# packages/api/pyproject.toml
+[tool.ruff]
+extend = "../../pyproject.toml"   # inherit the root config
+line-length = 100                 # override only what differs
+```
+
+Find configs that can shadow the root:
+
+```bash
+find . -name ruff.toml -o -name .ruff.toml
+grep -rl '^\[tool\.ruff' --include=pyproject.toml .
+```
+
+**When NOT to apply.** A sub-tree that must not follow the root's
+policy, such as vendored code with its own upstream config. There, a
+standalone config is the intent; add a comment saying so.
 
 ---
 
@@ -328,6 +394,87 @@ have both hooks active.
 
 ---
 
+## PY-103 — Pass `--force-exclude` when a hook or script hands ruff explicit file paths
+
+**What.** Any hook or script that passes ruff a list of file paths,
+rather than a directory, runs `ruff check --force-exclude` and
+`ruff format --force-exclude`. You can instead set
+`force-exclude = true` under `[tool.ruff]`.
+
+**Why.** Ruff always analyzes a file passed to it directly, even when
+that file matches `exclude` or `extend-exclude`, unless
+`force-exclude` is on
+([Python file discovery](https://docs.astral.sh/ruff/configuration/#python-file-discovery)).
+A `repo: local` pre-commit hook, lint-staged, or
+`git diff --name-only | xargs ruff check` passes every changed file by
+name. Excluded generated or vendored files then get linted, or
+reformatted in place. On ruff 0.17.3, with `extend-exclude = ["gen"]`,
+`ruff check gen/a.py` reported `F401` in the excluded file. With
+`--force-exclude` it printed
+`warning: No Python files found under the given path(s)` and exited 0.
+
+**How.**
+
+```yaml
+# .pre-commit-config.yaml — a local hook
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --force-exclude --fix
+        language: system
+        types_or: [python, pyi]
+```
+
+```bash
+git diff --name-only --diff-filter=d -- '*.py' | xargs ruff check --force-exclude
+```
+
+**When NOT to apply.** The official
+[ruff-pre-commit](https://github.com/astral-sh/ruff-pre-commit) hooks
+(`ruff-check`, `ruff-format`) already put `--force-exclude` in their
+`entry`. Commands that pass a directory (`ruff check .`) apply
+`exclude` during discovery and don't need it.
+
+---
+
+## PY-104 — Never apply ruff's unsafe fixes unattended
+
+**What.** Never set `unsafe-fixes = true` in ruff's config, and never
+pass `--unsafe-fixes` in a pre-commit hook or a CI fix step. Plain
+`--fix` applies only safe fixes. Apply unsafe fixes by hand: preview
+them with `--unsafe-fixes --diff`, review, then apply.
+
+**Why.** The ruff docs say safe fixes keep the meaning of the code,
+but "the meaning could change when applying unsafe fixes"
+([Fix safety](https://docs.astral.sh/ruff/linter/#fix-safety)). An
+unsafe fix can change runtime behavior, remove comments, or both. On
+ruff 0.17.3, `RUF015`'s unsafe fix rewrote `list(xs)[0]` to
+`next(iter(xs))`, which raises `StopIteration` instead of `IndexError`
+on an empty input. A plain `--fix` run left the line alone and
+reported `No errors would be fixed (1 fix available with
+--unsafe-fixes)`. With `unsafe-fixes = true` in `pyproject.toml`, a
+plain `--fix` applied the rewrite, so the config setting turns every
+hook and CI fix step unsafe.
+
+**How.**
+
+```bash
+ruff check --fix .                         # hooks and CI: safe fixes only
+ruff check --unsafe-fixes --diff .         # by hand: preview unsafe fixes
+ruff check --unsafe-fixes --fix path/to/reviewed.py
+```
+
+To make a rule's fix safe project-wide after you have reviewed its
+behavior, use `lint.extend-safe-fixes = ["RUF015"]` rather than
+enabling every unsafe fix.
+
+**When NOT to apply.** A one-off, reviewed migration on a branch,
+where every resulting change goes through code review before merge.
+
+---
+
 ## PY-025 — Enable `RUF100` to flag unused `noqa` directives
 
 **What.** `RUF100` errors on `# noqa: CODE` comments where the
@@ -399,6 +546,17 @@ LONG_GENERATED_TABLE = [
 ]
 # ruff: enable[E501]
 ```
+
+Close every `# ruff: disable[CODE]` with a `# ruff: enable[CODE]` that
+lists the identical codes. An unmatched disable becomes an implicit
+range that runs to the end of the enclosing scope — at module scope,
+the rest of the file
+([Block-level suppression](https://docs.astral.sh/ruff/linter/#block-level)).
+Ruff reports each implicit range as `RUF104`. On ruff 0.17.3 an
+unmatched `# ruff: disable[F401]` at the top of a module suppressed
+`F401` for every import below it and reported
+`RUF104 Suppression comment without matching #ruff:enable comment`.
+Keep `RUF104` enabled; it is part of the `RUF` family PY-021 selects.
 
 Always name the rule code; never a bare `# ruff: disable`. Keep per-line
 `# noqa: CODE` (PY-016) for targeted single-line suppressions — range
@@ -474,8 +632,8 @@ ruff check --isolated --select FURB,PERF,PIE,N,DTZ,ERA,LOG,G,BLE,ISC,ICN,ASYNC,T
 
 ```toml
 [tool.ruff.lint]
-select = ["E", "W", "F", "B", "I", "UP", "S", "SIM", "RUF"]   # PY-021 baseline
-extend-select = [
+select = [
+    "E", "W", "F", "B", "I", "UP", "S", "SIM", "RUF",   # PY-021 baseline
     "FURB", "PERF", "PIE", "N", "DTZ", "ERA", "LOG", "G", "BLE", "ISC", "ICN",
     "ASYNC", "TID", "SLF", "FLY", "TRY", "C90", "PLE", "PLW",
 ]
@@ -497,7 +655,23 @@ pre-commit's `ruff check` picks it up with no hook change.
 **When NOT to apply.** Throwaway or exploratory repos, where trying
 `ALL` with a long `ignore` list is a quick way to discover which
 families exist. Also a project that pins ruff exactly and reviews
-every upgrade, where `ALL` can't drift without a PR. Even then,
-prefer `extend-select` additions once the useful families are known.
+every upgrade, where `ALL` can't drift without a PR. Even then, add
+the useful families to the explicit `select` list once they are known.
+The ruff docs say to "Prefer `lint.select` over `lint.extend-select`
+to make your rule set explicit"
+([Rule selection](https://docs.astral.sh/ruff/linter/#rule-selection)).
+
+A project that needs one preview rule sets `preview = true` under
+`[tool.ruff.lint]` only. A top-level `[tool.ruff] preview = true` also
+turns on preview formatter style; on ruff 0.17.3 the lint-scoped form
+left `formatter.preview = disabled`. Also set
+`explicit-preview-rules = true`, so a prefix in `select` does not pull
+in every matching preview rule: on 0.17.3, `select = ["E"]` under
+preview enabled 59 rules, and 18 (the stable set) with
+`explicit-preview-rules`. Then select the preview rule by its exact
+code, and pin ruff exactly
+([Preview](https://docs.astral.sh/ruff/preview/)). The docs also say
+that in preview, deprecated rules are disabled, and selecting one
+explicitly is an error.
 
 ---
