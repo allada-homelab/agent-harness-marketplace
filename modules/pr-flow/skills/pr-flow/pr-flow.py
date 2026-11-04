@@ -372,6 +372,22 @@ def check_outcome(c):
     return (c.get("conclusion") or c.get("state") or "").upper()
 
 
+def live_checks(pr):
+    """statusCheckRollup minus each CANCELLED run that a later run of the same workflow job replaced.
+
+    A concurrency group that cancels a duplicate trigger leaves both runs in the rollup for the
+    same head; only the newer one says anything about the commit.
+    """
+    checks = pr.get("statusCheckRollup") or []
+    latest = {}
+    for c in checks:
+        key = (c.get("workflowName"), c.get("name"))
+        latest[key] = max(latest.get(key, ""), c.get("startedAt") or "")
+    return [c for c in checks
+            if not (check_outcome(c) == "CANCELLED"
+                    and (c.get("startedAt") or "") < latest[(c.get("workflowName"), c.get("name"))])]
+
+
 def unresolved_threads(cwd, number):
     owner, repo = gh("repo", "view", "--json", "owner,name", "--jq", '.owner.login+" "+.name', cwd=cwd).split()
     out = json.loads(gh("api", "graphql", "-f", f"query={THREADS_Q}", "-F", f"o={owner}", "-F", f"r={repo}",
@@ -386,7 +402,7 @@ def classify(pr, unresolved):
         return "merged"
     if pr.get("state") == "CLOSED":
         return "closed"
-    checks = pr.get("statusCheckRollup") or []
+    checks = live_checks(pr)
     if any(check_outcome(c) in BAD for c in checks):
         return "checks-failed"
     if pr.get("mergeable") == "CONFLICTING":
@@ -439,7 +455,7 @@ def save_state(ctx, branch, st):
 
 def print_failed_logs(pr, cwd):
     seen = set()
-    for c in pr.get("statusCheckRollup") or []:
+    for c in live_checks(pr):
         if check_outcome(c) not in BAD:
             continue
         url = c.get("detailsUrl") or c.get("targetUrl") or ""
