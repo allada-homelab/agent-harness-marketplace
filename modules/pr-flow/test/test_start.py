@@ -1,4 +1,6 @@
 import os
+
+import pytest
 from conftest import git, run
 
 
@@ -229,3 +231,20 @@ def test_start_carry_restores_work_when_branch_already_exists(repo):
     assert git("status", "--porcelain", cwd=root).splitlines() == ["M README.md"]  # helper strips the leading space
     assert git("stash", "list", cwd=root) == ""
     assert not (root / ".claude" / "worktrees" / "feat-dup").exists()
+
+
+@pytest.mark.parametrize("pattern", [".venv", ".venv/bin/python", ".direnv"])
+def test_start_worktreeinclude_refuses_a_virtualenv(repo, pattern):
+    root, _ = repo
+    venv = root / ".direnv" / "python-3.12" if pattern == ".direnv" else root / ".venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    (venv / "bin" / "python").write_text("")
+    (root / ".worktreeinclude").write_text(pattern + "\n")
+    (root / ".git" / "info" / "exclude").open("a").write(".venv\n.direnv\n")
+    git("add", ".worktreeinclude", cwd=root)
+    git("commit", "-q", "-m", "wti-venv", cwd=root)
+    git("push", "-q", cwd=root)
+    r = run("start", "venv", cwd=root)
+    assert r.returncode == 2 and "virtualenv" in r.stderr
+    assert not (root / ".claude" / "worktrees" / "feat-venv").exists()

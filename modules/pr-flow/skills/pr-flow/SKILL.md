@@ -103,6 +103,28 @@ Allowed only when the user says so for that task, or the file never goes
 through a PR (an untracked `.env`, a local overlay). A hint may appear after
 an edit on main — it is a reminder to run `pr-flow start`, not a block.
 
+A git command that changes the main checkout while it is on a protected
+branch (`commit`, `checkout`, `switch`, `reset`, `restore`, `merge`, `rebase`,
+`stash` and the like; `fetch`, `pull --ff-only`, `stash list|show` are fine)
+**is** blocked. Do it in a worktree. A repo whose convention is to commit on
+that branch directly is opted out by the user, never by you:
+`git config pr-flow.allowMainCheckout true`.
+
+## Worktree setup
+
+- Never copy, clone or symlink a virtualenv (or a `.direnv/` holding one) into
+  a worktree: its shebangs and editable `.pth` paths point at the main
+  checkout, so the worktree silently runs main's code. `start` refuses a
+  `.worktreeinclude` entry that does. Let the worktree build its own — uv does
+  on the first `uv run`.
+- Seed only gitignored files the worktree needs to run (`.env`, local config)
+  through `.worktreeinclude`; everything tracked is already there.
+- A repo with its own setup step (a bootstrap script, `direnv allow`) needs it
+  run in the new worktree before tests or commits, never the main checkout's
+  tooling pointed at the worktree.
+- Worktrees share the machine with main: ports, local databases, containers.
+  Starting a service from a worktree takes them from whoever holds them.
+
 ## Traps
 
 - A linked worktree has no `.env` and is not the checkout services run from:

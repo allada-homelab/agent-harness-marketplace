@@ -4,9 +4,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from conftest import git
 
-HOOK = Path(__file__).resolve().parents[1] / "hooks" / "hint-on-protected-branch.py"
+HOOK = Path(__file__).resolve().parents[1] / "hooks" / "protected-branch.py"
 
 
 def fire(tmp_path, file_path, session="s1", tool="Edit"):
@@ -100,3 +101,68 @@ def test_marker_lives_in_a_private_per_user_dir(repo, tmp_path):
     d = tmp_path / "tmp" / f"pr-flow-hint-{os.getuid()}"
     assert d.is_dir() and (d.stat().st_mode & 0o777) == 0o700
     assert not list((tmp_path / "tmp").glob("pr-flow-hint.*"))
+
+
+def guard(cwd, command):
+    ev = {"session_id": "s1", "cwd": str(cwd), "hook_event_name": "PreToolUse", "tool_name": "Bash",
+          "tool_input": {"command": command}}
+    p = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(ev), text=True, capture_output=True)
+    assert p.stdout == ""
+    return p.returncode, p.stderr
+
+
+@pytest.mark.parametrize("command", [
+    "git commit -qm x",
+    "git add README.md && git commit -m x",
+    "git reset --hard HEAD~1",
+    "git switch -c feat/x",
+    "git stash",
+    "git pull",
+    "FOO=1 git -c core.pager=cat restore README.md",
+])
+def test_guard_blocks_mutating_git_on_main(repo, command):
+    root, _ = repo
+    rc, err = guard(root, command)
+    assert rc == 2 and "pr-flow start" in err and "allowMainCheckout" in err
+
+
+@pytest.mark.parametrize("command", [
+    "git status", "git fetch origin", "git pull --ff-only", "git stash list", "git stash show",
+    "git merge-base HEAD origin/main", "git log --oneline -1", "echo 'git commit -m x'",
+])
+def test_guard_allows_read_only_git_on_main(repo, command):
+    root, _ = repo
+    assert guard(root, command)[0] == 0
+
+
+def test_guard_follows_cd_and_dash_c_to_the_real_target(repo, tmp_path):
+    root, _ = repo
+    wt = tmp_path / "wt"
+    git("worktree", "add", "-q", "-b", "feat/y", str(wt), cwd=root)
+    assert guard(root, f"cd {wt} && git commit -m x")[0] == 0        # a worktree, from main's cwd
+    assert guard(root, f"git -C {wt} commit -m x")[0] == 0
+    assert guard(tmp_path, f"cd {root} && git commit -m x")[0] == 2  # main, from elsewhere
+    assert guard(tmp_path, f"git -C {root} reset --hard")[0] == 2
+
+
+def test_guard_fails_open_when_target_needs_expansion(repo):
+    root, _ = repo
+    assert guard(root, "cd $W && git commit -m x")[0] == 0
+    assert guard(root, "git -C \"$W\" commit -m x")[0] == 0
+
+
+def test_guard_silent_off_protected_branch_and_when_opted_out(repo):
+    root, _ = repo
+    git("switch", "-q", "-c", "feat/z", cwd=root)
+    assert guard(root, "git commit -m x")[0] == 0
+    git("switch", "-q", "main", cwd=root)
+    git("config", "pr-flow.allowMainCheckout", "true", cwd=root)
+    assert guard(root, "git commit -m x")[0] == 0
+
+
+def test_guard_ignores_other_tools_and_bad_stdin(repo):
+    root, _ = repo
+    ev = {"cwd": str(root), "hook_event_name": "PreToolUse", "tool_name": "Write", "tool_input": {"command": "git commit"}}
+    assert subprocess.run([sys.executable, str(HOOK)], input=json.dumps(ev), text=True).returncode == 0
+    p = subprocess.run([sys.executable, str(HOOK)], input="not json", text=True, capture_output=True)
+    assert p.returncode == 0
