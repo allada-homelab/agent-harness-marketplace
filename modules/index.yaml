@@ -353,30 +353,6 @@ modules:
     command: true
     summary: Review a GitHub pull request with parallel reviewers and a confidence scorer, and post one
       comment holding only the high-confidence issues.
-- name: code-simplifier
-  version: 0.1.2
-  kinds:
-  - skills
-  - dsh-plugin
-  harness:
-  - claude
-  - pi
-  - dsh
-  description: Simplify recently changed code for clarity, consistency and maintainability without changing
-    what it does, following the project's own guideline files.
-  skills:
-  - name: code-simplifier
-    path: modules/code-simplifier/skills/code-simplifier/SKILL.md
-    harness:
-    - claude
-    - dsh
-    - pi
-    tags:
-    - quality
-    - refactor
-    command: true
-    summary: Simplify recently changed code for clarity, consistency and maintainability without changing
-      what it does.
 - name: dual-agent-pr-review
   version: 0.1.17
   kinds:
@@ -573,6 +549,30 @@ modules:
     - reverse-engineering
     command: true
     summary: Reverse-engineer a compiled target with REA (Reverse Engineer Anything).
+- name: simplify
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - pi
+  - dsh
+  description: Review changed code — the working tree, a branch or a pull request — through reuse, simplification,
+    efficiency and altitude lenses in parallel, then apply the fixes without changing behavior. pi and
+    dsh only.
+  skills:
+  - name: simplify
+    path: modules/simplify/skills/simplify/SKILL.md
+    harness:
+    - dsh
+    - pi
+    tags:
+    - quality
+    - refactor
+    - review
+    command: true
+    summary: Review changed code for reuse, simplification, efficiency and altitude (code at the wrong
+      layer) cleanups, then apply the fixes.
 - name: sleep-guard
   version: 0.1.0
   kinds:

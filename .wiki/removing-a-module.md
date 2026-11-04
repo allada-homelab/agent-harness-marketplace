@@ -3,16 +3,18 @@ type: runbook
 title: Removing a module
 description: Deleting modules/<name> leaves refs the gate misses — a stale root pi exclude, smoke tests naming it, lockfile importers — so sweep them; dated records get a note, not a rewrite.
 tags: [modules, removal, check-sh, pi, smoke, fleet]
-generated: {by: okf-wiki/opus, at: 2026-09-26T14:22:38Z}
+generated: {by: okf-wiki/haiku, at: 2026-11-04T15:40:04Z}
 verified:
   - {by: okf-wiki/opus, at: 2026-09-26T14:22:38Z, commit: 6ac844bcd7e8}
   - {by: okf-wiki/haiku, at: 2026-10-10T03:34:45Z, commit: 41c5f19df087}
   - {by: okf-wiki/deepseek, at: 2026-10-25T07:05:14Z, commit: 2596aa106bc7}
+  - {by: okf-wiki/haiku, at: 2026-11-04T15:40:04Z, commit: 02f90b24e011}
 sources:
   - {id: s1, resource: commit:002649c, title: Remove five modules and the references that outlived them}
   - {id: s2, resource: https://github.com/allada-homelab/agent-harness-marketplace/pull/36, title: "PR #36"}
   - {id: s3, resource: https://github.com/allada-homelab/agent-harness-marketplace/pull/41, title: "PR #41 fleet pairing: a removed module loses its row"}
   - {id: s4, resource: bin/check.sh, title: root pi manifest check iterates existing modules only}
+  - {id: s5, resource: https://github.com/allada-homelab/agent-harness-marketplace/pull/156, title: "PR #156 removing modules/code-simplifier; commit 02f90b2; pnpm v11.22.0"}
 ---
 
 # Removing a module
@@ -35,7 +37,11 @@ one mostly pass the gate silently.[^s1][^s2]
    module directories, so an exclude for a vanished module passes forever.[^s4]
 4. Regenerate: `uv run --script bin/render-index.py --write` and
    `uv run --script bin/render-plugin-manifests.py --write`; run `pnpm install` so the
-   module's importer leaves `pnpm-lock.yaml`, and commit that.
+   module's importer leaves `pnpm-lock.yaml`, and commit that. Under pnpm 11 a plain
+   `pnpm install` (even with `--fix-lockfile`, or after deleting `pnpm-lock.yaml`) keeps
+   the dead `modules/<name>: {}` importer: pnpm rebuilds the lockfile from its internal
+   copy `node_modules/.pnpm/lock.yaml`. Move that file aside, then `pnpm install` prunes
+   the importer and `pnpm install --frozen-lockfile` passes. The gate does not catch it.[^s5]
 5. `grep -rn '<name>'` outside `modules/`: repoint `tests/smoke/pi.sh` and
    `tests/smoke/dsh.sh` at a surviving module — the smoke job runs only in CI, never
    in `check.sh`, so a dangling smoke reference fails only after you push. Fix README
@@ -52,6 +58,7 @@ one mostly pass the gate silently.[^s1][^s2]
 
 - `CHECK_BASE=origin/main bin/check.sh` → `ALL CHECKS PASSED`; `bin/fleet-pairing.sh`
   warns `points at a module this checkout no longer has` until the dotfiles row goes.
+- `grep -n 'modules/<name>:' pnpm-lock.yaml` prints nothing; the gate passes a stale importer.
 - `grep -rn '<name>' --exclude-dir=node_modules .` hits only the historical records.
 - The PR's `smoke` job is green.
 
@@ -61,3 +68,4 @@ one mostly pass the gate silently.[^s1][^s2]
 - `bin/check.sh` :: `excluded = f"!modules/{mod.name}/**" in skills`
 - `bin/fleet-pairing.sh` :: `points at a module this checkout no longer has`
 - `handoff.md` :: `Historical record — do not update.`
+- `pnpm-workspace.yaml` :: `modules/*`

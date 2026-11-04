@@ -64,13 +64,6 @@
       "source": "./modules/code-review"
     },
     {
-      "name": "code-simplifier",
-      "description": "Simplify recently changed code for clarity, consistency and maintainability without changing what it does, following the project's own guideline files.",
-      "category": "development",
-      "version": "0.1.2",
-      "source": "./modules/code-simplifier"
-    },
-    {
       "name": "best-practices",
       "description": "Library of domain best-practices skills with stable, citable rule IDs (containers, uv, Python, FastAPI, databases, repo hygiene, Go, gRPC, QNAP QPKG packaging, Claude Code configuration and prompts) plus the containers-audit interactive scan-and-fix workflow and the authoring tools for adding rules.",
       "category": "development",

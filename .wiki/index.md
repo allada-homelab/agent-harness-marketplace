@@ -32,3 +32,4 @@ okf_version: "0.2"
 # Runbook
 
 * [Removing a module](./removing-a-module.md) - Deleting modules/<name> leaves refs the gate misses — a stale root pi exclude, smoke tests naming it, lockfile importers — so sweep them; dated records get a note, not a rewrite.
+* [Run a module skill on pi without installing the package](./pi-skill-e2e-without-install.md) - pi -p --skill <checkout>/modules/<m>/skills/<s> runs a module skill on real pi without pi install; delegate_agent is absent there, so agents take the inline fallback.

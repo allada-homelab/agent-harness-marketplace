@@ -24,8 +24,6 @@ importers:
 
   modules/code-review: {}
 
-  modules/code-simplifier: {}
-
   modules/dual-agent-pr-review: {}
 
   modules/edit-lint: {}
@@ -39,6 +37,8 @@ importers:
   modules/pr-flow: {}
 
   modules/rea: {}
+
+  modules/simplify: {}
 
   modules/sleep-guard: {}
 

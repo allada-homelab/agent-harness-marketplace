@@ -209,8 +209,8 @@ handoff**, or state that none is needed; do not leave it to be rediscovered.
 ## Porting a Claude Code plugin
 
 Most modules here are ports of a plugin from `anthropics/claude-plugins-official`
-(or another Claude-only marketplace). `modules/code-review` (PR #34) and
-`modules/code-simplifier` (PR #39) are the reference ports; open one beside the
+(or another Claude-only marketplace). `modules/code-review` (PR #34) is the
+reference port; open it beside the
 upstream plugin before starting. The port is the same module procedure above
 plus a fixed set of translations — and the upstream shape is never copied as-is.
 
@@ -266,7 +266,8 @@ child sees none of the conversation so every input must be passed explicitly.
 
 - **Name collisions with built-ins.** Claude Code ships `/simplify`,
   `/code-review`, `/security-review`, `/init`; a skill with the same name is
-  ambiguous. Name the skill after the module (`code-simplifier`), not the verb.
+  ambiguous. Name the skill after the module, not the verb — unless the skill
+  is scoped off Claude (`harness: [pi, dsh]`, as `modules/simplify` is).
 - **`pnpm-lock.yaml` changes on the first `bin/check.sh`** because the new
   module is a workspace project. Commit it — CI installs with a frozen lockfile.
 - **The version is 0.1.0, not upstream's.** Module versions are ours; the
