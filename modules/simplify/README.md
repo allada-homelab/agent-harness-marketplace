@@ -17,10 +17,12 @@ What a run does:
 3. dispatches four reviewers in parallel, one lens each — **reuse** (an
    existing helper already does this), **simplification** (same behavior in
    less, clearer code), **efficiency** (work the change does not need) and
-   **altitude** (code at the wrong layer);
-4. confirms each finding against the code and applies the ones that hold
-   without changing behavior, then runs the project's fast check if it has
-   one;
+   **altitude** (code at the wrong layer); each returns at most 5 findings as
+   exact `old`/`new` edits with checkable evidence — for reuse, the existing
+   helper's full body, which is what exposes a look-alike that differs;
+4. checks each `old` block and its evidence against the code and applies the
+   ones that hold without changing behavior, then runs the project's fast
+   check if it has one;
 5. reports each fix, each skipped finding with its reason, and the worktree
    path if one was made. Nothing is committed; you review the diff.
 

@@ -9,6 +9,8 @@ tags: [refactor, quality, review]
 
 # Simplify
 
+**This invocation is the task. Start on step 1 now — do not ask what to do.**
+
 Review a change for code that could be reused, simpler, cheaper or at a better
 layer, then apply the fixes — never changing what the code does, never
 committing. Target: $ARGUMENTS — when none is given, the uncommitted changes,
@@ -79,13 +81,14 @@ message so they run in parallel.
 4. **Review.** Dispatch `simplify:reviewer` four times in one message, one
    lens each, with everything the Agents section lists.
 
-5. **Apply.** For each finding, open the cited code and confirm it before
-   editing; reviewers over-report. Then:
-   - apply it with the edit tool when it holds and keeps behavior identical;
-   - skip it with a one-line reason when it is wrong, changes behavior, or
-     conflicts with a guideline file;
-   - when two findings touch the same lines, apply the one that removes more
-     and skip the other.
+5. **Apply.** Reviewers over-report. Handle each finding in turn:
+   1. Open `file` and check that the `old` block is in it, character for
+      character. If not, skip it as "stale".
+   2. Check the `evidence` yourself: open the cited helper, re-run the grep,
+      read the loop. If it does not hold, skip it with the reason.
+   3. Skip it if it changes behavior or conflicts with a guideline file.
+   4. Otherwise replace `old` with `new` using the edit tool.
+   When two findings touch the same lines, apply the first and skip the other.
 
    Never `git checkout`, `git restore`, `git stash` or `git reset` a file —
    the scope is usually uncommitted work, and those discard it. To back out an
