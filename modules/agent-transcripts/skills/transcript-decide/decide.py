@@ -138,21 +138,13 @@ BATTERIES = {
 }
 
 # What `calibrate` compares against: a decision signal per session vs the review's category label.
+# Only where the two mean the same thing — no review category is a claimed outcome (stopped_short
+# is stopping *without* saying so; unresolved_end includes failing commands), so `session` has none.
 CALIBRATION = {
     "turn": [("max corrects_agent over the session's turns", "user_correction",
               "SELECT harness, native_id, max(value) FROM decision_answers"
               " WHERE battery = 'turn' AND qid = 'corrects_agent' AND battery_hash = ?"
               " GROUP BY harness, native_id")],
-    "session": [
-        ("P(claimed_outcome in blocked, asks_user)", "unresolved_end",
-         "SELECT harness, native_id, coalesce(json_extract(probabilities, '$.blocked'), 0)"
-         " + coalesce(json_extract(probabilities, '$.asks_user'), 0) FROM decision_answers"
-         " WHERE battery = 'session' AND qid = 'claimed_outcome' AND battery_hash = ?"),
-        ("P(claimed_outcome = partial)", "stopped_short",
-         "SELECT harness, native_id, coalesce(json_extract(probabilities, '$.partial'), 0)"
-         " FROM decision_answers WHERE battery = 'session' AND qid = 'claimed_outcome'"
-         " AND battery_hash = ?"),
-    ],
 }
 THRESHOLDS = (0.5, 0.7, 0.8, 0.9, 0.95, 0.99)
 

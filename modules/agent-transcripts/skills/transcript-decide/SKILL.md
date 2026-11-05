@@ -51,9 +51,12 @@ uv run --script ./decide.py calibrate --battery turn
 `rollup` shows how each question's answers split. A yes/no answer between 0.2 and 0.8 is
 `unsure`: the model sat near a coin flip, which is no decision — never read 0.7 as "probably".
 
-`calibrate` compares a battery's signals with transcript-review's labels at several thresholds.
-Those labels are model output too, so it measures agreement, not truth. Use a threshold only
-where its precision is useful, and recalibrate whenever the battery changes.
+`calibrate --battery turn` compares `corrects_agent` with transcript-review's `user_correction`
+labels at several thresholds. Those labels are model output too, and on this history they were
+the noisier side (they count tool denials and new requirements as corrections), so treat it as
+agreement, not truth. No review category means a claimed outcome, so `session` has no calibration
+signal. Check a threshold against hand-labelled examples before relying on it, and recalibrate
+whenever a battery changes.
 
 For anything else, query `decision_answers` in `findings.db` with the transcript-query skill's
 tools: one row per question per unit, `value` is P(yes) for a yes/no question and the
