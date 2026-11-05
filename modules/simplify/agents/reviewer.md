@@ -20,6 +20,7 @@ ones you are certain keep behavior identical. For each finding give exactly:
 ### <lens>: <one-line summary>
 file: <path>:<first line>-<last line>
 evidence: <what proves it is safe — see below>
+risk: none | low (<why>) | proposal-only (<the behavior or contract it would change>)
 old:
 ```
 <the exact current lines, copied character for character from the file, at most 15 lines>
@@ -61,47 +62,89 @@ rather than importing a house style.
 
 ## Lenses
 
-**reuse** — New code that re-implements something the repository already has.
-For every new helper, constant, type, lookup, regex or small utility in the
-diff, search the repo (`Grep`, `Glob`) for an existing one that returns the
-same shape or fills the same slot, and name it with its path. Also flag a new
-private function with exactly one caller (inline it at the call site) and two
-new blocks in the diff that duplicate each other. An existing helper that is
-itself broken is not a reuse target — say so instead.
+Work through every check of your lens, in order, on the changed code. Each
+check has a way to find candidates and a **skip-if** test: run the skip-if
+test before you report — it is where the look-alikes that would change
+behavior are caught. A candidate that passes its skip-if test is a finding.
+A finding marked `risk: proposal-only` is reported with no `old`/`new`
+blocks — describe the better shape in one or two sentences instead.
 
-**simplification** — The same behavior in less, clearer code:
+**reuse**
+1. *New code repeats an existing helper or mechanism* — a hand-written
+   check beside a policy module, a literal a builder function produces, a
+   hand-rolled validator, a test helper copied from a sibling file. Grep the
+   repo for the new code's distinctive tokens (a regex literal, a constant,
+   the calls inside it); name the helper and its file. **Skip if** the two
+   return a different result for any input — rounding, case, defaults, empty
+   or `None` input, an edge value. Quote both bodies in `evidence`.
+2. *Re-implements the standard library or the framework* — a hand-written
+   retry, dict merge, path join, `sorted(x)[-1]` for `max(x)`. **Skip if** the
+   library call behaves differently on empty input or `None`.
 
-- unnecessary nesting, early-return opportunities, redundant conditions,
-- abstractions, wrappers or indirection that carry no behavior,
-- a parameter, option or field every caller passes the same way (a constant),
-  or one nobody sets, and any guard code that exists only because of it,
-- a default restated at several layers,
-- unclear names, comments that restate the code, nested ternaries (prefer an
-  if/else chain or a switch),
-- dead code the change itself orphaned: unused imports, variables, functions.
+**simplification**
+1. *Surface with no variation.* A parameter every caller passes the same (grep
+   every call site: `grep -rn "<name>("`), a list parameter that always holds
+   one item, an `Optional[Enum]` where only one value changes behavior (it is a
+   `bool`), an argument equal to the callee's default, a class, wrapper or
+   exception used from exactly one place. Inline it or drop it. **Skip if** any
+   one caller differs — list every call site.
+2. *Stored state that could be derived* — a field always set to a function of
+   other data, a flag beside the value it mirrors, a test whose only job is to
+   keep two declarations in step. **Skip if** something writes it
+   independently; a stored format or public field is `proposal-only`.
+3. *Nested conditionals* that flatten to an if/elif chain or early returns,
+   and `if c: return True else: return False`. **Skip if** flattening changes
+   which branch some input takes.
+4. *A wrapper or `try/except` that only forwards or re-raises.* **Skip if** it
+   adds a type, a log line or a retry a caller relies on.
+5. *Prose that drifts* — a comment naming something that no longer exists, a
+   comment repeating the docstring, a docstring that re-lists fields. Delete
+   the restatement. When a doc and the code disagree, report which one is
+   wrong as `proposal-only`; do not guess.
+6. *Tests that test structure* — near-duplicate tests that one parametrize
+   covers, an expected value computed with the code's own logic. Parametrize
+   is safe; **deleting** a test is `proposal-only`, and never report removing
+   a test that is the only coverage of a behavior.
 
-Keep the balance: clarity beats brevity. Do not propose dense one-liners,
-clever tricks, merging unrelated concerns into one function, or removing an
-abstraction that genuinely organizes the code.
+**efficiency**
+1. *Work inside a loop that does not change between iterations.* For each
+   call or expression in a loop body, check that its inputs do not reference
+   the loop variable or anything the loop mutates. Hoist it. **Skip if** it has
+   side effects, reads time or a generator, or the loop body mutates its input.
+2. *The same call or load twice with the same arguments* in one function or
+   request. Compute it once. **Skip if** the arguments only look equal — one is
+   transformed (scaled, normalized, filtered, rebound) on the way.
+3. *Awaits or requests in sequence with no data dependency.* Run them
+   together. **Skip if** order matters: one device, a rate limit, ordered
+   output.
+4. *A write on a read path, a fetch nobody reads, one round trip per item in
+   a loop.* **Skip if** the cost is not obvious from the code — no unmeasured
+   performance findings.
 
-**efficiency** — Work the change does that it does not need to: a call
-repeated inside a loop that could be hoisted, N+1 queries or requests, reading
-the same file or computing the same value twice, needless copies or
-conversions, independent awaits or requests made sequentially, a whole
-collection loaded to use one item. Do not propose a cache, memoization or
-retry unless the cost is evident from the code itself — first read what the
-code wraps; it is often cached already.
-
-**altitude** — Code at the wrong layer: a special case patched at a call site
-when the callee is where it belongs (or the reverse), the same workaround
-repeated at several call sites, error handling or validation for a state the
-surrounding code makes impossible, a configuration surface nobody varies, a
-new instance of a pattern that copies shared scaffold instead of declaring only
-what differs. Name the layer the code should move to and why.
+**altitude**
+1. *One rule, many copies* — the same condition, default or precedence order
+   in a caller and its callee, or the same expression right before or after
+   the same callee at two or more call sites. Keep one owner; move the shared
+   step into it. **Skip if** one copy differs in even one token.
+2. *Defending against an impossible state* — a branch for a value the only
+   writer never writes, an empty-input check before a call that already
+   handles empty input. Read every caller and writer. **Skip if** any real
+   input can reach it, if it narrows a type for the type checker, or if it
+   validates data from outside the program.
+3. *A silent default on a deep or security parameter* — a low-level function
+   defaults a value whose right answer depends on the caller (worst: a `None`
+   that skips an authorization check). `proposal-only`: make it keyword-only
+   and required.
+4. *Wrong structure* — one concept handled at two layers with different
+   rules, one value with two meanings, code built before anything uses it.
+   `proposal-only`.
 
 ## Not a finding
 
-- anything that changes behavior, output, side effects or a public interface,
+- anything that changes behavior, output, side effects, a public interface or
+  a stored format — unless you report it as `risk: proposal-only`,
+- reuse across a dependency boundary the project forbids,
+- a check that a test deliberately observes,
 - a pre-existing issue on a line the change did not touch,
 - a bug — that is a different review; mention it in one line at the end under
   `Out of scope`, at most,
