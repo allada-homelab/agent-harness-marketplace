@@ -58,6 +58,12 @@ agreement, not truth. No review category means a claimed outcome, so `session` h
 signal. Check a threshold against hand-labelled examples before relying on it, and recalibrate
 whenever a battery changes.
 
+Measured on hand labels when these batteries shipped: `corrects_agent` was right 0.60 of the time
+at 0.8 and 0.75 at 0.95 (40 turns). It also fires on reported failures, new constraints and the
+user changing their own mind, so use it to order turns for review, with 0.95 as the cut, never
+as a count of corrections. On 30 sessions `claimed_outcome` agreed 27 times and
+`claims_tests_passed` at 0.8 caught 8 of 10 with 2 false alarms.
+
 For anything else, query `decision_answers` in `findings.db` with the transcript-query skill's
 tools: one row per question per unit, `value` is P(yes) for a yes/no question and the
 confidence for a choice, `label` is the chosen option and `probabilities` the full split.

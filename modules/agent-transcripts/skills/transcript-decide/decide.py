@@ -91,7 +91,8 @@ BATTERIES = {
             "type": "choice",
             "instructions": "What does the agent's final message say about the user's request?",
             "criteria": {
-                "completed": "Says the requested work is done or the question is answered.",
+                "completed": "Says the requested work is done or the question is answered. A structured"
+                             " findings or answer payload that delivers what was asked counts as completed.",
                 "partial": "Says some of the work is done and some remains.",
                 "blocked": "Says it cannot continue because of an error, missing access or missing information.",
                 "asks_user": "Ends by asking the user to choose or confirm something before it continues.",
