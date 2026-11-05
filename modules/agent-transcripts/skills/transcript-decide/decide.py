@@ -40,11 +40,11 @@ TIMEOUT = 120  # a full batch of long states is ~10 s of compute; queueing behin
 RETRY_STATUSES = (429, 502, 503, 504)  # busy, loading after a swap, or the gateway lost the upstream
 RETRY_FOR = 180  # seconds: a cold start is ~35 s, a deploy longer
 FLOOR = 0.801  # a noul is decided only past this; inside the band the model sat near a coin flip
-# One request at a time, at most half the server's max_num_seqs (32) and ~8K tokens: the card is
-# shared and other callers wait out our whole forward (measured: 4x32 rows in flight put 40 s of
-# queue on them; one request of 16 session states, 7 s). Batching long states buys no throughput.
+# One request at a time, at most 16 states and ~2K tokens: the card is shared and another caller
+# waits out whatever forward of ours is running (measured: 4x32 rows in flight put 40 s of queue
+# on them, a 32K-char request ~5 s). Batching long states buys no throughput.
 STATES_PER_REQUEST = 16
-CHARS_PER_REQUEST = 32000
+CHARS_PER_REQUEST = 8000
 PREV_CHARS, TURN_CHARS = 500, 4000
 REQUEST_CHARS, REPORT_CHARS = 2000, 6000  # with the caps every state stays far under the token limit
 
