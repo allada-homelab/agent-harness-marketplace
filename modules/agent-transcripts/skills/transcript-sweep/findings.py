@@ -24,7 +24,7 @@ from pathlib import Path
 FINDINGS_NAME = "findings.db"
 # Bumped whenever a CREATE TABLE here changes: the statements are IF NOT EXISTS, so an
 # existing file would otherwise keep the old shape forever. Stored in PRAGMA user_version.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 FINDINGS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -90,7 +90,27 @@ CREATE TABLE IF NOT EXISTS analysis_access (
     at          TEXT NOT NULL
 );
 
+-- One row per question per unit (a turn `ord:N` or a session `ord:A-B`); `value` is P(yes)
+-- for a noul and the confidence for a choice, whose full split is in `probabilities`.
+CREATE TABLE IF NOT EXISTS decision_answers (
+    id            INTEGER PRIMARY KEY,
+    run_id        INTEGER NOT NULL REFERENCES runs(id),
+    harness       TEXT NOT NULL,
+    native_id     TEXT NOT NULL,
+    battery       TEXT NOT NULL,
+    battery_hash  TEXT NOT NULL,
+    unit          TEXT NOT NULL,
+    qid           TEXT NOT NULL,
+    value         REAL,
+    label         TEXT,
+    probabilities TEXT,
+    revision      TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    UNIQUE(harness, native_id, battery, unit, qid)
+);
+
 CREATE INDEX IF NOT EXISTS sweep_flags_session ON sweep_flags(harness, native_id);
+CREATE INDEX IF NOT EXISTS decision_answers_question ON decision_answers(battery, battery_hash, qid);
 CREATE INDEX IF NOT EXISTS analysis_access_session
     ON analysis_access(run_id, harness, native_id);
 CREATE INDEX IF NOT EXISTS review_flags_session ON review_flags(harness, native_id);
@@ -125,7 +145,7 @@ def migrate(conn: sqlite3.Connection, db: Path) -> None:
     0 → 1 drops `review_flags` so the schema below can recreate it with its UNIQUE key.
     That is destructive, so it only runs while the table is empty; a store that already
     holds review findings is the user's data and this exits rather than guess.
-    1 → 2 only adds tables, which the IF NOT EXISTS schema creates; nothing to do here.
+    1 → 2 and 2 → 3 only add tables, which the IF NOT EXISTS schema creates; nothing to do here.
     """
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version >= SCHEMA_VERSION:

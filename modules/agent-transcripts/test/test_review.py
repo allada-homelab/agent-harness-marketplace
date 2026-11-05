@@ -565,17 +565,18 @@ def test_view_budget_elides_the_middle_and_keeps_the_first_user_message(index, t
     assert len(body) < 1500
 
 
-def test_view_renders_the_final_report_in_full(index, tmp_path, capsys):
+@pytest.mark.parametrize("tool", ["SubagentHandback", "StructuredOutput"])
+def test_view_renders_the_final_report_in_full(index, tmp_path, capsys, tool):
     s = index.session("v6")
     index.user(s, "audit the leftover ids")
     index.call(s, "Read", '{"path": "' + "x" * 200 + '"}', result="ok")
     report = "Four ids remain: " + " ".join("id%d is expected because reason %d." % (i, i)
                                              for i in range(20)) + " END-OF-REPORT"
-    ord_ = index.call(s, "SubagentHandback", json.dumps({"message": report}), result="sent")
+    ord_ = index.call(s, tool, json.dumps({"message": report}), result="sent")
     index.close()
 
     out = view(tmp_path, capsys, "v6")
-    assert "[%d] CALL SubagentHandback" % ord_ in out
+    assert "[%d] CALL %s" % (ord_, tool) in out
     assert "END-OF-REPORT" in out            # far past the 60-char args cap
     assert "id19 is expected because reason 19." in out
     assert '"' + "x" * 100 not in out           # other calls keep their cap

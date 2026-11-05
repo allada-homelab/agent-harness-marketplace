@@ -1,14 +1,15 @@
 # agent-transcripts
 
 Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a
-derived sqlite database. Eight portable skills: `transcript-export-claude`,
+derived sqlite database. Nine portable skills: `transcript-export-claude`,
 `transcript-export-pi` and `transcript-export-dsh` each do a read-only, incremental export
 of one harness's raw session files (host directories plus dev-container docker volumes for
 claude and dsh) into a cache root outside any git worktree, `transcript-ingest` builds
 the derived sqlite index over everything exported, `transcript-query` reads it to answer
 questions about tool use, sessions and activity across harnesses, `transcript-sweep`
 scans it for sessions worth a closer look, `transcript-review` judges those sessions one
-at a time, and `transcript-analyze` reads one whole session and writes an analysis of it.
+at a time, `transcript-analyze` reads one whole session and writes an analysis of it, and
+the optional `transcript-decide` labels turns and sessions with a decision model.
 The raw files are
 canonical; the database is rebuildable and safe to delete. The three export skills call the
 one script that ships beside the ingest skill.
@@ -70,7 +71,17 @@ groups recorded analyses by outcome, problem category and label, and recommendat
 target. Its commands live in `transcript-review`'s script, which they share code with. A
 session longer than four pages is split across child agents.
 
-All three passes write `findings.db`, a small sqlite database beside the index in the cache root,
+## The decision labels
+
+`transcript-decide` is optional: it runs only when `DECISION_URL` points at a gateway serving
+a decision model (`decision-default`), and nothing else here depends on it. It asks fixed
+batteries of yes/no and choice questions — one state per human turn, one per session's
+first request and final report — and stores the raw probabilities. States never include tool
+results and are capped, so none comes near the model's token limit. `calibrate` scores a
+battery's signals against the review's labels, because a decision model is only reliable on
+questions the text answers outright; its answers rank and label sessions, never exclude them.
+
+All four passes write `findings.db`, a small sqlite database beside the index in the cache root,
 keyed by `(harness, native_id)` so findings survive rebuilding the index. Like the index it
 is derived from private transcripts and never enters a git repo.
 
