@@ -66,6 +66,8 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    - `review` (12): unresolved review threads, changes requested, a draft PR, or
      one blocked by branch protection. Address each thread (bot reviewers
      included) or the blocking condition, push, reply on the thread, watch again.
+     When the output says CI is green and only the `ownership` check is waiting,
+     there is nothing to fix: the PR needs an owner's approval. Report that.
    - `closed` (13): stop and report.
    - `timeout` (14): nothing finished within the hour; watch again.
    - `attempts-exhausted` (15): five fix rounds used and the sixth verdict is
