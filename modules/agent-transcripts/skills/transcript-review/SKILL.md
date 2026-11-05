@@ -56,8 +56,8 @@ same result* repeated N times in a row, and `... [elided K messages] ...` means 
 cut to fit the budget. `ERR`, `×N` and `…` are markers, never part of a quote.
 
 The session's **final report** is exempt from those line caps and is never elided: the last
-`ASSISTANT` text and the last `CALL SubagentHandback` (a subagent's report arrives as that
-call's arguments) are shown in full, up to 6000 characters each. That report is what the
+`ASSISTANT` text and the last `CALL SubagentHandback` or `CALL StructuredOutput` (a subagent's
+report arrives as that call's arguments) are shown in full, up to 6000 characters each. That report is what the
 session claims; read all of it before judging a claim unverified.
 
 If the sweep flagged this session, the header lists `anchors` — the ords of the flagged

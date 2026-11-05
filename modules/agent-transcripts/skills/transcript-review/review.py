@@ -34,7 +34,9 @@ CONFIDENCES = ("low", "medium", "high")
 # A session's final report is what an unverified_claim is judged against, and a subagent
 # delivers it as tool-call arguments — the 60-char args cap turned justified reports into
 # "claims with no evidence". It gets its own cap and is always kept by the budget.
-FINAL_REPORT_TOOLS = ("SubagentHandback",)
+# StructuredOutput: a subagent with an output schema reports through it, after a one-line
+# "Submitting findings." text (4 of 30 sampled session reports, 2026-11-05).
+FINAL_REPORT_TOOLS = ("SubagentHandback", "StructuredOutput")
 FINAL_REPORT_CHARS = 6000
 GREP_LIMIT = 20
 GREP_CONTEXT = 160

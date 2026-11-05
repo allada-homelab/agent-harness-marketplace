@@ -181,3 +181,13 @@ def test_requests_are_packed_by_size_so_long_states_go_a_few_at_a_time(index, tm
     index.close()
     run(tmp_path, "--battery", "turn")
     assert calls == [2, 1]  # each state renders to ~1,050 chars: two fit under 2,500, a third does not
+
+
+def test_session_state_reads_a_structured_output_report_not_the_line_before_it(index, tmp_path, asked):
+    s = index.session("a", kind="subagent")
+    index.user(s, "find the defaults")
+    index.call(s, "StructuredOutput", json.dumps({"answer": "limit 10, offset 0"}), result="ok",
+               text="Submitting findings.")
+    index.close()
+    run(tmp_path, "--battery", "session")
+    assert "limit 10, offset 0" in asked[0]
