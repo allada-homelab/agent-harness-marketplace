@@ -1417,7 +1417,7 @@ COVERAGE: dict[str, dict[str, str]] = {
             "artifact-autoreact-ledger", "artifact-comment-monitor", "atis-latch", "bridge-session",
             "continued-in", "cost-state", "failed", "file-history-delta", "file-history-snapshot",
             "fork-context-ref", "frame-link", "history-suppression", "last-prompt", "launched",
-            "mode", "permission-mode", "pr-link", "relocated", "result", "started", "tools-used",
+            "mode", "permission-mode", "pr-link", "relocated", "result", "session-owner", "started", "tools-used",
             "worktree-state", "system", "system/agents_killed", "system/api_error", "system/away_summary",
             "system/bridge_status", "system/informational", "system/local_command",
             "system/model_fallback", "system/model_refusal_fallback", "system/scheduled_task_fire",
