@@ -53,7 +53,9 @@ jobs:
         with:
           node-version: '22'
       - name: Install pi and dsh from npm
-        run: npm install -g @earendil-works/pi-coding-agent @deepseek-ai/dsh
+        # `@latest`, not a bare name: dsh ships only prereleases, which a bare name's
+        # implied `*` range cannot match (ETARGET on the runner since 2026-11-05).
+        run: npm install -g @earendil-works/pi-coding-agent @deepseek-ai/dsh@latest
       - name: pi loads the repo as a package and resolves its portable skills
         run: bash tests/smoke/pi.sh
       - name: dsh installs a content module into a scratch profile and every plugin applies
