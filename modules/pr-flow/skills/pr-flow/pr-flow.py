@@ -9,6 +9,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import secrets
 import shutil
 import signal
@@ -377,8 +378,23 @@ def workflow_runs_for(cwd, sha):
         return None
 
 
+RUN_ID = re.compile(r"/actions/runs/(\d+)")
+# A check that waits on an owner's approval, not on CI (teamlumos' ownership action posts it).
+# It stays pending until someone approves, so watching for it to finish only runs out the timeout.
+REVIEW_GATE = "ownership"
+
+
 def check_outcome(c):
     return (c.get("conclusion") or c.get("state") or "").upper()
+
+
+def check_name(c):
+    return c.get("name") or c.get("context")
+
+
+def run_id(c):
+    m = RUN_ID.search(c.get("detailsUrl") or "")
+    return int(m.group(1)) if m else 0
 
 
 def live_checks(pr):
@@ -388,13 +404,31 @@ def live_checks(pr):
     same head; only the newer one says anything about the commit.
     """
     checks = pr.get("statusCheckRollup") or []
-    latest = {}
+    newest = {}
     for c in checks:
-        key = (c.get("workflowName"), c.get("name"))
-        latest[key] = max(latest.get(key, ""), c.get("startedAt") or "")
+        key = (c.get("workflowName"), check_name(c))
+        newest[key] = max(newest.get(key, 0), run_id(c))
     return [c for c in checks
             if not (check_outcome(c) == "CANCELLED"
-                    and (c.get("startedAt") or "") < latest[(c.get("workflowName"), c.get("name"))])]
+                    and run_id(c) < newest[(c.get("workflowName"), check_name(c))])]
+
+
+def newest_runs(cwd, sha):
+    """{workflow name: newest run id} for `sha`, to tell a cancelled run from one already replaced.
+
+    A rerun (a labeled event, a PR edit) cancels the running workflow before its own jobs reach
+    the rollup, so for a while the cancelled jobs are the only entries the PR shows.
+    """
+    try:
+        runs = json.loads(gh("api", f"repos/{{owner}}/{{repo}}/actions/runs?head_sha={sha}&per_page=100",
+                             "--jq", "[.workflow_runs[] | {id, name}]", cwd=cwd))
+    except (Fail, subprocess.TimeoutExpired, ValueError) as e:
+        warn(f"could not list workflow runs for {str(sha)[:7]} ({e})")
+        raise _Retry from e
+    newest = {}
+    for r in runs:
+        newest[r["name"]] = max(newest.get(r["name"], 0), r["id"])
+    return newest
 
 
 def unresolved_threads(cwd, number):
@@ -405,19 +439,25 @@ def unresolved_threads(cwd, number):
     return sum(1 for t in nodes if not t.get("isResolved"))
 
 
-def classify(pr, unresolved):
+def classify(pr, unresolved, runs):
     """Terminal verdict for a PR snapshot, or None to keep polling."""
     if pr.get("state") == "MERGED":
         return "merged"
     if pr.get("state") == "CLOSED":
         return "closed"
     checks = live_checks(pr)
-    if any(check_outcome(c) in BAD for c in checks):
+    cancelled = [c for c in checks if check_outcome(c) == "CANCELLED"]
+    newest = runs() if cancelled else {}
+    rerunning = [c for c in cancelled if newest.get(c.get("workflowName"), 0) > run_id(c)]
+    if any(check_outcome(c) in BAD and c not in rerunning for c in checks):
         return "checks-failed"
     if pr.get("mergeable") == "CONFLICTING":
         return "conflict"
-    if any(check_outcome(c) not in OK for c in checks) or pr.get("mergeable") == "UNKNOWN":
+    waiting = [c for c in checks if check_outcome(c) not in OK]
+    if any(check_name(c) != REVIEW_GATE for c in waiting) or pr.get("mergeable") == "UNKNOWN":
         return None
+    if waiting:
+        return "review"
     if pr.get("isDraft"):
         return "review"
     if pr.get("reviewDecision") == "CHANGES_REQUESTED":
@@ -672,7 +712,8 @@ def cmd_watch(a):
                 return threads["n"]
 
             try:
-                verdict = None if stale else classify(pr, unresolved)
+                verdict = None if stale else classify(pr, unresolved,
+                                                      lambda: newest_runs(cwd, pr.get("headRefOid") or ""))
             except _Retry:
                 verdict = None
 
@@ -726,7 +767,9 @@ def cmd_watch(a):
         if verdict == "checks-failed":
             print_failed_logs(pr, cwd)
         elif verdict == "review":
-            if pr.get("isDraft"):
+            if any(check_name(c) == REVIEW_GATE and check_outcome(c) not in OK for c in live_checks(pr)):
+                print(f"CI is green; waiting on the {REVIEW_GATE} check, which needs an owner's approval")
+            elif pr.get("isDraft"):
                 print("PR is a draft; mark it ready for review")
             elif pr.get("mergeStateStatus") == "BLOCKED":
                 print("blocked by branch protection (approval or required check missing)")

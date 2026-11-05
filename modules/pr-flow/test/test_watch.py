@@ -74,17 +74,49 @@ def test_checks_failed_prints_log_and_counts_attempt(repo):
     assert state["attempts"] == 1 and state["pr"] == 7
 
 
-@pytest.mark.parametrize(("rerun_started", "rc", "verdict"), [
-    ("2026-01-01T00:02:00Z", 0, "green"),           # a later run of the job replaced the cancelled one
-    ("2026-01-01T00:00:00Z", 10, "checks-failed"),  # the cancelled run is the latest: a real failure
+def run_check(conclusion, run_id, status="COMPLETED"):
+    return {**check(conclusion, status, url=f"https://github.com/o/r/actions/runs/{run_id}/job/1"),
+            "workflowName": "wf"}
+
+
+@pytest.mark.parametrize(("rerun_id", "rc", "verdict"), [
+    (124, 0, "green"),           # a later run of the job replaced the cancelled one
+    (122, 10, "checks-failed"),  # the cancelled run is the latest: a real failure
 ])
-def test_cancelled_run_counts_only_when_not_superseded(repo, rerun_started, rc, verdict):
+def test_cancelled_run_counts_only_when_not_superseded(repo, rerun_id, rc, verdict):
     _, wt = opened(repo)
-    cancelled = {**check("CANCELLED"), "workflowName": "wf", "startedAt": "2026-01-01T00:01:00Z"}
-    rerun = {**check("SUCCESS"), "workflowName": "wf", "startedAt": rerun_started}
-    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[cancelled, rerun])]})
+    checks = [run_check("CANCELLED", 123), run_check("SUCCESS", rerun_id)]
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=checks)],
+                                     "runs": [{"id": 123, "name": "wf"}, {"id": rerun_id, "name": "wf"}]})
     assert r.returncode == rc, r.stderr
     assert last(r) == f"pr-flow: watch {verdict} https://github.com/o/r/pull/7"
+
+
+def test_cancelled_run_whose_rerun_is_not_in_the_rollup_yet_keeps_polling(repo):
+    # A labeled-event rerun cancels the first run before its own jobs reach the rollup: the
+    # cancelled jobs are the only entries, but GitHub already lists the newer run for this head.
+    _, wt = opened(repo)
+    views = [pr(checks=[run_check("CANCELLED", 123)]),
+             pr(checks=[run_check("CANCELLED", 123), run_check("SUCCESS", 124)])]
+    r = run("watch", "--interval", "0", cwd=wt,
+            replay={"pr_view": views, "runs": [{"id": 123, "name": "wf"}, {"id": 124, "name": "wf"}]})
+    assert r.returncode == 0, r.stderr
+    assert "next poll" in r.stderr
+    assert last(r) == "pr-flow: watch green https://github.com/o/r/pull/7"
+
+
+@pytest.mark.parametrize(("context", "rc", "verdict"), [
+    ("ownership", 12, "review"),  # only the approval gate is left: hand back instead of waiting
+    ("ext", 14, "timeout"),       # any other pending check is CI still running
+])
+def test_pending_ownership_check_returns_review_once_ci_is_green(repo, context, rc, verdict):
+    _, wt = opened(repo)
+    gate = {"__typename": "StatusContext", "context": context, "state": "PENDING", "targetUrl": "https://x"}
+    view = pr(checks=[check("SUCCESS"), gate], review="REVIEW_REQUIRED", mergeStateStatus="BLOCKED")
+    r = run("watch", "--timeout", "0", cwd=wt, replay={"pr_view": [view]})
+    assert r.returncode == rc, r.stderr
+    assert last(r) == f"pr-flow: watch {verdict} https://github.com/o/r/pull/7"
+    assert ("waiting on the ownership check" in r.stdout) is (context == "ownership")
 
 
 def test_conflict(repo):

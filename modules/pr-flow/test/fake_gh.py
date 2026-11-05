@@ -58,9 +58,13 @@ elif argv[0] == "api" and "/actions/runs" in argv[1]:
     if replay.get("runs_fail"):
         print("boom", file=sys.stderr)
         sys.exit(1)
-    # workflow_runs: Actions runs GitHub has for the head. Default 1 = "CI exists and is
-    # registering", which keeps the pre-existing grace-window semantics for older tests.
-    print(int(replay.get("workflow_runs", 1)))
+    if ".total_count" in argv:
+        # workflow_runs: Actions runs GitHub has for the head. Default 1 = "CI exists and is
+        # registering", which keeps the pre-existing grace-window semantics for older tests.
+        print(int(replay.get("workflow_runs", 1)))
+    else:
+        # runs: the head's runs as [{"id": …, "name": <workflow name>}].
+        print(json.dumps(replay.get("runs", [])))
 elif argv[:2] == ["api", "graphql"]:
     n = int(replay.get("threads_unresolved", 0))
     nodes = [{"isResolved": False}] * n + [{"isResolved": True}]
