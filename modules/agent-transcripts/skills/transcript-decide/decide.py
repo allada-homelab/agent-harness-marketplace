@@ -37,12 +37,14 @@ SKILL = "transcript-decide"
 MODEL = "decision-default"
 PATH = "/v1/systemone"
 TIMEOUT = 120  # a full batch of long states is ~10 s of compute; queueing behind others adds more
-RETRY_STATUSES = (429, 503)  # busy, or the model is still loading after a swap
+RETRY_STATUSES = (429, 502, 503, 504)  # busy, loading after a swap, or the gateway lost the upstream
 RETRY_FOR = 180  # seconds: a cold start is ~35 s, a deploy longer
 FLOOR = 0.801  # a noul is decided only past this; inside the band the model sat near a coin flip
-# One request at a time, half the server's max_num_seqs (32): the card is shared, and rows past
-# that queue in front of every other caller (measured: 4x32 in flight put 40 s of queue on them).
+# One request at a time, at most half the server's max_num_seqs (32) and ~8K tokens: the card is
+# shared and other callers wait out our whole forward (measured: 4x32 rows in flight put 40 s of
+# queue on them; one request of 16 session states, 7 s). Batching long states buys no throughput.
 STATES_PER_REQUEST = 16
+CHARS_PER_REQUEST = 32000
 PREV_CHARS, TURN_CHARS = 500, 4000
 REQUEST_CHARS, REPORT_CHARS = 2000, 6000  # with the caps every state stays far under the token limit
 
@@ -298,7 +300,12 @@ def cmd_run(args) -> int:
         return 0
 
     run_id = review.load_findings().start_run(fconn, SKILL, MODEL, {"battery": args.battery, "url": url})
-    batches = [pending[i:i + STATES_PER_REQUEST] for i in range(0, len(pending), STATES_PER_REQUEST)]
+    batches: list[list] = [[]]
+    for p in pending:
+        if batches[-1] and (len(batches[-1]) == STATES_PER_REQUEST
+                            or sum(len(b[3]) for b in batches[-1]) + len(p[3]) > CHARS_PER_REQUEST):
+            batches.append([])
+        batches[-1].append(p)
     started, sent = time.monotonic(), 0
     for batch in batches:
         results, timing = ask(url, questions, [p[3] for p in batch])

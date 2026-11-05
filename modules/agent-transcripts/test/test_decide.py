@@ -168,3 +168,16 @@ def test_battery_hash_changes_when_a_question_changes(monkeypatch):
     changed["turn"]["frustration"]["instructions"] += " "
     monkeypatch.setattr(dc, "BATTERIES", changed)
     assert dc.battery_hash("turn") != before
+
+
+def test_requests_are_packed_by_size_so_long_states_go_a_few_at_a_time(index, tmp_path, asked, monkeypatch):
+    calls = []
+    fake = dc.ask
+    monkeypatch.setattr(dc, "ask", lambda url, q, states: calls.append(len(states)) or fake(url, q, states))
+    monkeypatch.setattr(dc, "CHARS_PER_REQUEST", 2500)
+    s = index.session("a")
+    for _ in range(3):
+        index.user(s, "x" * 1000)
+    index.close()
+    run(tmp_path, "--battery", "turn")
+    assert calls == [2, 1]  # each state renders to ~1,050 chars: two fit under 2,500, a third does not
