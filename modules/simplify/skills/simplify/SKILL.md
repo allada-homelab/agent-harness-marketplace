@@ -87,6 +87,7 @@ message so they run in parallel.
    2. Check the `evidence` yourself: open the cited helper, re-run the grep,
       read the loop. If it does not hold, skip it with the reason.
    3. Skip it if it changes behavior or conflicts with a guideline file.
+      Never apply a `risk: proposal-only` finding: list it under "Proposals".
    4. Otherwise replace `old` with `new` using the edit tool.
    When two findings touch the same lines, apply the first and skip the other.
 
@@ -104,6 +105,7 @@ message so they run in parallel.
      worktree remove <path>` for when the user is done with it);
    - one line per applied fix: `file:line` — what was cut or changed;
    - each skipped finding and why;
+   - proposals (`risk: proposal-only`), one line each, not applied;
    - the check you ran and its result, or that none exists;
    - anything the reviewers flagged as out of scope (bugs included) in one
      line each, untouched.

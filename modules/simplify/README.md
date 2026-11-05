@@ -17,14 +17,18 @@ What a run does:
 3. dispatches four reviewers in parallel, one lens each — **reuse** (an
    existing helper already does this), **simplification** (same behavior in
    less, clearer code), **efficiency** (work the change does not need) and
-   **altitude** (code at the wrong layer); each returns at most 5 findings as
-   exact `old`/`new` edits with checkable evidence — for reuse, the existing
-   helper's full body, which is what exposes a look-alike that differs;
+   **altitude** (code at the wrong layer); each lens works through a short
+   list of named checks, each with a skip-if test for its look-alike, and
+   returns at most 5 findings as exact `old`/`new` edits with checkable
+   evidence — for reuse, the existing helper's full body, which is what
+   exposes a look-alike that differs — and a risk label;
 4. checks each `old` block and its evidence against the code and applies the
    ones that hold without changing behavior, then runs the project's fast
-   check if it has one;
-5. reports each fix, each skipped finding with its reason, and the worktree
-   path if one was made. Nothing is committed; you review the diff.
+   check if it has one; a finding labeled `proposal-only` (one that would
+   change behavior, a public format or a security default) is never applied;
+5. reports each fix, each skipped finding with its reason, each proposal,
+   and the worktree path if one was made. Nothing is committed; you review
+   the diff.
 
 Quality only: bugs a reviewer notices are listed as out of scope, not fixed.
 
