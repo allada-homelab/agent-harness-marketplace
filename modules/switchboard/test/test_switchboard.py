@@ -99,7 +99,8 @@ class Switchboard(unittest.TestCase):
         self.cli("A", "post", "broadcast only")
         self.assertEqual(self.hook("B", "stop"), "", "broadcasts wait for the next prompt")
         self.cli("B", "reply", str(pid), "rebased, pushed")
-        self.assertIn(f"(re #{pid}): [reply] rebased, pushed", self.hook("A", "prompt", prompt="?"))
+        self.assertEqual(self.hook("A", "stop", stop_hook_active=True), "", "a continued turn doesn't block on replies alone")
+        self.assertIn(f"(re #{pid}): [reply] rebased, pushed", self.hook("A", "stop"))
         self.assertIn("--wait needs --to", self.cli("A", "post", "x", "--wait", "1", ok=False).stderr)
         waiting = subprocess.Popen([sys.executable, str(BIN), "post", "ready to merge?", "--to", b_name, "--wait", "1"],
                                    stdout=subprocess.PIPE, text=True, env=self.env("A"), cwd=self.cwd)
@@ -127,6 +128,7 @@ class Switchboard(unittest.TestCase):
         who = self.cli("B", "who").stdout
         self.assertIn("work-sid-", who)
         self.assertIn("(you)", who)
+        self.assertEqual((self.home / "state").stat().st_mode & 0o777, 0o700, "the state dir holds prompts")
 
     def test_feed_delivery_once_and_directed(self):
         for s in "ABC":
@@ -295,7 +297,6 @@ class Switchboard(unittest.TestCase):
     def test_clear_replaces_the_session_and_releases_its_leases(self):
         self.hook("A", "session-start")
         self.hook("B", "session-start")
-        a_name = self.cli("A", "whoami").stdout.split()[0]
         self.cli("A", "lease", "box", "acquire", "--purpose", "proof")
         self.hook("A", "session-start", source="resume")  # the same session again ends nothing
         self.assertIn("held by", self.cli("B", "lease", "box", "status").stdout)
@@ -342,6 +343,7 @@ class Switchboard(unittest.TestCase):
         self.hook("B", "session-start")
         start = "make up"
         self.assertEqual(self.pre_tool("A", start, demo), "deny")
+        self.assertIn("deny: [demo-stack] starts or stops: make up", self.cli("A", "ledger", "ls").stdout)
         self.assertEqual(self.pre_tool("A", "git status", demo), "allow")
         self.assertEqual(self.pre_tool("A", start, self.cwd), "allow")  # the resource doesn't live here
         self.cli("A", "lease", "demo-stack", "acquire", "--purpose", "e2e")

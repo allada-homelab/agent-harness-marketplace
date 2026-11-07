@@ -622,7 +622,7 @@ modules:
     summary: Write prose about 80% of the way to ASD-STE100 (Simplified Technical English), the controlled
       language from aerospace maintenance documentation.
 - name: switchboard
-  version: 0.6.0
+  version: 0.6.1
   kinds:
   - skills
   - dsh-plugin

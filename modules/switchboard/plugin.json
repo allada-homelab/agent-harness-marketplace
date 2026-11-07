@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "switchboard",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Coordination for concurrent Claude Code sessions on one machine: who is doing what, threaded messages between sessions, a todo board, a ledger of shared-state changes, and enforced leases on shared resources.",
   "author": {
     "name": "David Allada",

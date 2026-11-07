@@ -149,6 +149,7 @@ def ago(ts: float | None) -> str:
 
 def connect() -> sqlite3.Connection:
     HOME.mkdir(parents=True, exist_ok=True)
+    HOME.chmod(0o700)  # it stores the user's prompts
     db = sqlite3.connect(DB_PATH, timeout=10, isolation_level=None)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
@@ -714,10 +715,13 @@ def gate(db, row: sqlite3.Row, tool: str, tool_input: dict, cwd: str) -> str:
         if holder_live(db, lease) and lease["holder"] == row["id"]:
             continue
         state = f"held by {lease['holder_name']} until {hhmm(lease['expires'])}" if holder_live(db, lease) else "free"
+        # Recorded so misfires can be found and turned into adapter tests.
+        ledger(db, row, "deny", f"{what}: {' '.join(cmd.split())[:300]}", adapter.RESOURCE)
         return (
             f"switchboard: that command {what} the shared {adapter.RESOURCE}, whose lease this session doesn't hold "
             f"(it is {state}). Take it first with `switchboard stack acquire --purpose \"...\"`; when it is held or others are queued, "
-            "`switchboard stack join --est <min> --purpose \"...\"` then `switchboard stack wait`."
+            "`switchboard stack join --est <min> --purpose \"...\"` then `switchboard stack wait`. "
+            "If the command does not change it, the match is a bug in the adapter: tell the user, and don't take the lease to get past it."
         )
     return ""
 
@@ -782,8 +786,12 @@ def cmd_hook(args) -> None:
         # A direct post that arrived during the turn reaches the session before it goes idle, where
         # nothing else could deliver it; broadcasts wait for the next prompt. Delivery advances the
         # cursor, so the continued turn's own stop does not block again.
-        if any(p["to_session"] for p in unread(db, row)):
-            print(json.dumps({"decision": "block", "reason": deliver(db, row) + "\nHandle these before you stop."}))
+        direct = [p for p in unread(db, row) if p["to_session"]]
+        # Inside a turn this hook already continued, replies alone wait for the next prompt, so two
+        # sessions acknowledging each other's replies can't keep each other running.
+        if direct and not (data.get("stop_hook_active") and all(p["reply_to"] for p in direct)):
+            reason = deliver(db, row) + "\nAct on these before you stop; reply only where an answer is needed."
+            print(json.dumps({"decision": "block", "reason": reason}))
         return
     extra = []
     if event == "prompt":
