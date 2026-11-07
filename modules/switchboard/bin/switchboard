@@ -1,0 +1,1304 @@
+#!/usr/bin/env python3
+"""switchboard: coordination for concurrent Claude Code sessions on one machine.
+
+State is one SQLite file under $SWITCHBOARD_HOME (default ~/.switchboard). Commands:
+
+  who [--all] | show SESSION | find TERM | whoami | doing TEXT | name NEW
+  post TEXT [--to NAME] [--topic T] | feed [-n N] [--all] [--id N]
+  todo add|ls|take|set|done|drop ...
+  ledger add TEXT [--rollback R] [--resource RES] | ledger ls [-n N] [--resource RES]
+  stack|lease RES  status|join|leave|wait|acquire|renew|release|kick ...
+  digest
+  hook session-start|prompt|pre-tool|post-tool|stop   (reads hook JSON on stdin)
+
+Adapters are Python files in $SWITCHBOARD_HOME/adapters/; each defines one leased resource.
+`stack` is the lease on the resource of the one installed adapter.
+One thing is enforced: the pre-tool hook denies a Bash command that starts, stops, resets or
+migrates an adapter's resource unless this session holds its lease, and each tool call by the
+holder renews the lease. Everything else is advisory.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HOME = Path(os.environ.get("SWITCHBOARD_HOME") or Path.home() / ".switchboard")
+DB_PATH = HOME / "switchboard.db"
+# Claude Code's own per-process session registry (pid -> name, status). Internal and
+# undocumented, so it is only ever read for display and every field is optional.
+CLAUDE_SESSIONS = Path(os.environ.get("SWITCHBOARD_CLAUDE_SESSIONS") or Path.home() / ".claude" / "sessions")
+ADAPTER_DIR = HOME / "adapters"
+
+# A session with no pid (a human at a terminal) counts as live this long after its last command.
+PIDLESS_LIVE_SECS = 12 * 3600
+MIN_LEASE_MIN = 60
+WAIT_POLL_SECS = 15
+FEED_MAX_DELIVER = 8
+POST_MAX_CHARS = 2000
+REPLY_POLL_SECS = 5
+# `who` folds away live sessions quiet longer than this; `who --all` shows them.
+IDLE_HIDE_SECS = 6 * 3600
+# A session this old with an unset or outdated `doing` is reminded, at most this often.
+STATUS_NUDGE_AFTER_SECS = 10 * 60
+STATUS_NUDGE_EVERY_SECS = 3600
+PROMPT_MAX_CHARS = 300
+
+TICKET = re.compile(r"\b(?!(?:UTF|SHA|ISO|RFC|HTTP|TLS|PEP|GPT|CVE)-)[A-Z][A-Z0-9]{1,5}-\d{2,6}\b")
+PR_URL = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+")
+# Bash commands after which a session's branch or worktree may have changed.
+MOVES = re.compile(r"\bgit\s+(checkout|switch|worktree\s+add)\b|\bpr-flow\s+start\b|\bgh\s+pr\s+checkout\b")
+OPENS_PR = re.compile(r"\bgh\s+pr\s+create\b|\bpr-flow\s+open\b")
+
+TODO_STATUSES = ("todo", "doing", "blocked", "done", "dropped")
+OPEN_STATUSES = ("todo", "doing", "blocked")
+
+# SCHEMA[i] migrates user_version i to i + 1 and ends by setting that version.
+SCHEMA = [
+    """
+    CREATE TABLE sessions (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, pid INTEGER, cwd TEXT, repo TEXT, branch TEXT,
+        doing TEXT, started_at REAL NOT NULL, last_seen REAL NOT NULL, ended_at REAL,
+        end_reason TEXT, feed_cursor INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE posts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, author TEXT NOT NULL,
+        author_name TEXT NOT NULL, to_session TEXT, topic TEXT, body TEXT NOT NULL
+    );
+    CREATE TABLE todos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, project TEXT, status TEXT NOT NULL,
+        owner TEXT, owner_name TEXT, link TEXT, note TEXT, created_by TEXT,
+        created_at REAL NOT NULL, updated_at REAL NOT NULL
+    );
+    CREATE TABLE leases (
+        resource TEXT PRIMARY KEY, holder TEXT NOT NULL, holder_name TEXT NOT NULL,
+        purpose TEXT, since REAL NOT NULL, expires REAL NOT NULL
+    );
+    CREATE TABLE queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, session TEXT NOT NULL,
+        name TEXT NOT NULL, est_min INTEGER NOT NULL, purpose TEXT, joined_at REAL NOT NULL,
+        UNIQUE (resource, session)
+    );
+    CREATE TABLE ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, session TEXT NOT NULL,
+        name TEXT NOT NULL, resource TEXT, kind TEXT NOT NULL, body TEXT NOT NULL,
+        rollback TEXT, observed TEXT
+    );
+    PRAGMA user_version = 1;
+    """,
+    # What each session touched over time, for `show` and `find`: worktree, branch, pr, ticket,
+    # prompt, doing. The newest row of a kind is its current value.
+    """
+    ALTER TABLE sessions ADD COLUMN transcript TEXT;
+    ALTER TABLE sessions ADD COLUMN nudged_at REAL;
+    CREATE TABLE activity (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL, ts REAL NOT NULL,
+        kind TEXT NOT NULL, value TEXT NOT NULL
+    );
+    CREATE INDEX activity_by_session ON activity (session, kind, id);
+    PRAGMA user_version = 2;
+    """,
+    # A direct post answering another (`reply`), so `post --wait` can find the answer.
+    """
+    ALTER TABLE posts ADD COLUMN reply_to INTEGER;
+    PRAGMA user_version = 3;
+    """,
+]
+
+
+def die(msg: str, code: int = 2) -> None:
+    print(f"switchboard: {msg}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def now() -> float:
+    return time.time()
+
+
+def hhmm(ts: float | None) -> str:
+    return time.strftime("%m-%d %H:%M", time.localtime(ts)) if ts else "-"
+
+
+def minutes(text: str) -> int:
+    """argparse type for a duration: `90`, `90m`, `2h`, `1h30m`; bare numbers are minutes."""
+    m = re.fullmatch(r"\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m?)?\s*", text.lower())
+    if not m or not any(m.groups()):
+        raise argparse.ArgumentTypeError(f"not a duration: {text!r} (try 90, 90m, 2h, 1h30m)")
+    return int(m.group(1) or 0) * 60 + int(m.group(2) or 0)
+
+
+def ago(ts: float | None) -> str:
+    if not ts:
+        return "-"
+    s = max(0, int(now() - ts))
+    if s < 90:
+        return f"{s}s ago"
+    if s < 5400:
+        return f"{s // 60}m ago"
+    return f"{s // 3600}h ago"
+
+
+def connect() -> sqlite3.Connection:
+    HOME.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(DB_PATH, timeout=10, isolation_level=None)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA busy_timeout=10000")
+    version = db.execute("PRAGMA user_version").fetchone()[0]
+    if version < len(SCHEMA):
+        db.execute("BEGIN IMMEDIATE")
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        for i in range(version, len(SCHEMA)):
+            for stmt in SCHEMA[i].split(";"):
+                if stmt.strip():
+                    db.execute(stmt)
+        db.execute("COMMIT")
+    return db
+
+
+# ---------------------------------------------------------------- processes and git
+
+
+def run(cmd: list[str], timeout: float = 5, cwd: str | None = None) -> str | None:
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def pid_alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def claude_pid() -> int | None:
+    env = os.environ.get("CLAUDE_PID")
+    if env and env.isdigit():
+        return int(env)
+    pid = os.getppid()
+    for _ in range(8):
+        out = run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], timeout=2)
+        if not out:
+            return None
+        ppid, _, comm = out.strip().partition(" ")
+        if os.path.basename(comm.strip()) == "claude":
+            return pid
+        if not ppid.strip().isdigit() or int(ppid) <= 1:
+            return None
+        pid = int(ppid)
+    return None
+
+
+def git_info(cwd: str | None) -> tuple[str | None, str | None]:
+    if not cwd or not os.path.isdir(cwd):
+        return None, None
+    top = run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], timeout=2)
+    branch = run(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"], timeout=2)
+    return (top.strip() if top else None), (branch.strip() if branch else None)
+
+
+def claude_registry(pid: int | None) -> dict:
+    if not pid:
+        return {}
+    try:
+        data = json.loads((CLAUDE_SESSIONS / f"{pid}.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return {k: data.get(k) for k in ("name", "status", "sessionId")}
+
+
+# ---------------------------------------------------------------- adapters
+
+
+def load_adapters() -> list:
+    wanted = os.environ.get("SWITCHBOARD_ADAPTERS")
+    if wanted == "none":
+        return []
+    mods = []
+    for path in sorted(ADAPTER_DIR.glob("*.py")):
+        if wanted and path.stem not in wanted.split(","):
+            continue
+        spec = importlib.util.spec_from_file_location(f"switchboard_adapter_{path.stem}", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mods.append(mod)
+    return mods
+
+
+def adapter_for(resource: str):
+    return next((a for a in load_adapters() if a.RESOURCE == resource), None)
+
+
+def default_resource() -> str:
+    adapters = load_adapters()
+    if len(adapters) != 1:
+        die("`stack` needs exactly one adapter; use `switchboard lease <resource> ...`")
+    return adapters[0].RESOURCE
+
+
+# ---------------------------------------------------------------- identity
+
+
+def my_session_id() -> str:
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("SWITCHBOARD_SESSION_ID")
+    return sid or f"human:{os.environ.get('USER', 'user')}"
+
+
+def is_live(row: sqlite3.Row) -> bool:
+    if row["ended_at"]:
+        return False
+    if row["pid"]:
+        return pid_alive(row["pid"])
+    return now() - row["last_seen"] < PIDLESS_LIVE_SECS
+
+
+def unique_name(db, want: str, sid: str) -> str:
+    taken = {r["name"] for r in db.execute("SELECT * FROM sessions WHERE id != ?", (sid,)) if is_live(r)}
+    name, n = want, 2
+    while name in taken:
+        name, n = f"{want}-{n}", n + 1
+    return name
+
+
+def upsert_session(db, sid: str, cwd: str | None, pid: int | None) -> sqlite3.Row:
+    repo, branch = git_info(cwd)
+    row = db.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
+    t = now()
+    if row:
+        db.execute(
+            "UPDATE sessions SET pid=coalesce(?, pid), cwd=coalesce(?, cwd), repo=coalesce(?, repo),"
+            " branch=coalesce(?, branch), last_seen=?, ended_at=NULL, end_reason=NULL WHERE id=?",
+            (pid, cwd, repo, branch, t, sid),
+        )
+    else:
+        if sid.startswith("human:"):
+            want = f"{sid[6:]}-terminal"
+        else:
+            want = claude_registry(pid).get("name") or f"{Path(repo or cwd or 'session').name}-{sid[:4]}"
+        # A new session sees posts from here on; the digest shows it the recent ones.
+        cursor = db.execute("SELECT coalesce(max(id), 0) FROM posts").fetchone()[0]
+        db.execute(
+            "INSERT INTO sessions (id, name, pid, cwd, repo, branch, started_at, last_seen, feed_cursor)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (sid, unique_name(db, want, sid), pid, cwd, repo, branch, t, t, cursor),
+        )
+    return db.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
+
+
+def me(db) -> sqlite3.Row:
+    sid = my_session_id()
+    row = db.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
+    if row and not row["ended_at"]:
+        db.execute("UPDATE sessions SET last_seen=? WHERE id=?", (now(), sid))
+        return row
+    pid = None if sid.startswith("human:") else claude_pid()
+    return upsert_session(db, sid, os.getcwd(), pid)
+
+
+def live_sessions(db) -> list[sqlite3.Row]:
+    rows = db.execute("SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY last_seen DESC").fetchall()
+    live = []
+    for r in rows:
+        if is_live(r):
+            live.append(r)
+        else:
+            db.execute("UPDATE sessions SET ended_at=?, end_reason='process gone' WHERE id=?", (now(), r["id"]))
+    return live
+
+
+def display_name(row: sqlite3.Row) -> str:
+    reg = claude_registry(row["pid"])
+    if reg.get("name") and reg["name"] != row["name"]:
+        return f"{row['name']} (msg: {reg['name']})"
+    return row["name"]
+
+
+def find_session(db, key: str, live: bool = True) -> sqlite3.Row:
+    """A session by name, id or id prefix; with live=False also ended ones (live first)."""
+    if live:
+        live_sessions(db)  # marks sessions whose process is gone as ended
+    alive = "ended_at IS NULL AND" if live else ""
+    order = "ORDER BY ended_at IS NOT NULL, last_seen DESC"
+    row = db.execute(f"SELECT * FROM sessions WHERE {alive} (name = ? OR id = ?) {order}", (key, key)).fetchone()
+    if row:
+        return row
+    rows = db.execute(f"SELECT * FROM sessions WHERE {alive} id LIKE ? {order}", (key + "%",)).fetchall()
+    if len(rows) > 1:
+        die(f"{key!r} matches {len(rows)} sessions: " + ", ".join(r["name"] for r in rows[:6]))
+    if not rows:
+        die(f"no {'live ' if live else ''}session {key!r}; see `switchboard who`, or `switchboard find {key}`")
+    return rows[0]
+
+
+# ---------------------------------------------------------------- activity
+
+
+def note(db, sid: str, kind: str, value: str | None, once: bool = False) -> bool:
+    """Record what a session touched. A worktree or branch is noted when it changes; with `once`
+    (PRs, tickets) a value is noted the first time this session touches it."""
+    if not value:
+        return False
+    sql = "SELECT 1 FROM activity WHERE session = ? AND kind = ? AND value = ?" if once else \
+        "SELECT 1 FROM (SELECT value FROM activity WHERE session = ? AND kind = ? ORDER BY id DESC LIMIT 1) WHERE value = ?"
+    if db.execute(sql, (sid, kind, value)).fetchone():
+        return False
+    db.execute("INSERT INTO activity (session, ts, kind, value) VALUES (?,?,?,?)", (sid, now(), kind, value))
+    return True
+
+
+def note_refs(db, sid: str, text: str) -> list[str]:
+    """Note the PR URLs and ticket ids in `text`; returns the PR URLs new to this session."""
+    for t in dict.fromkeys(TICKET.findall(text)):
+        note(db, sid, "ticket", t, once=True)
+    return [u for u in dict.fromkeys(PR_URL.findall(text)) if note(db, sid, "pr", u, once=True)]
+
+
+def note_place(db, sid: str, repo: str | None, branch: str | None) -> None:
+    """Note the worktree and branch (from `git_info`) a session is working in."""
+    if repo:
+        note(db, sid, "worktree", repo)
+        note(db, sid, "branch", f"{Path(repo).name}@{branch}" if branch else None)
+
+
+def set_doing(db, sid: str, text: str | None) -> None:
+    db.execute("UPDATE sessions SET doing = ? WHERE id = ?", (text or None, sid))
+    note(db, sid, "doing", text)
+
+
+def latest(db, sid: str, kind: str) -> sqlite3.Row | None:
+    return db.execute("SELECT * FROM activity WHERE session = ? AND kind = ? ORDER BY id DESC LIMIT 1",
+                      (sid, kind)).fetchone()
+
+
+def track_tool(db, row: sqlite3.Row, data: dict) -> list[str]:
+    """Update what a session is working on from one tool call; returns feed lines to post."""
+    tool, inp = data.get("tool_name") or "", data.get("tool_input") or {}
+    sid, posts = row["id"], []
+    path = inp.get("file_path") or inp.get("notebook_path")
+    if path and tool in ("Edit", "Write", "NotebookEdit"):  # edits by absolute path into another worktree
+        where = latest(db, sid, "worktree")
+        if not where or not path.startswith(where["value"] + "/"):
+            note_place(db, sid, *git_info(os.path.dirname(path)))
+    if tool != "Bash":
+        return posts
+    cmd = inp.get("command") or ""
+    resp = data.get("tool_response")
+    out = resp if isinstance(resp, str) else "\n".join(str((resp or {}).get(k) or "") for k in ("stdout", "stderr"))
+    if MOVES.search(cmd):
+        started = re.search(r"pr-flow: start ok (\S+)", out)
+        note_place(db, sid, *git_info(started.group(1) if started else data.get("cwd")))
+    if OPENS_PR.search(cmd):
+        posts += [f"opened {u}" for u in note_refs(db, sid, out)]
+    return posts
+
+
+# ---------------------------------------------------------------- feed
+
+
+def post(db, author: sqlite3.Row, body: str, topic: str | None = None, to: str | None = None,
+         reply_to: int | None = None) -> int:
+    body = body.strip()
+    if not body:
+        die("empty post")
+    cur = db.execute(
+        "INSERT INTO posts (ts, author, author_name, to_session, topic, body, reply_to) VALUES (?,?,?,?,?,?,?)",
+        (now(), author["id"], author["name"], to, topic, body[:POST_MAX_CHARS], reply_to),
+    )
+    return cur.lastrowid
+
+
+def fmt_post(p: sqlite3.Row, width: int = 300) -> str:
+    body = " ".join(p["body"].split())
+    if len(body) > width:
+        body = body[: width - 1] + f"… (`switchboard feed --id {p['id']}`)"
+    tag = f"[{p['topic']}] " if p["topic"] else ""
+    to = f" → you #{p['id']}" if p["to_session"] else ""
+    re_ = f" (re #{p['reply_to']})" if p["reply_to"] else ""
+    return f"- {hhmm(p['ts'])} {p['author_name']}{to}{re_}: {tag}{body}"
+
+
+def unread(db, row: sqlite3.Row) -> list[sqlite3.Row]:
+    return db.execute(
+        "SELECT * FROM posts WHERE id > ? AND author != ? AND (to_session IS NULL OR to_session = ?)"
+        " ORDER BY id",
+        (row["feed_cursor"], row["id"], row["id"]),
+    ).fetchall()
+
+
+# ---------------------------------------------------------------- leases
+
+
+def lease_row(db, resource: str) -> sqlite3.Row | None:
+    return db.execute("SELECT * FROM leases WHERE resource = ?", (resource,)).fetchone()
+
+
+def holder_live(db, lease: sqlite3.Row | None) -> bool:
+    if not lease or lease["expires"] < now():
+        return False
+    row = db.execute("SELECT * FROM sessions WHERE id = ?", (lease["holder"],)).fetchone()
+    return bool(row) and is_live(row)
+
+
+def prune_queue(db, resource: str) -> list[sqlite3.Row]:
+    out = []
+    for q in db.execute("SELECT * FROM queue WHERE resource = ? ORDER BY id", (resource,)).fetchall():
+        row = db.execute("SELECT * FROM sessions WHERE id = ?", (q["session"],)).fetchone()
+        if row and is_live(row):
+            out.append(q)
+        else:
+            db.execute("DELETE FROM queue WHERE id = ?", (q["id"],))
+    return out
+
+
+def observe(resource: str) -> dict | None:
+    adapter = adapter_for(resource)
+    if not adapter:
+        return None
+    try:
+        return adapter.probe()
+    except Exception as exc:  # a probe failure must never block coordination
+        return {"running": None, "summary": f"probe failed: {exc}", "served_from": [], "facts": {}}
+
+
+def ledger(db, who: sqlite3.Row, kind: str, body: str, resource=None, rollback=None, observed=None):
+    db.execute(
+        "INSERT INTO ledger (ts, session, name, resource, kind, body, rollback, observed) VALUES (?,?,?,?,?,?,?,?)",
+        (now(), who["id"], who["name"], resource, kind, body, rollback, json.dumps(observed) if observed else None),
+    )
+
+
+def try_acquire(db, resource: str, row: sqlite3.Row, purpose: str | None, ttl_min: int | None) -> tuple[bool, str]:
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        lease = lease_row(db, resource)
+        if lease and lease["holder"] == row["id"] and holder_live(db, lease):
+            db.execute("COMMIT")
+            return True, "already yours"
+        if holder_live(db, lease):
+            db.execute("COMMIT")
+            return False, f"held by {lease['holder_name']} until {hhmm(lease['expires'])} ({lease['purpose'] or 'no purpose'})"
+        queue = prune_queue(db, resource)
+        mine = next((q for q in queue if q["session"] == row["id"]), None)
+        if queue and queue[0]["session"] != row["id"]:
+            pos = queue.index(mine) + 1 if mine else None
+            db.execute("COMMIT")
+            where = f"you are #{pos}" if pos else "you are not queued: `join` first"
+            return False, f"free, but {queue[0]['name']} is first in the queue ({where})"
+        est = mine["est_min"] if mine else MIN_LEASE_MIN
+        purpose = purpose or (mine["purpose"] if mine else None)
+        minutes = ttl_min or max(est, MIN_LEASE_MIN)
+        prev = lease
+        t = now()
+        db.execute("DELETE FROM leases WHERE resource = ?", (resource,))
+        db.execute(
+            "INSERT INTO leases (resource, holder, holder_name, purpose, since, expires) VALUES (?,?,?,?,?,?)",
+            (resource, row["id"], row["name"], purpose, t, t + minutes * 60),
+        )
+        db.execute("DELETE FROM queue WHERE resource = ? AND session = ?", (resource, row["id"]))
+        db.execute("COMMIT")
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
+    observed = observe(resource)
+    left = last_holder(db, resource)
+    note = f"acquired {resource} for {minutes}m: {purpose or 'no purpose given'}"
+    if prev and prev["holder"] != row["id"]:
+        note += f" (took over from {prev['holder_name']}, whose lease had lapsed)"
+    elif (observed or {}).get("running") and left and left["session"] != row["id"]:
+        note += f" (adopting what {left['name']} left running)"
+        post(db, row, f"I took {resource}, which you left running ({left['body'][:200]}); tell me if you still need it.",
+             topic="lease", to=left["session"])
+    ledger(db, row, "acquire", note, resource, observed=observed)
+    post(db, row, note, topic="lease")
+    if purpose and not row["doing"]:
+        set_doing(db, row["id"], purpose)
+    return True, note
+
+
+def last_holder(db, resource: str) -> sqlite3.Row | None:
+    """The ledger entry that ended the last lease on `resource` (a release, kick, or the acquire
+    of a lease that lapsed), or None when nobody has held it."""
+    return db.execute(
+        "SELECT * FROM ledger WHERE resource = ? AND kind IN ('acquire', 'release', 'kick') ORDER BY id DESC LIMIT 1",
+        (resource,),
+    ).fetchone()
+
+
+def release_warnings(db, row: sqlite3.Row, resource: str, lease: sqlite3.Row, observed: dict | None) -> list[str]:
+    """What this lease changed in shared state that its holder has not accounted for."""
+    out = []
+    acquired = db.execute(
+        "SELECT * FROM ledger WHERE resource = ? AND session = ? AND kind = 'acquire' AND ts >= ? ORDER BY id DESC LIMIT 1",
+        (resource, row["id"], lease["since"] - 5),
+    ).fetchone()
+    before = json.loads(acquired["observed"]).get("facts", {}) if acquired and acquired["observed"] else {}
+    after = (observed or {}).get("facts") or {}
+    for key in sorted(k for k in after if "alembic" in k):
+        if before.get(key) and after[key] != before[key]:
+            out.append(f"{key} changed {before[key]} -> {after[key]} during this lease; restore it or say why it stays")
+    rows = db.execute("SELECT kind, resource FROM ledger WHERE session = ? AND ts >= ? AND kind IN ('write', 'note')",
+                      (row["id"], lease["since"])).fetchall()
+    noted = {r["resource"] for r in rows if r["kind"] == "note"}
+    for res in sorted({r["resource"] for r in rows if r["kind"] == "write"} - noted):
+        n = sum(1 for r in rows if r["kind"] == "write" and r["resource"] == res)
+        out.append(f"{n} write(s) to {res} with no ledger entry: `switchboard ledger add \"…\" --resource {res} --rollback \"…\"`")
+    return out
+
+
+# ---------------------------------------------------------------- reporting
+
+
+def reality_lines(db, resource: str, observed: dict | None, lease: sqlite3.Row | None) -> list[str]:
+    if observed is None:
+        return []
+    lines = [f"observed: {observed.get('summary', '?')}"]
+    served = observed.get("served_from") or []
+    if observed.get("running") and not holder_live(db, lease):
+        users = [s["name"] for s in live_sessions(db) if any((s["cwd"] or "").startswith(p) for p in served)]
+        hint = f"; sessions working there: {', '.join(users)}" if users else ""
+        left = last_holder(db, resource)
+        if left:
+            hint += f"; last held by {left['name']} ({left['kind']} {ago(left['ts'])}: {left['body'][:120]})"
+        lines.append(f"MISMATCH: {resource} is running but nobody holds the lease{hint}")
+    elif holder_live(db, lease) and served:
+        holder = db.execute("SELECT * FROM sessions WHERE id = ?", (lease["holder"],)).fetchone()
+        repo = holder["repo"] if holder else None
+        if repo and repo not in served:
+            lines.append(f"MISMATCH: lease holder works in {repo}, but the stack serves {', '.join(served)}")
+    return lines
+
+
+def lease_lines(db, resource: str, me_id: str | None = None) -> list[str]:
+    lease = lease_row(db, resource)
+    if holder_live(db, lease):
+        head = f"{resource}: held by {lease['holder_name']} since {hhmm(lease['since'])}, until {hhmm(lease['expires'])} — {lease['purpose'] or 'no purpose'}"
+    elif lease:
+        head = f"{resource}: free (last lease, {lease['holder_name']}'s, lapsed)"
+    else:
+        head = f"{resource}: free"
+    lines = [head]
+    queue = prune_queue(db, resource)
+    if queue:
+        start = max(now(), lease["expires"]) if holder_live(db, lease) else now()
+        parts = []
+        for i, q in enumerate(queue, 1):
+            you = " (you)" if q["session"] == me_id else ""
+            parts.append(f"{i}. {q['name']}{you} ~{q['est_min']}m, starts ~{hhmm(start)}: {q['purpose'] or ''}".rstrip(": "))
+            start += q["est_min"] * 60
+        lines.append("queue: " + " | ".join(parts))
+    return lines
+
+
+def live_holders(db) -> dict[str, str]:
+    """session id -> the resource whose live lease it holds."""
+    return {r["holder"]: r["resource"] for r in db.execute("SELECT * FROM leases") if holder_live(db, r)}
+
+
+def is_quiet(s: sqlite3.Row, holders: dict) -> bool:
+    """Folded out of overviews: quiet for IDLE_HIDE_SECS and holding no lease."""
+    return now() - s["last_seen"] > IDLE_HIDE_SECS and s["id"] not in holders
+
+
+def place_of(db, s: sqlite3.Row) -> str:
+    """worktree@branch a session last worked in."""
+    place = latest(db, s["id"], "branch")
+    return place["value"] if place else f"{Path(s['repo'] or s['cwd'] or '?').name}@{s['branch'] or '?'}"
+
+
+def status_of(db, s: sqlite3.Row) -> str:
+    if s["doing"]:
+        return f"doing: {s['doing']}"
+    asked = latest(db, s["id"], "prompt")
+    return f"last ask: {asked['value'][:120]}" if asked else "doing: not set"
+
+
+def lease_report(db, adapter, me_id: str) -> list[str]:
+    """An adapter's lease, queue, and what it observes running."""
+    res = adapter.RESOURCE
+    return lease_lines(db, res, me_id) + reality_lines(db, res, observe(res), lease_row(db, res))
+
+
+def digest_text(db, row: sqlite3.Row, probe: bool) -> str:
+    lines = []
+    holders = live_holders(db)
+    others = [s for s in live_sessions(db) if s["id"] != row["id"]]
+    active = [s for s in others if not is_quiet(s, holders)]
+    if others:
+        quiet = f" (+{len(others) - len(active)} quiet for over {IDLE_HIDE_SECS // 3600}h)" if len(active) < len(others) else ""
+        lines.append(f"{len(active)} other active session(s){quiet}:")
+        for s in active[:8]:
+            lines.append(f"- {display_name(s)} ({place_of(db, s)}, {ago(s['last_seen'])}): {status_of(db, s)}")
+    for adapter in load_adapters():
+        if probe and adapter.applies(row["cwd"] or os.getcwd()):
+            lines += lease_report(db, adapter, row["id"])
+    recent = db.execute("SELECT * FROM posts WHERE to_session IS NULL ORDER BY id DESC LIMIT 4").fetchall()
+    if recent:
+        lines.append("recent posts:")
+        lines += [fmt_post(p, 160) for p in reversed(recent)]
+    mine = db.execute(
+        "SELECT * FROM todos WHERE owner = ? AND status IN ('todo','doing','blocked') ORDER BY id", (row["id"],)
+    ).fetchall()
+    if mine:
+        lines.append("your todos: " + "; ".join(f"#{t['id']} [{t['status']}] {t['title']}" for t in mine))
+    if not lines:
+        return ""
+    head = f"switchboard: you are {row['name']}. `switchboard who|feed|todo ls|stack status` for more."
+    if not shutil.which("switchboard"):
+        head += f" The CLI isn't on PATH here: run it as `python3 {Path(__file__).resolve()}`."
+    return "\n".join([head] + lines)
+
+
+# ---------------------------------------------------------------- hooks
+
+
+def hook_out(event: str, context: str) -> None:
+    if context:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": context}}))
+
+
+def deliver(db, row: sqlite3.Row) -> str:
+    posts = unread(db, row)
+    lines = []
+    if posts:
+        db.execute("UPDATE sessions SET feed_cursor = ? WHERE id = ?", (posts[-1]["id"], row["id"]))
+        # Lease and ledger chatter only concerns sessions working where an adapter's resource lives.
+        adapters = load_adapters()
+        if adapters and not any(a.applies(row["cwd"] or "") for a in adapters):
+            posts = [p for p in posts if p["to_session"] or p["topic"] not in ("lease", "ledger")]
+    if posts:
+        shown = posts[-FEED_MAX_DELIVER:]
+        lines.append(f"switchboard: {len(posts)} new post(s) from other sessions:")
+        if len(posts) > len(shown):
+            lines.append(f"(… {len(posts) - len(shown)} older: `switchboard feed`)")
+        lines += [fmt_post(p) for p in shown]
+        if any(p["to_session"] for p in shown):
+            lines.append("(answer one addressed to you with `switchboard reply <#id> \"…\"`)")
+    for q in db.execute("SELECT * FROM queue WHERE session = ?", (row["id"],)).fetchall():
+        queue = prune_queue(db, q["resource"])
+        if queue and queue[0]["session"] == row["id"] and not holder_live(db, lease_row(db, q["resource"])):
+            lines.append(f"switchboard: {q['resource']} is free and you are first in the queue: `switchboard lease {q['resource']} acquire`.")
+    lease = db.execute("SELECT * FROM leases WHERE holder = ?", (row["id"],)).fetchone()
+    if lease and lease["expires"] < now():
+        lines.append(f"switchboard: your {lease['resource']} lease expired at {hhmm(lease['expires'])}; renew or release it.")
+    return "\n".join(lines)
+
+
+def gate(db, row: sqlite3.Row, tool: str, tool_input: dict, cwd: str) -> str:
+    """Why this command must wait for a lease the session doesn't hold, or "" to let it run."""
+    # A dev container has its own empty state dir, so a lease taken there coordinates nothing.
+    if tool != "Bash" or Path("/.dockerenv").exists():
+        return ""
+    cmd = tool_input.get("command") or ""
+    for adapter in load_adapters():
+        what = adapter.classify(cmd)
+        if not what or not adapter.applies(cwd):
+            continue
+        lease = lease_row(db, adapter.RESOURCE)
+        if holder_live(db, lease) and lease["holder"] == row["id"]:
+            continue
+        state = f"held by {lease['holder_name']} until {hhmm(lease['expires'])}" if holder_live(db, lease) else "free"
+        return (
+            f"switchboard: that command {what} the shared {adapter.RESOURCE}, whose lease this session doesn't hold "
+            f"(it is {state}). Take it first with `switchboard stack acquire --purpose \"...\"`; when it is held or others are queued, "
+            "`switchboard stack join --est <min> --purpose \"...\"` then `switchboard stack wait`."
+        )
+    return ""
+
+
+def status_nudge(db, row: sqlite3.Row) -> str:
+    """A reminder to set `doing` when it is unset or older than the session's latest branch, PR or
+    ticket; only once the session has run a while, and at most hourly."""
+    t = now()
+    if t - row["started_at"] < STATUS_NUDGE_AFTER_SECS or t - (row["nudged_at"] or 0) < STATUS_NUDGE_EVERY_SECS:
+        return ""
+    moved = db.execute("SELECT max(ts) FROM activity WHERE session = ? AND kind IN ('branch', 'pr', 'ticket')",
+                       (row["id"],)).fetchone()[0]
+    set_at = latest(db, row["id"], "doing")
+    if row["doing"] and (not moved or (set_at and moved <= set_at["ts"])):
+        return ""
+    db.execute("UPDATE sessions SET nudged_at = ? WHERE id = ?", (t, row["id"]))
+    was = f"still says {row['doing']!r}, set before your latest branch, PR or ticket" if row["doing"] else "is not set"
+    return (f"switchboard: your status {was}. Other sessions and the user read it in `switchboard who`; "
+            "set one line: `switchboard doing \"<ticket or branch: what you are doing>\"`.")
+
+
+def cmd_hook(args) -> None:
+    try:
+        data = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        data = {}
+    sid = data.get("session_id")
+    if not sid:
+        return
+    db = connect()
+    cwd = data.get("cwd") or os.getcwd()
+    event = args.event
+    if event == "session-start":
+        pid = claude_pid()
+        # `/clear` starts a new session in the same process; the one it replaced is over.
+        for old in db.execute("SELECT * FROM sessions WHERE pid = ? AND id != ? AND ended_at IS NULL", (pid, sid)).fetchall() if pid else ():
+            db.execute("UPDATE sessions SET ended_at=?, end_reason='replaced' WHERE id=?", (now(), old["id"]))
+            for lease in db.execute("SELECT * FROM leases WHERE holder = ?", (old["id"],)).fetchall():
+                db.execute("DELETE FROM leases WHERE resource = ?", (lease["resource"],))
+                msg = f"released {lease['resource']}: holder session was replaced (anything it started may still be running)"
+                ledger(db, old, "release", msg, lease["resource"])
+                post(db, old, msg, topic="lease")
+            db.execute("DELETE FROM queue WHERE session = ?", (old["id"],))
+        row = upsert_session(db, sid, cwd, pid)
+        db.execute("UPDATE sessions SET transcript = coalesce(?, transcript) WHERE id = ?", (data.get("transcript_path"), sid))
+        note_place(db, sid, row["repo"], row["branch"])
+        env_file = os.environ.get("CLAUDE_ENV_FILE")
+        if env_file:
+            with open(env_file, "a") as fh:
+                fh.write(f"export SWITCHBOARD_SESSION_ID={sid}\n")
+        hook_out("SessionStart", digest_text(db, row, probe=True))
+        return
+    row = db.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
+    if not row or row["ended_at"]:
+        row = upsert_session(db, sid, cwd, claude_pid())
+    elif event == "prompt":
+        repo, branch = git_info(cwd)
+        db.execute("UPDATE sessions SET last_seen=?, cwd=?, repo=?, branch=? WHERE id=?", (now(), cwd, repo, branch, sid))
+    else:
+        db.execute("UPDATE sessions SET last_seen=? WHERE id=?", (now(), sid))
+    if event == "stop":
+        # A direct post that arrived during the turn reaches the session before it goes idle, where
+        # nothing else could deliver it; broadcasts wait for the next prompt. Delivery advances the
+        # cursor, so the continued turn's own stop does not block again.
+        if any(p["to_session"] for p in unread(db, row)):
+            print(json.dumps({"decision": "block", "reason": deliver(db, row) + "\nHandle these before you stop."}))
+        return
+    extra = []
+    if event == "prompt":
+        row = db.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()  # repo/branch just refreshed
+        note(db, sid, "prompt", " ".join((data.get("prompt") or "").split())[:PROMPT_MAX_CHARS])
+        note_refs(db, sid, data.get("prompt") or "")
+        note_place(db, sid, row["repo"], row["branch"])
+        extra.append(status_nudge(db, row))
+    command = (data.get("tool_input") or {}).get("command") or "" if data.get("tool_name") == "Bash" else ""
+    if event == "pre-tool":
+        reason = gate(db, row, data.get("tool_name") or "", data.get("tool_input") or {}, cwd)
+        if reason:
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}))
+        elif command:
+            notes = [w for a in load_adapters() if hasattr(a, "warn") and a.applies(cwd) for w in [a.warn(command, cwd)] if w]
+            hook_out("PreToolUse", "\n".join(f"switchboard: {n}" for n in notes))
+        return
+    if event == "post-tool":
+        for text in track_tool(db, row, data):
+            post(db, row, text, topic="pr")
+        # Heartbeat: a holder that keeps working keeps its lease; one that goes quiet lapses
+        # MIN_LEASE_MIN later. Never shortens a longer --ttl, never revives an expired lease.
+        t = now()
+        db.execute(
+            "UPDATE leases SET expires = ? WHERE holder = ? AND expires > ? AND expires < ?",
+            (t + MIN_LEASE_MIN * 60, row["id"], t, t + MIN_LEASE_MIN * 60),
+        )
+        for res in sorted({r for a in load_adapters() if hasattr(a, "shared_writes") for r in a.shared_writes(command)}):
+            ledger(db, row, "write", " ".join(command.split())[:300], res)
+            extra.append(f"switchboard: that wrote to the shared {res}. Record what changed and its exact undo: "
+                         f"`switchboard ledger add \"…\" --resource {res} --rollback \"…\"`.")
+    hook_out("UserPromptSubmit" if event == "prompt" else "PostToolUse", "\n".join(filter(None, [*extra, deliver(db, row)])))
+
+
+# ---------------------------------------------------------------- commands
+
+
+def cmd_who(args) -> None:
+    db = connect()
+    me_row = me(db)
+    holders = live_holders(db)
+    quiet = 0
+    for s in live_sessions(db):
+        if not args.all and s["id"] != me_row["id"] and is_quiet(s, holders):
+            quiet += 1
+            continue
+        reg = claude_registry(s["pid"])
+        mark = " (you)" if s["id"] == me_row["id"] else ""
+        state = f", {reg['status']}" if reg.get("status") else ""
+        hold = f", holds {holders[s['id']]}" if s["id"] in holders else ""
+        print(f"{display_name(s)}{mark}  {place_of(db, s)}  seen {ago(s['last_seen'])}{state}{hold}")
+        print(f"    {status_of(db, s)}")
+        refs = [r["value"] for r in (latest(db, s["id"], "pr"), latest(db, s["id"], "ticket")) if r]
+        if refs:
+            print("    " + "  ".join(refs))
+    if quiet:
+        print(f"(+{quiet} quiet for over {IDLE_HIDE_SECS // 3600}h: `switchboard who --all`)")
+    for adapter in load_adapters():
+        print("\n".join(lease_report(db, adapter, me_row["id"])))
+    open_todos = db.execute("SELECT count(*) FROM todos WHERE status IN ('todo', 'doing', 'blocked')").fetchone()[0]
+    if open_todos:
+        print(f"board: {open_todos} open item(s), `switchboard todo ls`")
+
+
+def cmd_show(args) -> None:
+    db = connect()
+    me(db)
+    s = find_session(db, args.session, live=False)
+    life = f"ended {ago(s['ended_at'])} ({s['end_reason']})" if s["ended_at"] else "live"
+    print(f"{s['name']}  {life}  session={s['id']}  pid={s['pid'] or '-'}  started {hhmm(s['started_at'])}")
+    print(f"    {place_of(db, s)}  holds {live_holders(db).get(s['id'], 'nothing')}")
+    print(f"    doing: {s['doing'] or 'not set'}")
+    asked = latest(db, s["id"], "prompt")
+    if asked:
+        print(f"    last ask ({ago(asked['ts'])}): {asked['value']}")
+    print(f"    cwd: {s['cwd'] or '-'}")
+    if s["transcript"]:
+        print(f"    transcript: {s['transcript']}")
+    history = db.execute("SELECT * FROM (SELECT * FROM activity WHERE session = ? AND (? OR kind != 'prompt')"
+                         " ORDER BY id DESC LIMIT ?) ORDER BY id", (s["id"], args.prompts, args.n)).fetchall()
+    if history:
+        print("history:")
+        for a in history:
+            print(f"- {hhmm(a['ts'])} {a['kind']}: {a['value']}")
+    posts = db.execute("SELECT * FROM (SELECT * FROM posts WHERE author = ? ORDER BY id DESC LIMIT 5) ORDER BY id",
+                       (s["id"],)).fetchall()
+    if posts:
+        print("posts:\n" + "\n".join(fmt_post(p, 200) for p in posts))
+    entries = db.execute("SELECT * FROM (SELECT * FROM ledger WHERE session = ? ORDER BY id DESC LIMIT 5) ORDER BY id",
+                         (s["id"],)).fetchall()
+    if entries:
+        print("ledger:")
+        for r in entries:
+            print(f"- {hhmm(r['ts'])} {r['kind']}: {('[' + r['resource'] + '] ') if r['resource'] else ''}{r['body'][:200]}")
+    todos = db.execute("SELECT * FROM todos WHERE owner = ? AND status IN ('todo', 'doing', 'blocked') ORDER BY id",
+                       (s["id"],)).fetchall()
+    if todos:
+        print("todos:\n" + "\n".join(f"- #{t['id']} [{t['status']}] {t['title']}" for t in todos))
+
+
+# Where `find` looks: (label, SQL selecting session id, ts, text where text matches ?).
+FIND_SOURCES = (
+    ("touched", "SELECT session, ts, kind || ': ' || value FROM activity WHERE kind != 'prompt' AND value LIKE ?"),
+    ("asked", "SELECT session, ts, value FROM activity WHERE kind = 'prompt' AND value LIKE ?"),
+    ("posted", "SELECT author, ts, body FROM posts WHERE body LIKE ?"),
+    ("ledger", "SELECT session, ts, kind || ': ' || body FROM ledger WHERE body LIKE ?"),
+    ("todo", "SELECT owner, updated_at, title || ' ' || coalesce(link, '') FROM todos WHERE owner IS NOT NULL"
+             " AND (title LIKE ?1 OR link LIKE ?1 OR note LIKE ?1)"),
+)
+
+
+def cmd_find(args) -> None:
+    """Which sessions touched TERM (a ticket, PR, branch, worktree, file or word), newest first."""
+    db = connect()
+    me(db)
+    term = " ".join(args.term)
+    hits: dict[str, list] = {}
+    for label, sql in FIND_SOURCES:
+        for sid, ts, text in db.execute(sql, (f"%{term}%",)):
+            hits.setdefault(sid, []).append((ts or 0, label, " ".join((text or "").split())))
+    if not hits:
+        print(f"no session touched {term!r}")
+        return
+    ranked = sorted(hits.items(), key=lambda kv: -max(h[0] for h in kv[1]))[: args.n]
+    for sid, found in ranked:
+        s = db.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
+        name = s["name"] if s else sid
+        life = (f"ended {ago(s['ended_at'])}" if s["ended_at"] else "live") if s else "unknown"
+        found.sort(reverse=True)
+        print(f"{name} ({life}) — {len(found)} hit(s), latest {hhmm(found[0][0])}")
+        for ts, label, text in found[:3]:
+            print(f"    {hhmm(ts)} {label}: {text[:160]}")
+    print("details: `switchboard show <name>`")
+
+
+def cmd_whoami(args) -> None:
+    db = connect()
+    row = me(db)
+    print(f"{display_name(row)}  session={row['id']}  pid={row['pid'] or '-'}  doing: {row['doing'] or '-'}")
+
+
+def cmd_doing(args) -> None:
+    db = connect()
+    row = me(db)
+    text = " ".join(args.text).strip()
+    set_doing(db, row["id"], text)
+    if text and args.announce:
+        post(db, row, f"now: {text}", topic="status")
+    print(f"{row['name']}: doing {text or '(cleared)'}")
+
+
+def cmd_name(args) -> None:
+    db = connect()
+    row = me(db)
+    name = unique_name(db, args.new, row["id"])
+    if name != args.new:
+        die(f"{args.new!r} is taken by a live session")
+    db.execute("UPDATE sessions SET name = ? WHERE id = ?", (name, row["id"]))
+    print(f"renamed {row['name']} -> {name}")
+
+
+def cmd_post(args) -> None:
+    db = connect()
+    row = me(db)
+    target = find_session(db, args.to) if args.to else None
+    if args.wait is not None and not target:
+        die("--wait needs --to: a reply comes from one session")
+    pid = post(db, row, " ".join(args.text), args.topic, target["id"] if target else None)
+    print(f"posted #{pid}" + (f" to {target['name']}" if target else ""))
+    if not target:
+        return
+    reg = claude_registry(target["pid"])
+    when = "is idle: it sees this at its next prompt" if reg.get("status") == "idle" else \
+        "sees this after its current tool call, or before it goes idle"
+    wake = f" To wake it now, use SendMessage to {reg['name']!r}." if reg.get("name") else ""
+    print(f"{target['name']} {when}.{wake}")
+    if args.wait is None:
+        return
+    deadline = now() + args.wait * 60
+    find_reply = "SELECT * FROM posts WHERE id > ? AND reply_to = ? ORDER BY id LIMIT 1"
+    while not (reply := db.execute(find_reply, (pid, pid)).fetchone()):
+        if now() > deadline:
+            print(f"no reply to #{pid} after {args.wait}m; it will reach you as a post if one comes")
+            raise SystemExit(3)
+        time.sleep(REPLY_POLL_SECS)
+    print(fmt_post(reply, POST_MAX_CHARS))
+
+
+def cmd_reply(args) -> None:
+    db = connect()
+    row = me(db)
+    asked = db.execute("SELECT * FROM posts WHERE id = ?", (args.id,)).fetchone()
+    if not asked:
+        die(f"no post #{args.id}")
+    pid = post(db, row, " ".join(args.text), "reply", asked["author"], reply_to=asked["id"])
+    print(f"replied #{pid} to {asked['author_name']}")
+
+
+def cmd_feed(args) -> None:
+    db = connect()
+    row = me(db)
+    if args.id:
+        p = db.execute("SELECT * FROM posts WHERE id = ?", (args.id,)).fetchone()
+        if not p:
+            die(f"no post #{args.id}")
+        print(fmt_post(p, POST_MAX_CHARS))
+        return
+    posts = db.execute(
+        "SELECT * FROM (SELECT * FROM posts WHERE ? OR to_session IS NULL OR to_session = ? OR author = ?"
+        " ORDER BY id DESC LIMIT ?) ORDER BY id",
+        (args.all, row["id"], row["id"], args.n),
+    ).fetchall()
+    for p in posts:
+        print(fmt_post(p, 1000))
+    if posts:
+        db.execute("UPDATE sessions SET feed_cursor = max(feed_cursor, ?) WHERE id = ?", (posts[-1]["id"], row["id"]))
+
+
+def todo_row(db, tid: int) -> sqlite3.Row:
+    t = db.execute("SELECT * FROM todos WHERE id = ?", (tid,)).fetchone()
+    if not t:
+        die(f"no todo #{tid}")
+    return t
+
+
+def cmd_todo(args) -> None:
+    db = connect()
+    row = me(db)
+    t = now()
+    if args.action == "add":
+        if args.owner:
+            other = find_session(db, args.owner)
+            owner = (other["id"], other["name"])
+        else:
+            owner = (row["id"], row["name"]) if args.take else (None, None)
+        status = "doing" if args.take else "todo"
+        cur = db.execute(
+            "INSERT INTO todos (title, project, status, owner, owner_name, link, note, created_by, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (" ".join(args.title), args.project, status, *owner, args.link, args.note, row["name"], t, t),
+        )
+        print(f"added #{cur.lastrowid}")
+    elif args.action == "ls":
+        rows = db.execute(
+            "SELECT * FROM todos WHERE (? OR status IN ('todo','doing','blocked'))"
+            " AND (? IS NULL OR owner = ?) AND (? IS NULL OR project = ?) ORDER BY project, id",
+            (args.all, row["id"] if args.mine else None, row["id"], args.project, args.project),
+        )
+        for r in rows:
+            proj = f"{r['project']}: " if r["project"] else ""
+            owner = f" @{r['owner_name']}" if r["owner_name"] else ""
+            extra = "".join(f"\n      {k}: {r[k]}" for k in ("link", "note") if r[k])
+            print(f"#{r['id']} [{r['status']}] {proj}{r['title']}{owner}  ({ago(r['updated_at'])}){extra}")
+    else:
+        item = todo_row(db, args.id)
+        new = dict(item)
+        if args.action == "take":
+            if item["owner"] and item["owner"] != row["id"] and item["status"] in OPEN_STATUSES and not args.force:
+                die(f"#{item['id']} is owned by {item['owner_name']}; ask them, or --force")
+            new.update(owner=row["id"], owner_name=row["name"], status="doing")
+        elif args.action in ("done", "drop"):
+            new["status"] = "done" if args.action == "done" else "dropped"
+        elif args.action == "set":
+            new["status"] = args.status or new["status"]
+            new["title"] = args.title or new["title"]
+            new["link"] = args.link or new["link"]
+            if args.release:
+                new.update(owner=None, owner_name=None)
+        new["note"] = args.note or new["note"]
+        db.execute(
+            "UPDATE todos SET status = ?, title = ?, link = ?, note = ?, owner = ?, owner_name = ?, updated_at = ?"
+            " WHERE id = ?",
+            (new["status"], new["title"], new["link"], new["note"], new["owner"], new["owner_name"], t, item["id"]),
+        )
+        new = todo_row(db, item["id"])
+        if new["status"] != item["status"] and new["status"] in ("done", "blocked", "dropped"):
+            post(db, row, f"todo #{new['id']} {new['status']}: {new['title']}" + (f" — {new['note']}" if new["note"] else ""), topic="todo")
+        print(f"#{new['id']} [{new['status']}] {new['title']}" + (f" @{new['owner_name']}" if new["owner_name"] else ""))
+
+
+def cmd_ledger(args) -> None:
+    db = connect()
+    row = me(db)
+    if args.action == "add":
+        ledger(db, row, "note", " ".join(args.text), args.resource, args.rollback)
+        if args.resource:
+            post(db, row, f"changed {args.resource}: {' '.join(args.text)}", topic="ledger")
+        print("recorded")
+        return
+    rows = db.execute(
+        "SELECT * FROM ledger WHERE ? IS NULL OR resource = ? ORDER BY id DESC LIMIT ?",
+        (args.resource, args.resource, args.n),
+    ).fetchall()
+    for r in reversed(rows):
+        res = f"[{r['resource']}] " if r["resource"] else ""
+        print(f"#{r['id']} {hhmm(r['ts'])} {r['name']} {r['kind']}: {res}{r['body']}")
+        if r["rollback"]:
+            print(f"      rollback: {r['rollback']}")
+        if r["observed"] and args.verbose:
+            print(f"      observed: {r['observed']}")
+        elif r["observed"]:
+            facts = json.loads(r["observed"]).get("facts") or {}
+            if facts:
+                print("      observed: " + ", ".join(f"{k}={v}" for k, v in facts.items()))
+
+
+def cmd_lease(args) -> None:
+    resource = args.resource or default_resource()
+    db = connect()
+    row = me(db)
+    act = args.action
+    if act == "status":
+        for line in lease_lines(db, resource, row["id"]):
+            print(line)
+        for line in reality_lines(db, resource, observe(resource), lease_row(db, resource)):
+            print(line)
+        recent = db.execute("SELECT * FROM ledger WHERE resource = ? ORDER BY id DESC LIMIT 3", (resource,)).fetchall()
+        if recent:
+            print("recent ledger:")
+            for r in reversed(recent):
+                print(f"- {hhmm(r['ts'])} {r['name']} {r['kind']}: {r['body']}")
+        return
+    if act == "join":
+        db.execute(
+            "INSERT INTO queue (resource, session, name, est_min, purpose, joined_at) VALUES (?,?,?,?,?,?)"
+            " ON CONFLICT (resource, session) DO UPDATE SET est_min=excluded.est_min, purpose=excluded.purpose",
+            (resource, row["id"], row["name"], args.est, args.purpose, now()),
+        )
+        for line in lease_lines(db, resource, row["id"]):
+            print(line)
+        return
+    if act == "leave":
+        db.execute("DELETE FROM queue WHERE resource = ? AND session = ?", (resource, row["id"]))
+        print(f"left the {resource} queue")
+        return
+    if act == "acquire":
+        ok, msg = try_acquire(db, resource, row, args.purpose, args.ttl)
+        print(msg)
+        if ok:
+            print("Each tool call you make keeps it alive; for a longer idle stretch, `renew --ttl 2h`. "
+                  "Done: `release --result \"pass: … | fail: …; left running: …\"`.")
+        raise SystemExit(0 if ok else 1)
+    if act == "wait":
+        if not db.execute("SELECT 1 FROM queue WHERE resource = ? AND session = ?", (resource, row["id"])).fetchone():
+            if not lease_row(db, resource) or lease_row(db, resource)["holder"] != row["id"]:
+                die(f"join the {resource} queue first: `switchboard lease {resource} join --est <min> --purpose ...`")
+        deadline = now() + args.timeout * 60
+        last = ""
+        while True:
+            ok, msg = try_acquire(db, resource, row, None, None)
+            if ok:
+                print(msg)
+                return
+            if msg != last:
+                print(f"waiting: {msg}", flush=True)
+                last = msg
+            if now() > deadline:
+                print(f"gave up after {args.timeout}m: {msg}")
+                raise SystemExit(3)
+            time.sleep(WAIT_POLL_SECS)
+    lease = lease_row(db, resource)
+    if act == "renew":
+        if not lease or lease["holder"] != row["id"]:
+            die(f"you don't hold {resource}")
+        minutes = args.ttl or MIN_LEASE_MIN
+        db.execute("UPDATE leases SET expires = ? WHERE resource = ?", (now() + minutes * 60, resource))
+        print(f"renewed {resource} until {hhmm(now() + minutes * 60)}")
+        return
+    if act in ("release", "kick"):
+        if act == "release" and (not lease or lease["holder"] != row["id"]):
+            die(f"you don't hold {resource}")
+        if act == "kick" and not lease:
+            die(f"{resource} has no lease to kick")
+        observed = observe(resource)
+        text = args.result if act == "release" else f"kicked {lease['holder_name']}: {args.note}"
+        warnings = release_warnings(db, row, resource, lease, observed) if act == "release" else []
+        db.execute("DELETE FROM leases WHERE resource = ?", (resource,))
+        ledger(db, row, act, text, resource, observed=observed)
+        facts = (observed or {}).get("facts") or {}
+        tail = (" | left: " + ", ".join(f"{k}={v}" for k, v in facts.items())) if facts else ""
+        tail += "".join(f" | UNACCOUNTED: {w}" for w in warnings)
+        post(db, row, f"{'released' if act == 'release' else 'kicked'} {resource}: {text}{tail}", topic="lease")
+        if act == "kick" and lease["holder"] != row["id"]:
+            post(db, row, f"you no longer hold {resource}: {row['name']} kicked you ({args.note}). Stop using it; "
+                          f"`switchboard lease {resource} join` to get it back.", topic="lease", to=lease["holder"])
+        queue = prune_queue(db, resource)
+        if queue:
+            post(db, row, f"{resource} is free and you are first in the queue: `switchboard lease {resource} acquire`", topic="lease", to=queue[0]["session"])
+        print(f"{act}d {resource}" + (f"; next: {queue[0]['name']}" if queue else ""))
+        if (observed or {}).get("running"):
+            print(f"still running: {observed.get('summary')}. If you meant to leave it, your result should say so.")
+        for w in warnings:
+            print(f"warning: {w}")
+        return
+
+
+def cmd_digest(args) -> None:
+    db = connect()
+    print(digest_text(db, me(db), probe=True) or "switchboard: nothing to report")
+
+
+def main(argv: list[str] | None = None) -> None:
+    p = argparse.ArgumentParser(prog="switchboard", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("who", help="overview: active sessions, what each is on, the lease and what is running")
+    s.add_argument("--all", action="store_true", help="include sessions quiet for over 6h")
+    s.set_defaults(fn=cmd_who)
+    s = sub.add_parser("show", help="one session in full: status, history, posts, ledger, transcript path")
+    s.add_argument("session", help="name, session id, or id prefix (ended sessions too)")
+    s.add_argument("-n", type=int, default=25, help="history entries")
+    s.add_argument("--prompts", action="store_true", help="include the user's prompts in the history")
+    s.set_defaults(fn=cmd_show)
+    s = sub.add_parser("find", help="which sessions touched a ticket, PR, branch, worktree, file or word")
+    s.add_argument("term", nargs="+")
+    s.add_argument("-n", type=int, default=10, help="sessions to list")
+    s.set_defaults(fn=cmd_find)
+    sub.add_parser("whoami").set_defaults(fn=cmd_whoami)
+    s = sub.add_parser("doing", help="set what you are working on")
+    s.add_argument("text", nargs="*")
+    s.add_argument("--announce", action="store_true", help="also post it to the feed")
+    s.set_defaults(fn=cmd_doing)
+    s = sub.add_parser("name", help="rename yourself in switchboard")
+    s.add_argument("new")
+    s.set_defaults(fn=cmd_name)
+
+    s = sub.add_parser("post", help="post an update to the shared feed")
+    s.add_argument("text", nargs="+")
+    s.add_argument("--to", help="a session name or id prefix: only that session gets it")
+    s.add_argument("--topic")
+    s.add_argument("--wait", type=minutes, help="with --to: block until it replies (90, 10m); exit 3 at the timeout")
+    s.set_defaults(fn=cmd_post)
+    s = sub.add_parser("reply", help="answer a post; it goes to that post's author only")
+    s.add_argument("id", type=int)
+    s.add_argument("text", nargs="+")
+    s.set_defaults(fn=cmd_reply)
+    s = sub.add_parser("feed", help="recent posts")
+    s.add_argument("-n", type=int, default=20)
+    s.add_argument("--all", action="store_true", help="include posts addressed to other sessions")
+    s.add_argument("--id", type=int, help="one post, in full")
+    s.set_defaults(fn=cmd_feed)
+
+    s = sub.add_parser("todo", help="the shared board")
+    tsub = s.add_subparsers(dest="action", required=True)
+    a = tsub.add_parser("add")
+    a.add_argument("title", nargs="+")
+    a.add_argument("--project")
+    a.add_argument("--link")
+    a.add_argument("--note")
+    a.add_argument("--take", action="store_true", help="own it and mark it doing")
+    a.add_argument("--owner", help="assign it to another session (name or id prefix)")
+    a = tsub.add_parser("ls")
+    a.add_argument("--all", action="store_true", help="include done and dropped")
+    a.add_argument("--mine", action="store_true")
+    a.add_argument("--project")
+    for name in ("take", "done", "drop", "set"):
+        a = tsub.add_parser(name)
+        a.add_argument("id", type=int)
+        a.add_argument("--note")
+        if name == "take":
+            a.add_argument("--force", action="store_true")
+        if name == "set":
+            a.add_argument("--status", choices=TODO_STATUSES)
+            a.add_argument("--title")
+            a.add_argument("--link")
+            a.add_argument("--release", action="store_true", help="clear the owner")
+    s.set_defaults(fn=cmd_todo)
+
+    s = sub.add_parser("ledger", help="record or list changes to shared state")
+    lsub = s.add_subparsers(dest="action", required=True)
+    a = lsub.add_parser("add")
+    a.add_argument("text", nargs="+")
+    a.add_argument("--rollback")
+    a.add_argument("--resource")
+    a = lsub.add_parser("ls")
+    a.add_argument("-n", type=int, default=15)
+    a.add_argument("--resource")
+    a.add_argument("-v", "--verbose", action="store_true")
+    s.set_defaults(fn=cmd_ledger)
+
+    for name in ("stack", "lease"):
+        s = sub.add_parser(name, help="the lease of the one installed adapter" if name == "stack" else "a lease on any resource")
+        if name == "lease":
+            s.add_argument("resource")
+        lsub = s.add_subparsers(dest="action", required=True)
+        lsub.add_parser("status")
+        a = lsub.add_parser("join")
+        a.add_argument("--est", "--ttl", "--minutes", dest="est", type=minutes, required=True,
+                       help="how long you expect to hold it: 90, 90m, 2h")
+        a.add_argument("--purpose", required=True)
+        lsub.add_parser("leave")
+        a = lsub.add_parser("acquire")
+        a.add_argument("--purpose")
+        a.add_argument("--ttl", "--minutes", "--est", dest="ttl", type=minutes,
+                       help="lease length: 90, 90m, 2h (default max(est, 60m))")
+        a = lsub.add_parser("wait")
+        a.add_argument("--timeout", type=minutes, default=240, help="90, 2h; exit 3 when reached")
+        a = lsub.add_parser("renew")
+        a.add_argument("--ttl", "--minutes", dest="ttl", type=minutes)
+        a = lsub.add_parser("release")
+        a.add_argument("--result", "--note", "--summary", dest="result", required=True,
+                       help="pass: … | fail: … | aborted: … and what you left running")
+        a = lsub.add_parser("kick")
+        a.add_argument("--note", "--reason", "--result", dest="note", required=True)
+        s.set_defaults(fn=cmd_lease, resource=None)
+
+    sub.add_parser("digest", help="the summary a new session sees").set_defaults(fn=cmd_digest)
+    s = sub.add_parser("hook")
+    s.add_argument("event", choices=("session-start", "prompt", "pre-tool", "post-tool", "stop"))
+    s.set_defaults(fn=cmd_hook)
+
+    args = p.parse_args(argv)
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()
