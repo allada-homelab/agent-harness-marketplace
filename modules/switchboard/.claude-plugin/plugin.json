@@ -1,0 +1,10 @@
+{
+  "name": "switchboard",
+  "version": "0.6.0",
+  "description": "Coordination for concurrent Claude Code sessions on one machine: who is doing what, threaded messages between sessions, a todo board, a ledger of shared-state changes, and enforced leases on shared resources.",
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
+  "license": "MIT"
+}

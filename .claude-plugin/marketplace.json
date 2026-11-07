@@ -44,7 +44,7 @@
     },
     {
       "name": "browser",
-      "description": "Drive a browser from any harness: headless auto mode, headed hybrid mode where a human logs in and the agent takes over, or attach to a browser the user opened via its debug port \u2014 through agent-browser on a persistent per-identity profile.",
+      "description": "Drive a browser from any harness: headless auto mode, headed hybrid mode where a human logs in and the agent takes over, or attach to a browser the user opened via its debug port — through agent-browser on a persistent per-identity profile.",
       "category": "development",
       "version": "0.1.3",
       "source": "./modules/browser"
@@ -104,6 +104,13 @@
       "category": "development",
       "version": "0.1.8",
       "source": "./modules/artifacts"
+    },
+    {
+      "name": "switchboard",
+      "description": "Coordination for concurrent Claude Code sessions on one machine: who is doing what, threaded messages between sessions, a todo board, a ledger of shared-state changes, and enforced leases on shared resources.",
+      "category": "development",
+      "version": "0.6.0",
+      "source": "./modules/switchboard"
     }
   ]
 }
