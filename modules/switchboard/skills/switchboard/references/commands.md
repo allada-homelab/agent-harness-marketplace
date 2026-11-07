@@ -51,6 +51,8 @@ resource is enforced and probed.
   its release note. Acquiring it then records that you adopted it and tells that session.
 - Lease and ledger posts reach only sessions working where an adapter applies; `feed` still shows
   them everywhere.
+- Each denied command is recorded as a `deny` ledger entry (`ledger ls --resource <r>`), so a
+  pattern that matches a command that doesn't change the resource can be found and fixed.
 - The gate is off inside a dev container, which has its own empty state.
 
 ## Adapters
@@ -88,7 +90,7 @@ inside a dev container don't see it.
   PR URL from the output and post `opened <url>`.
 - **Turn end (Stop):** when a direct post to the session arrived during the turn, the turn
   continues with the unread posts so it can act or reply before going idle; broadcasts alone
-  wait for the next prompt.
+  wait for the next prompt, and so do replies alone in a turn the hook already continued.
 
 A worktree or branch is recorded when it changes, a PR or ticket the first time a session
 touches it.
