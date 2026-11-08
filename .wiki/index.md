@@ -22,7 +22,7 @@ okf_version: "0.2"
 * [Research preview verdicts need a live check](./research-run-preview-verdicts-need-live-check.md) - Research-report preview or stable verdicts can be wrong even when they claim a live test; run the command and quote its warning or its absence before acting on one.
 * [skill-creator trigger harness is unreliable for measuring descriptions](./skill-creator-trigger-harness-unreliable.md) - skill-creator's run_eval.py pollutes ~/.claude/commands and under-detects triggering (0-33% vs 12/12 independently), so run it from a scratch dir and measure with claude -p stream-json.
 * [SKILL.md body ~/ path: lint-skills.py fails it, tools/lint.sh passes it](./skill-body-home-path-lint.md) - lint-skills.py: absolute path '~/x' in body fails CI, though tools/lint.sh passes locally; run bin/lint-skills.py after editing a SKILL.md, because the body check is skill-only.
-* [Transcript ingest FTS triggers dominate insert cost](./transcripts-fts-triggers-dominate-ingest.md) - transcripts.py ingest slows to hours: per-row FTS5 triggers on messages cost ~100x the insert and grow with index size; drop them and rebuild FTS once per run, not tune merges.
+* [Transcript ingest FTS triggers dominate insert cost](./transcripts-fts-triggers-dominate-ingest.md) - transcripts.py ingest slowed to hours: per-row FTS5 triggers on messages cost ~100x the insert; v6 drops them and builds FTS in one pass — never reintroduce triggers, run `fts` when dirty.
 * [Untrusted worktree agent CLIs need more than a permission mode](./untrusted-worktree-agent-cli-isolation.md) - A permission mode alone does not isolate an agent CLI run on untrusted PR content; claude -p and codex exec each need extra isolation flags.
 
 # Decision
