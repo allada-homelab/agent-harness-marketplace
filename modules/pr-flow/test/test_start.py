@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from conftest import git, run
+from conftest import git, popen, run
 
 
 def test_start_creates_branch_worktree_and_symlink(repo):
@@ -22,6 +22,16 @@ def test_start_keeps_explicit_prefix(repo):
     r = run("start", "fix/typo", cwd=root)
     assert r.returncode == 0, r.stderr
     assert (root / ".claude" / "worktrees" / "fix-typo").is_dir()
+
+
+def test_parallel_starts_all_succeed_with_commit_graph_writes_on(repo):
+    # fetch.writeCommitGraph takes commit-graph-chain.lock, which git never retries: parallel
+    # starts (a workflow's isolated agents) each failed on another's lock.
+    root, _ = repo
+    git("config", "fetch.writeCommitGraph", "true", cwd=root)
+    procs = [popen("start", f"par-{i}", cwd=root) for i in range(8)]
+    failed = [p.communicate()[1] for p in procs if p.wait() != 0]
+    assert failed == []
 
 
 def test_start_is_idempotent(repo):
