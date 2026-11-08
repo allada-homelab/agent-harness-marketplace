@@ -6,6 +6,7 @@ binaries so tests replay recorded answers. Final stdout line is a stable interfa
     pr-flow: <verb> <verdict> [<url-or-path>]
 """
 import argparse
+import fcntl
 import glob
 import json
 import os
@@ -230,6 +231,11 @@ def drop_stash(root, tag):
 
 def cmd_start(a):
     ctx = repo_ctx(Path.cwd())
+    # Held until exit. Parallel starts (a workflow's isolated agents) otherwise fail on git's
+    # no-retry locks: .git/config for the base and tracking writes, and the commit-graph a fetch
+    # writes under fetch.writeCommitGraph.
+    lock = open(ctx.common_dir / "pr-flow-start.lock", "w")
+    fcntl.flock(lock, fcntl.LOCK_EX)
     root = ctx.main_root
     base = a.base or default_base(root)
     branch = a.slug if "/" in a.slug else f"feat/{a.slug}"

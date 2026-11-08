@@ -33,10 +33,20 @@ def repo(tmp_path):
     return main_root, origin
 
 
+def _base_env():
+    # PR_FLOW_DEVC names no executable by default, so teardown never reaches a real devc/docker.
+    return dict(os.environ, PR_FLOW_GH=str(FAKE_GH), PR_FLOW_SLEEP="0", PR_FLOW_DEVC="pr-flow-test-no-devc")
+
+
+def popen(*args, cwd):
+    """Start pr-flow.py without waiting, for tests that race several invocations."""
+    return subprocess.Popen([sys.executable, str(SCRIPT), *args], cwd=cwd, env=_base_env(), text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
 def run(*args, cwd, env=None, replay=None):
     """Run pr-flow.py with a fake gh. `replay` is a list of JSON-able dicts the fake returns for successive `gh pr view` calls."""
-    # PR_FLOW_DEVC names no executable by default, so teardown never reaches a real devc/docker.
-    e = dict(os.environ, PR_FLOW_GH=str(FAKE_GH), PR_FLOW_SLEEP="0", PR_FLOW_DEVC="pr-flow-test-no-devc")
+    e = _base_env()
     if replay is not None:
         import json
         p = cwd / ".gh-replay.json"

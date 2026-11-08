@@ -21,6 +21,10 @@ rebase merges). `open` from a fork clone owner-qualifies the head.
 Exit codes: 0 green/merged/ok · 10 checks-failed · 11 conflict · 12 review ·
 13 closed · 14 timeout · 15 attempts-exhausted · 2 refusal.
 
+`start` holds an exclusive lock on `<git-common-dir>/pr-flow-start.lock` for its whole
+run, so parallel starts in one repo (a workflow's isolated agents) queue instead of
+failing on git's no-retry locks (`.git/config`, and the commit-graph a fetch writes
+under `fetch.writeCommitGraph`).
 `start` refuses a local branch that already exists without a worktree, and if the
 worktree cannot be created after a `--carry` it restores the carried work to main
 before failing, so no stash entry is ever left behind. It refuses on a dirty main checkout by default — pass `--carry` to move
