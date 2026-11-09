@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""switchboard: coordination for concurrent Claude Code sessions on one machine.
+"""switchboard: coordination for concurrent agent sessions (Claude Code, pi, dsh) on one machine.
 
 State is one SQLite file under $SWITCHBOARD_HOME (default ~/.switchboard). Commands:
 
@@ -111,6 +111,11 @@ SCHEMA = [
     """
     ALTER TABLE posts ADD COLUMN reply_to INTEGER;
     PRAGMA user_version = 3;
+    """,
+    # claude, pi or dsh (NULL for a human or a session from before): only Claude can be woken.
+    """
+    ALTER TABLE sessions ADD COLUMN harness TEXT;
+    PRAGMA user_version = 4;
     """,
 ]
 
@@ -258,8 +263,33 @@ def default_resource() -> str:
 
 
 def my_session_id() -> str:
-    sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("SWITCHBOARD_SESSION_ID")
-    return sid or f"human:{os.environ.get('USER', 'user')}"
+    # Each harness exports its session id to the agent's shell commands under its own name.
+    for var in ("CLAUDE_CODE_SESSION_ID", "PI_SESSION_ID", "DSH_SESSION_ID", "SWITCHBOARD_SESSION_ID"):
+        if os.environ.get(var):
+            return os.environ[var]
+    return f"human:{os.environ.get('USER', 'user')}"
+
+
+def harness_of(sid: str) -> str:
+    """Which harness runs session `sid`. pi and dsh export it to both hooks and shell commands,
+    which tells them apart from an outer Claude whose variables they inherited."""
+    if sid == os.environ.get("PI_SESSION_ID"):
+        return "pi"
+    if sid == os.environ.get("DSH_SESSION_ID"):
+        return "dsh"
+    return "claude"
+
+
+def session_pid(sid: str) -> int | None:
+    """The process whose exit ends session `sid`, or None to keep it live PIDLESS_LIVE_SECS after
+    it was last seen."""
+    harness = harness_of(sid)
+    if harness == "pi":
+        pid = os.environ.get("PI_PID", "")  # set for hooks only; pi's bash tool does not export it
+        return int(pid) if pid.isdigit() else None
+    if harness == "dsh":
+        return None  # one dsh server process hosts many sessions
+    return claude_pid()
 
 
 def is_live(row: sqlite3.Row) -> bool:
@@ -289,16 +319,19 @@ def upsert_session(db, sid: str, cwd: str | None, pid: int | None) -> sqlite3.Ro
             (pid, cwd, repo, branch, t, sid),
         )
     else:
+        harness = None if sid.startswith("human:") else harness_of(sid)
         if sid.startswith("human:"):
             want = f"{sid[6:]}-terminal"
         else:
-            want = claude_registry(pid).get("name") or f"{Path(repo or cwd or 'session').name}-{sid[:4]}"
+            # pi ids are UUIDv7: the leading chars are a timestamp every session shares.
+            tag = sid[-4:] if harness == "pi" else sid[:4]
+            want = claude_registry(pid).get("name") or f"{Path(repo or cwd or 'session').name}-{tag}"
         # A new session sees posts from here on; the digest shows it the recent ones.
         cursor = db.execute("SELECT coalesce(max(id), 0) FROM posts").fetchone()[0]
         db.execute(
-            "INSERT INTO sessions (id, name, pid, cwd, repo, branch, started_at, last_seen, feed_cursor)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
-            (sid, unique_name(db, want, sid), pid, cwd, repo, branch, t, t, cursor),
+            "INSERT INTO sessions (id, name, pid, cwd, repo, branch, started_at, last_seen, feed_cursor, harness)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (sid, unique_name(db, want, sid), pid, cwd, repo, branch, t, t, cursor, harness),
         )
     return db.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
 
@@ -309,7 +342,7 @@ def me(db) -> sqlite3.Row:
     if row and not row["ended_at"]:
         db.execute("UPDATE sessions SET last_seen=? WHERE id=?", (now(), sid))
         return row
-    pid = None if sid.startswith("human:") else claude_pid()
+    pid = None if sid.startswith("human:") else session_pid(sid)
     return upsert_session(db, sid, os.getcwd(), pid)
 
 
@@ -752,10 +785,14 @@ def cmd_hook(args) -> None:
     if not sid:
         return
     db = connect()
+    # A subagent is not listed as a session. dsh gives one its own session id, which must not
+    # get a row; in Claude its session_id is the parent's, served as before.
+    if data.get("agent_id") and not db.execute("SELECT 1 FROM sessions WHERE id = ? AND ended_at IS NULL", (sid,)).fetchone():
+        return
     cwd = data.get("cwd") or os.getcwd()
     event = args.event
     if event == "session-start":
-        pid = claude_pid()
+        pid = session_pid(sid)
         # `/clear` starts a new session in the same process; the one it replaced is over.
         for old in db.execute("SELECT * FROM sessions WHERE pid = ? AND id != ? AND ended_at IS NULL", (pid, sid)).fetchall() if pid else ():
             db.execute("UPDATE sessions SET ended_at=?, end_reason='replaced' WHERE id=?", (now(), old["id"]))
@@ -776,7 +813,7 @@ def cmd_hook(args) -> None:
         return
     row = db.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
     if not row or row["ended_at"]:
-        row = upsert_session(db, sid, cwd, claude_pid())
+        row = upsert_session(db, sid, cwd, session_pid(sid))
     elif event == "prompt":
         repo, branch = git_info(cwd)
         db.execute("UPDATE sessions SET last_seen=?, cwd=?, repo=?, branch=? WHERE id=?", (now(), cwd, repo, branch, sid))
@@ -965,8 +1002,12 @@ def cmd_post(args) -> None:
     if not target:
         return
     reg = claude_registry(target["pid"])
-    when = "is idle: it sees this at its next prompt" if reg.get("status") == "idle" else \
-        "sees this after its current tool call, or before it goes idle"
+    if target["harness"] in ("pi", "dsh"):  # no idle state to read, and nothing can wake it
+        when = "sees this at its next prompt or tool call, or before its current turn ends"
+    elif reg.get("status") == "idle":
+        when = "is idle: it sees this at its next prompt"
+    else:
+        when = "sees this after its current tool call, or before it goes idle"
     wake = f" To wake it now, use SendMessage to {reg['name']!r}." if reg.get("name") else ""
     print(f"{target['name']} {when}.{wake}")
     if args.wait is None:

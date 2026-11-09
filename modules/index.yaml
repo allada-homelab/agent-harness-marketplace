@@ -635,26 +635,29 @@ modules:
     summary: Write prose about 80% of the way to ASD-STE100 (Simplified Technical English), the controlled
       language from aerospace maintenance documentation.
 - name: switchboard
-  version: 0.6.1
+  version: 0.7.0
   kinds:
   - skills
   - dsh-plugin
   - hooks
   harness:
   - claude
-  description: 'Coordination for concurrent Claude Code sessions on one machine: who is doing what, threaded
-    messages between sessions, a todo board, a ledger of shared-state changes, and enforced leases on
-    shared resources.'
+  - pi
+  - dsh
+  description: 'Coordination for concurrent agent sessions (Claude Code, pi, dsh) on one machine: who
+    is doing what, threaded messages between sessions, a todo board, a ledger of shared-state changes,
+    and enforced leases on shared resources.'
   skills:
   - name: switchboard
     path: modules/switchboard/skills/switchboard/SKILL.md
     harness:
     - claude
+    - dsh
+    - pi
     tags:
     - coordination
     - sessions
     command: false
-    summary: Coordinates concurrent Claude Code sessions on this machine through the `switchboard` CLI
-      — an overview of every session and what it is working on, each session's history of worktrees, branches,
-      PRs and tickets, status posts and messages, a shared todo board, a ledger of shared-state changes,
-      and leases on shared local resources such as a dev stack.
+    summary: Coordinates concurrent agent sessions on this machine through the `switchboard` CLI — who
+      is on what, messages between sessions, a todo board, a ledger of shared-state changes, and leases
+      on shared local resources such as a dev stack.
