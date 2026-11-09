@@ -319,13 +319,15 @@ def upsert_session(db, sid: str, cwd: str | None, pid: int | None) -> sqlite3.Ro
             (pid, cwd, repo, branch, t, sid),
         )
     else:
+        harness = None if sid.startswith("human:") else harness_of(sid)
         if sid.startswith("human:"):
             want = f"{sid[6:]}-terminal"
         else:
-            want = claude_registry(pid).get("name") or f"{Path(repo or cwd or 'session').name}-{sid[:4]}"
+            # pi ids are UUIDv7: the leading chars are a timestamp every session shares.
+            tag = sid[-4:] if harness == "pi" else sid[:4]
+            want = claude_registry(pid).get("name") or f"{Path(repo or cwd or 'session').name}-{tag}"
         # A new session sees posts from here on; the digest shows it the recent ones.
         cursor = db.execute("SELECT coalesce(max(id), 0) FROM posts").fetchone()[0]
-        harness = None if sid.startswith("human:") else harness_of(sid)
         db.execute(
             "INSERT INTO sessions (id, name, pid, cwd, repo, branch, started_at, last_seen, feed_cursor, harness)"
             " VALUES (?,?,?,?,?,?,?,?,?,?)",

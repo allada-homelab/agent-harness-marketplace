@@ -381,6 +381,13 @@ class Switchboard(unittest.TestCase):
             rows = db.execute("SELECT id, harness FROM sessions ORDER BY id").fetchall()
         self.assertEqual(rows, [("sid-B", "pi"), ("sid-C", "dsh")])
 
+    def test_pi_session_names_come_from_the_id_tail(self):
+        # pi ids are UUIDv7, so their first chars repeat; "sid-B"/"sid-B2" share theirs too.
+        self.hook("B", "session-start", harness="pi")
+        with self.db() as db:
+            name = db.execute("SELECT name FROM sessions WHERE id = 'sid-B'").fetchone()[0]
+        self.assertTrue(name.endswith("-id-B"), name)
+
     def test_a_dsh_subagent_gets_no_session_row(self):
         self.hook("C", "session-start", harness="dsh", agent_id="sid-C")
         self.hook("C", "post-tool", harness="dsh", agent_id="sid-C", tool_name="Bash", tool_input={"command": "ls"})
