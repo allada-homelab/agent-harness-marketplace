@@ -107,6 +107,13 @@ def test_teardown_from_inside_the_worktree_reexecs(repo):
     assert not wt.exists()
 
 
+def test_teardown_from_main_without_branch_names_the_fix(repo):
+    root, _ = repo
+    r = run("teardown", cwd=root)
+    assert r.returncode != 0
+    assert "pr-flow teardown <branch>" in r.stderr
+
+
 def test_teardown_refuses_dirty_worktree(repo):
     root, wt = merged_branch(repo)
     (wt / "dirty.txt").write_text("d\n")

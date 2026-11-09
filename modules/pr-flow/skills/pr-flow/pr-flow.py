@@ -634,7 +634,7 @@ def devc_down(wt):
 
 def teardown(ctx, branch, dry_run=False):
     if branch in PROTECTED:
-        raise Fail(f"{branch} is protected")
+        raise Fail(f"{branch} is protected; outside the worktree, name the branch: pr-flow teardown <branch>")
     root = ctx.main_root
     wt = worktree_for_branch(root, branch)
     if wt is not None and wt.is_dir():
