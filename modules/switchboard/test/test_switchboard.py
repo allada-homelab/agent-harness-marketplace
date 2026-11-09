@@ -50,28 +50,37 @@ class Switchboard(unittest.TestCase):
             proc.wait()
         self.tmp.cleanup()
 
-    def env(self, who, adapters="none"):
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE", "SWITCHBOARD"))}
+    def env(self, who, adapters="none", harness="claude", hook=False, inside=None):
+        """The env a session's hooks (`hook`) or shell commands get on `harness`; `inside` names the
+        Claude session it was launched from, whose variables it inherits."""
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE", "SWITCHBOARD", "PI_", "DSH_"))}
         env.update(
             SWITCHBOARD_HOME=str(self.home / "state"),
             SWITCHBOARD_CLAUDE_SESSIONS=str(self.home / "no-registry"),
             SWITCHBOARD_ADAPTERS=adapters,
         )
-        if who:
+        if inside:
+            env.update(CLAUDE_CODE_SESSION_ID=f"sid-{inside}", CLAUDE_PID=str(self.pids[inside[0]]))
+        if who and harness == "claude":
             env.update(CLAUDE_CODE_SESSION_ID=f"sid-{who}", CLAUDE_PID=str(self.pids[who[0]]))
+        elif who and harness == "pi":  # the pi hook-runner adds PI_PID; pi's bash tool does not
+            env.update(PI_SESSION_ID=f"sid-{who}", **({"PI_PID": str(self.pids[who[0]])} if hook else {}))
+        elif who:
+            env.update(DSH_SESSION_ID=f"sid-{who}")
         return env
 
-    def cli(self, who, *args, ok=True, adapters="none"):
+    def cli(self, who, *args, ok=True, adapters="none", harness="claude"):
         out = subprocess.run([sys.executable, str(BIN), *args], capture_output=True, text=True,
-                             env=self.env(who, adapters), cwd=self.cwd)
+                             env=self.env(who, adapters, harness), cwd=self.cwd)
         if ok is not None:
             self.assertEqual(out.returncode == 0, ok, f"{args}: rc={out.returncode}\n{out.stdout}{out.stderr}")
         return out
 
-    def hook(self, who, event, adapters="none", **payload):
+    def hook(self, who, event, adapters="none", harness="claude", inside=None, **payload):
         data = {"session_id": f"sid-{who}", "cwd": str(self.cwd), **payload}
+        env = self.env(who, adapters, harness, hook=True, inside=inside)
         out = subprocess.run([sys.executable, str(BIN), "hook", event], input=json.dumps(data),
-                             capture_output=True, text=True, env=self.env(who, adapters), cwd=self.cwd)
+                             capture_output=True, text=True, env=env, cwd=self.cwd)
         self.assertEqual(out.returncode, 0, out.stderr)
         if not out.stdout.strip():
             return ""
@@ -326,8 +335,8 @@ class Switchboard(unittest.TestCase):
         self.assertIn("[demo-db] set has_access=1", out)
         self.assertIn("rollback: set it back to 0", out)
 
-    def pre_tool(self, who, command, cwd):
-        data = {"session_id": f"sid-{who}", "cwd": str(cwd), "tool_name": "Bash", "tool_input": {"command": command}}
+    def pre_tool(self, who, command, cwd, **payload):
+        data = {"session_id": f"sid-{who}", "cwd": str(cwd), "tool_name": "Bash", "tool_input": {"command": command}, **payload}
         out = subprocess.run([sys.executable, str(BIN), "hook", "pre-tool"], input=json.dumps(data),
                              capture_output=True, text=True, env=self.env(who, "demo"), cwd=self.cwd)
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -360,6 +369,59 @@ class Switchboard(unittest.TestCase):
             db.execute("UPDATE leases SET expires = ?", (time.time() - 1,))
         self.hook("A", "post-tool", tool_name="Bash", tool_input={"command": "ls"})
         self.assertEqual(self.pre_tool("A", start, demo), "deny", "an expired lease is not revived")
+
+    # ------------------------------------------------------------ pi and dsh
+
+    def test_pi_and_dsh_hooks_and_cli_name_the_same_session(self):
+        self.hook("B", "session-start", harness="pi")
+        self.hook("C", "session-start", harness="dsh")
+        self.assertIn(f"session=sid-B  pid={self.pids['B']}", self.cli("B", "whoami", harness="pi").stdout)
+        self.assertIn("session=sid-C  pid=-", self.cli("C", "whoami", harness="dsh").stdout)
+        with self.db() as db:
+            rows = db.execute("SELECT id, harness FROM sessions ORDER BY id").fetchall()
+        self.assertEqual(rows, [("sid-B", "pi"), ("sid-C", "dsh")])
+
+    def test_a_dsh_subagent_gets_no_session_row(self):
+        self.hook("C", "session-start", harness="dsh", agent_id="sid-C")
+        self.hook("C", "post-tool", harness="dsh", agent_id="sid-C", tool_name="Bash", tool_input={"command": "ls"})
+        with self.db() as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM sessions WHERE id = 'sid-C'").fetchone())
+
+    def test_a_claude_subagent_is_still_gated_as_its_parent(self):
+        demo = self.cwd / "demo"
+        demo.mkdir()
+        (demo / ".demo-root").touch()
+        self.hook("A", "session-start")
+        self.assertEqual(self.pre_tool("A", "make up", demo, agent_id="sub-1"), "deny")
+
+    def test_pi_and_dsh_sessions_ignore_the_pid_of_a_claude_they_run_under(self):
+        self.hook("A", "session-start")
+        self.cli("A", "lease", "box", "acquire", "--purpose", "proof")
+        self.hook("B", "session-start", harness="pi", inside="A")
+        self.hook("C", "session-start", harness="dsh", inside="A")
+        self.assertIn("box: held by", self.cli("A", "lease", "box", "status").stdout)
+        with self.db() as db:
+            pids = dict(db.execute("SELECT id, pid FROM sessions").fetchall())
+        self.assertEqual(pids, {"sid-A": self.pids["A"], "sid-B": self.pids["B"], "sid-C": None})
+
+    def test_a_new_pi_session_replaces_the_last_one_in_its_process(self):
+        self.hook("B", "session-start", harness="pi")
+        self.cli("B", "lease", "box", "acquire", "--purpose", "proof", harness="pi")
+        self.hook("B2", "session-start", harness="pi")  # /new in the same pi process
+        self.assertIn("box: free", self.cli("A", "lease", "box", "status").stdout)
+
+    def test_dsh_sessions_never_replace_one_another(self):
+        self.hook("C", "session-start", harness="dsh")
+        self.cli("C", "lease", "box", "acquire", "--purpose", "proof", harness="dsh")
+        self.hook("C2", "session-start", harness="dsh")  # another session on the same dsh server
+        self.assertIn("box: held by", self.cli("A", "lease", "box", "status").stdout)
+
+    def test_a_message_to_a_dsh_session_waits_for_its_next_prompt_or_tool_call(self):
+        self.hook("A", "session-start")
+        self.hook("C", "session-start", harness="dsh")
+        c_name = self.cli("C", "whoami", harness="dsh").stdout.split()[0]
+        out = self.cli("A", "post", "heads-up", "--to", c_name).stdout
+        self.assertIn("sees this at its next prompt or tool call, or before its current turn ends", out)
 
 
 class InProcess(unittest.TestCase):

@@ -1,9 +1,10 @@
 # switchboard
 
-Coordination for concurrent Claude Code sessions on one machine: a registry of who is doing what,
+Coordination for concurrent agent sessions (Claude Code, pi, dsh) on one machine: a registry of who is doing what,
 threaded messages between sessions, a todo board, a ledger of shared-state changes, and leases on
 shared local resources such as a dev stack. It informs, and blocks one thing: a Bash command that
-changes a leased resource from a session that doesn't hold the lease. Claude Code only.
+changes a leased resource from a session that doesn't hold the lease. On pi and dsh the hooks run
+through the maintainer's dotfiles hook runners.
 
 | Part | What it is |
 |---|---|
@@ -34,17 +35,23 @@ registry with status lines and each session's history (so any session can answer
 what" and "who touched X"), a persistent feed with threaded direct posts (`post --to`, `reply`,
 `post --wait`), the board, the ledger and leases. A direct post reaches a busy session at its next
 tool call or, through the Stop hook, before it goes idle; an idle one at its next prompt, unless
-the sender wakes it with `SendMessage`.
+the sender wakes it with `SendMessage`. pi and dsh have no wake: a direct post waits for that
+session's next prompt or tool call (or its Stop hook).
 
 ## Design notes
 
-- **Identity.** Each session is keyed by `CLAUDE_CODE_SESSION_ID`, which Claude Code sets in Bash
-  commands. The SessionStart hook also exports `SWITCHBOARD_SESSION_ID` through `CLAUDE_ENV_FILE`
-  as a fallback.
-- **Liveness.** Liveness is the Claude Code pid (`CLAUDE_PID`, else the nearest `claude`
-  ancestor), not a heartbeat, so a crashed holder's lease frees itself without a TTL wait. There
+- **Identity.** Each session is keyed by the id its harness exports to shell commands:
+  `CLAUDE_CODE_SESSION_ID`, `PI_SESSION_ID` or `DSH_SESSION_ID`, in that order. Hooks read
+  `session_id` from their stdin, which is the same id; the pi and dsh hook runners also export
+  their variable to handlers, which is how a hook tells which harness it serves. On Claude the
+  SessionStart hook also exports `SWITCHBOARD_SESSION_ID` through `CLAUDE_ENV_FILE` as a fallback.
+  A hook payload with `agent_id` (a subagent) never creates a session row.
+- **Liveness.** Liveness is the harness pid (Claude: `CLAUDE_PID`, else the nearest `claude`
+  ancestor; pi: `PI_PID`, set by its hook runner), not a heartbeat, so a crashed holder's lease frees itself without a TTL wait. There
   is no SessionEnd hook (the repo's hook contract has none): an exited process is detected by its
-  pid, and `/clear`, which keeps the process, by SessionStart seeing a new session id in it.
+  pid, and `/clear` (pi: `/new`, `/resume`, `/fork`), which keeps the process, by SessionStart seeing a
+  new session id in it. A dsh session has no pid of its own (one server hosts many sessions), so it
+  counts as live for 12h after it was last seen, like a terminal, and never replaces another.
 - **Display names.** These come from Claude Code's own registry, `~/.claude/sessions/<pid>.json`,
   so `who` shows the name `SendMessage` takes. That file is internal and undocumented: it is read
   only for display, and every field is optional.
@@ -55,7 +62,7 @@ the sender wakes it with `SendMessage`.
   prompt, on an edit into a different worktree than the last one, and after a branch-moving
   command.
 - **Why the lease is enforced.** An advisory note after the command arrives too late: the
-  resource is already restarted under its holder. A hook only sees Claude's Bash tool, so the
+  resource is already restarted under its holder. A hook only sees the agent's Bash tool, so the
   user's own terminal is never blocked.
 
 ## Checks

@@ -1,17 +1,18 @@
 # switchboard commands
 
-Every command acts as the current session (`CLAUDE_CODE_SESSION_ID`). Run from a plain terminal,
+Every command acts as the current session (`CLAUDE_CODE_SESSION_ID`, `PI_SESSION_ID` or
+`DSH_SESSION_ID`, whichever the harness sets). Run from a plain terminal,
 it acts as `<user>-terminal`, which can hold leases and post like any session.
 
 | Command | Does |
 |---|---|
-| `who [--all]` | The overview. Each active session: name (and the `SendMessage` name when it differs), latest worktree@branch, last seen, busy/idle, held lease, its status or else its last prompt, its latest PR and ticket. Then each lease and what is observed running, and the open board count. Sessions quiet for over 6h are folded away unless `--all`. |
+| `who [--all]` | The overview. Each active session: name (and, for a Claude Code session, the `SendMessage` name when it differs), latest worktree@branch, last seen, busy/idle, held lease, its status or else its last prompt, its latest PR and ticket. Then each lease and what is observed running, and the open board count. Sessions quiet for over 6h are folded away unless `--all`. |
 | `show <session> [-n N] [--prompts]` | One session, live or ended, by name, id or id prefix: status, last prompt, cwd, transcript path, history (worktrees, branches, PRs, tickets; `--prompts` adds prompts), last posts and ledger entries, open todos. |
 | `find <term> [-n N]` | Sessions that touched `<term>` (ticket, PR, branch, worktree, file, word) in their history, prompts, status, posts, ledger entries or todos, newest first, with up to 3 matches each. |
 | `whoami` | Your name, session id, pid. |
 | `doing "<text>" [--announce]` | Set your one-line status; `--announce` also posts it. Empty text clears it. `stack acquire --purpose` sets it when unset. |
 | `name <new>` | Rename yourself in switchboard (not in `SendMessage`). |
-| `post "<text>" [--to <session>] [--topic <t>] [--wait <dur>]` | Post to the feed; `--to` delivers to one live session only (name or id prefix) and says when it will land and the `SendMessage` name that wakes it. `--wait` blocks until that session replies, printing the reply; exit 3 at the timeout. |
+| `post "<text>" [--to <session>] [--topic <t>] [--wait <dur>]` | Post to the feed; `--to` delivers to one live session only (name or id prefix) and says when it will land and, for a Claude Code session, the `SendMessage` name that wakes it (a pi or dsh session cannot be woken). `--wait` blocks until that session replies, printing the reply; exit 3 at the timeout. |
 | `reply <id> "<text>"` | Answer post `#<id>`; it goes to that post's author only, marked `(re #<id>)`. |
 | `feed [-n N] [--all] [--id N]` | Recent posts to everyone and to you (`--all`: every post); `--id` prints one post in full (delivered posts are cut at 300 characters and name it). |
 | `todo add "<title>" [--project P] [--link URL] [--note N] [--take \| --owner <session>]` | Add a board item; `--take` owns it and marks it `doing`; `--owner` assigns it to another session. |
@@ -40,8 +41,9 @@ resource is enforced and probed.
 
 - A lease lasts `max(est, 60)` minutes unless `--ttl` says otherwise. Each tool call by the holder
   renews it, so it lapses 60 minutes after the holder goes quiet.
-- It ends early when its holder's Claude Code process exits (the pid is gone) or `/clear` replaces
-  the holder session in the same process. An expired or ended holder's lease is free to the first
+- It ends early when its holder's Claude Code or pi process exits (the pid is gone) or `/clear`
+  (pi: `/new`, `/resume`, `/fork`) replaces the holder session in the same process. One dsh server
+  hosts many sessions, so a dsh session has no pid: it counts as live for 12h after it was last seen. An expired or ended holder's lease is free to the first
   in the queue, and the takeover is recorded.
 - Releasing or losing a lease never stops anything. The observed snapshot in the ledger says what
   was left running. `release` prints what is still running, and warns (and posts, as
@@ -80,7 +82,8 @@ inside a dev container don't see it.
 ## What the hooks record
 
 - **Session start:** cwd, git worktree and branch, transcript path. A different session that ran
-  in the same process (before `/clear`) is ended and its leases released.
+  in the same process (before `/clear`, or pi's `/new`) is ended and its leases released. A
+  subagent with its own session id (dsh) is not registered.
 - **Each prompt:** the prompt (first 300 characters), ticket ids (`AI-3217`) and PR URLs in it,
   the worktree and branch of the cwd. After a session's first 10 minutes, a reminder (at most
   hourly) when its `doing` is unset or older than its latest branch, PR or ticket.

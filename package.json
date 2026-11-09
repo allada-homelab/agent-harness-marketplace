@@ -17,8 +17,7 @@
     "skills": [
       "modules/*/skills/*",
       "!modules/dual-agent-pr-review/**",
-      "!modules/best-practices-maintainer/**",
-      "!modules/switchboard/**"
+      "!modules/best-practices-maintainer/**"
     ]
   },
   "scripts": {

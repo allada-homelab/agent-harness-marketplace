@@ -1,7 +1,6 @@
 ---
 name: switchboard
-description: Coordinates concurrent Claude Code sessions on this machine through the `switchboard` CLI — an overview of every session and what it is working on, each session's history of worktrees, branches, PRs and tickets, status posts and messages, a shared todo board, a ledger of shared-state changes, and leases on shared local resources such as a dev stack. Use before starting, stopping or migrating a shared local resource that has a switchboard lease, when work may overlap another session's branch or worktree, when handing work to or asking something of another session, and when asked what sessions are running, what a session is doing, or which session worked on a ticket, PR, branch or file.
-harness: [claude]
+description: Coordinates concurrent agent sessions on this machine through the `switchboard` CLI — who is on what, messages between sessions, a todo board, a ledger of shared-state changes, and leases on shared local resources such as a dev stack. Use before starting, stopping or migrating a leased resource, when work may overlap or need another session, and when asked what sessions are running or which one touched a ticket, PR, branch or file.
 tags: [coordination, sessions]
 ---
 
@@ -18,8 +17,8 @@ that lease. The rest are yours to keep. Another skill may add rules for a specif
 
 1. **A shared resource is a lease.** Before you start, stop, take over, reset or migrate it:
    `switchboard stack status` (it also reports what is *actually* running and flags a mismatch).
-   Then `stack join --est <min> --purpose "<what you will prove>"`, run `stack wait` with
-   `run_in_background`, and keep doing other work until it returns. Release as soon as you are done:
+   Then `stack join --est <min> --purpose "<what you will prove>"`, run `stack wait` in the
+   background where your shell tool can, and keep doing other work until it returns. Release as soon as you are done:
    `stack release --result "pass: … | fail: … ; left running: …"`. Join only when you can use it the
    moment it is yours; setup work (worktree bootstrap, a plain image build) happens before you
    join. When it is free and nobody is queued, `stack acquire --purpose "…"` takes it at once.
@@ -44,9 +43,10 @@ that lease. The rest are yours to keep. Another skill may add rules for a specif
    session's work, ask that session.
    - `switchboard post "<question or heads-up>" --to <name>`: it reaches a busy session after its
      current tool call (or before it goes idle) and stays on record. The output says when it will
-     land; an idle session gets it at its next prompt, so also wake it with the built-in
-     `SendMessage` tool, addressed by the `msg:` name `who` prints.
-   - Need the answer to continue? Add `--wait 10m` (run it in the background), or carry on and
+     land; an idle session gets it at its next prompt. On Claude Code, also wake it with the
+     built-in `SendMessage` tool, addressed by the `msg:` name `who` prints; a pi or dsh session
+     cannot be woken.
+   - Need the answer to continue? Add `--wait 10m` (in the background where you can), or carry on and
      the reply arrives as a post.
    - A post addressed to you shows `→ you #<id>`: act on it, then answer with
      `switchboard reply <id> "<answer>"`. Never leave one unanswered.
