@@ -24,7 +24,7 @@ from pathlib import Path
 FINDINGS_NAME = "findings.db"
 # Bumped whenever a CREATE TABLE here changes: the statements are IF NOT EXISTS, so an
 # existing file would otherwise keep the old shape forever. Stored in PRAGMA user_version.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 FINDINGS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -109,6 +109,29 @@ CREATE TABLE IF NOT EXISTS decision_answers (
     UNIQUE(harness, native_id, battery, unit, qid)
 );
 
+-- One row per mined session (transcript-learn); `body` is its JSON list of lessons, empty
+-- when the session taught nothing durable — the row still marks it mined.
+CREATE TABLE IF NOT EXISTS session_lessons (
+    id          INTEGER PRIMARY KEY,
+    run_id      INTEGER NOT NULL REFERENCES runs(id),
+    harness     TEXT NOT NULL,
+    native_id   TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    UNIQUE(run_id, harness, native_id)
+);
+
+-- What applying a lesson cluster `(repo, label)` came to. Append-only: the newest row wins.
+CREATE TABLE IF NOT EXISTS lesson_outcomes (
+    id          INTEGER PRIMARY KEY,
+    repo        TEXT NOT NULL,
+    label       TEXT NOT NULL,
+    status      TEXT NOT NULL CHECK(status IN ('applied','duplicate','stale','rejected')),
+    pr_url      TEXT,
+    note        TEXT,
+    created_at  TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS sweep_flags_session ON sweep_flags(harness, native_id);
 CREATE INDEX IF NOT EXISTS decision_answers_question ON decision_answers(battery, battery_hash, qid);
 CREATE INDEX IF NOT EXISTS analysis_access_session
@@ -145,7 +168,7 @@ def migrate(conn: sqlite3.Connection, db: Path) -> None:
     0 → 1 drops `review_flags` so the schema below can recreate it with its UNIQUE key.
     That is destructive, so it only runs while the table is empty; a store that already
     holds review findings is the user's data and this exits rather than guess.
-    1 → 2 and 2 → 3 only add tables, which the IF NOT EXISTS schema creates; nothing to do here.
+    1 → 2, 2 → 3 and 3 → 4 only add tables, which the IF NOT EXISTS schema creates; nothing to do here.
     """
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version >= SCHEMA_VERSION:

@@ -34,7 +34,7 @@ def test_schema_applies_and_is_idempotent(tmp_path):
     conn.close()
 
     assert {"runs", "sweep_flags", "review_flags", "session_analyses", "analysis_access",
-            "decision_answers"} <= tables
+            "decision_answers", "session_lessons", "lesson_outcomes"} <= tables
     assert indexes == {
         "sweep_flags_session",
         "review_flags_session",
@@ -201,7 +201,7 @@ def test_an_old_store_with_review_findings_refuses_with_exit_2(tmp_path, capsys)
 
 
 def test_a_version_1_store_with_review_findings_upgrades_without_losing_them(tmp_path):
-    """1 → 3 only adds tables; the 0 → 1 refusal must not fire on a live store."""
+    """1 → current only adds tables; the 0 → 1 refusal must not fire on a live store."""
     v1 = fi.FINDINGS_SCHEMA.split("CREATE TABLE IF NOT EXISTS session_analyses")[0]
     conn = sqlite3.connect(tmp_path / "findings.db")
     conn.executescript(v1)
@@ -215,7 +215,7 @@ def test_a_version_1_store_with_review_findings_upgrades_without_losing_them(tmp
     conn.close()
 
     conn = fi.open_findings(tmp_path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == fi.SCHEMA_VERSION
     assert conn.execute("SELECT count(*) FROM review_flags").fetchone()[0] == 1
     assert conn.execute("SELECT count(*) FROM session_analyses").fetchone()[0] == 0
     conn.close()

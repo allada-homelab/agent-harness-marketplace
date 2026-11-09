@@ -13,6 +13,8 @@ import re
 SIGNALS_VERSION = 1
 
 SHORT_USER = 300  # a correction is a short turn; a long one is a new instruction
+# Longer user turns are pasted logs, never read for signals: keeps whole transcripts out of memory.
+SIGNAL_TEXT_MAX = 8000
 
 # Injected text that is not the user talking. Learned by reading the live index: on claude
 # and dsh roughly half of all "user" characters are one of these. Each entry is
@@ -52,6 +54,12 @@ CORRECTION_RE = re.compile(
     r"\bno,|\bstop\b|\bwrong\b|\bagain\b|\bI said\b|\bdon['’]t\b|\bundo\b|\brevert\b",
     re.I,
 )
+
+
+def correction_text(text: str, harness: str) -> str | None:
+    """The user's words when this turn is a short correction, else None."""
+    clean = human_text(text, harness)
+    return clean if clean and len(clean) < SHORT_USER and CORRECTION_RE.search(clean) else None
 
 
 def human_text(text: str, harness: str) -> str:

@@ -1,15 +1,16 @@
 # agent-transcripts
 
 Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a
-derived sqlite database. Nine portable skills: `transcript-export-claude`,
+derived sqlite database. Ten portable skills: `transcript-export-claude`,
 `transcript-export-pi` and `transcript-export-dsh` each do a read-only, incremental export
 of one harness's raw session files (host directories plus dev-container docker volumes for
 claude and dsh) into a cache root outside any git worktree, `transcript-ingest` builds
 the derived sqlite index over everything exported, `transcript-query` reads it to answer
 questions about tool use, sessions and activity across harnesses, `transcript-sweep`
 scans it for sessions worth a closer look, `transcript-review` judges those sessions one
-at a time, `transcript-analyze` reads one whole session and writes an analysis of it, and
-the optional `transcript-decide` labels turns and sessions with a decision model.
+at a time, `transcript-analyze` reads one whole session and writes an analysis of it,
+`transcript-learn` turns what sessions taught into changes to each repo's agent knowledge,
+and the optional `transcript-decide` labels turns and sessions with a decision model.
 The raw files are
 canonical; the database is rebuildable and safe to delete. The three export skills call the
 one script that ships beside the ingest skill.
@@ -70,6 +71,22 @@ run logged a read of every page and every cited quote occurs in its message. `th
 groups recorded analyses by outcome, problem category and label, and recommendation
 target. Its commands live in `transcript-review`'s script, which they share code with. A
 session longer than four pages is split across child agents.
+
+## The learning pass
+
+`transcript-learn` closes the loop: the other passes say what went wrong, this one makes the
+next session in that repo go right. It mines sessions that hold a lesson signal — a review
+finding a repo could have prevented, a short user correction, an analysis's
+recommendations — one at a time, and records each lesson with its repo, its home (`wiki`,
+`skill`, `hook` or `rule`, the narrowest that fits), a label and verbatim evidence.
+`learn-queue` works out a session's repo from the paths it touched rather than its working
+directory, which is often a parent directory, a scratch directory or a dev container path;
+a worktree path counts for its main checkout and `--map` rewrites a container prefix.
+`lessons` groups lessons by repo and label, so the number of sessions behind a lesson is
+its evidence. Applying is one agent per repo: it re-checks each lesson against the default
+branch, writes the ones that still hold, opens one pull request with lesson statements only
+— never transcript text — and records the outcome with `lesson-status`, so a lesson is
+never applied twice. Its commands live in `transcript-review`'s script.
 
 ## The decision labels
 

@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: agent-transcripts
-  version: 0.12.0
+  version: 0.13.0
   kinds:
   - skills
   - dsh-plugin
@@ -84,6 +84,19 @@ modules:
     command: false
     summary: Build or refresh the derived sqlite index over exported Claude Code, pi and dsh transcripts
       in the agent-transcripts cache.
+  - name: transcript-learn
+    path: modules/agent-transcripts/skills/transcript-learn/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - observability
+    command: false
+    summary: Mine agent session transcripts for lessons a repo's agent knowledge should have carried —
+      a correction the user had to make, a procedure redone by hand, a fact rediscovered — then land each
+      one in its repo where the next session will see it (AGENTS.md/CLAUDE.md, the repo wiki, a repo skill
+      with a script, or a hook), one pull request per repo.
   - name: transcript-query
     path: modules/agent-transcripts/skills/transcript-query/SKILL.md
     harness:
