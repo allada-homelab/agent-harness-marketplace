@@ -19,13 +19,19 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "transcript-ingest"))
-from signals import SIGNALS_VERSION, strip_boilerplate  # noqa: E402  sibling, shared with ingest
+from signals import (  # noqa: E402  sibling, shared with ingest
+    SIGNAL_TEXT_MAX,
+    SIGNALS_VERSION,
+    correction_text,
+    strip_boilerplate,
+)
 
 DEFAULT_DEST_NAME = "agent-transcripts"
 SKILL = "transcript-review"
@@ -188,18 +194,9 @@ def sampled(seed: int, harness: str, native_id: str, fraction: float) -> bool:
     return int.from_bytes(digest.digest()[:8], "big") / 2**64 < fraction
 
 
-def queue_candidates(conn, dest, *, threshold, sample, seed, harnesses, since, unreviewed):
-    where, params = ["s.kind = 'main'"], []
-    if since:
-        where.append("s.started_at >= ?")
-        params.append(since)
-    if harnesses:
-        where.append("s.harness IN (%s)" % ",".join("?" for _ in harnesses))
-        params += list(harnesses)
-    clause = " AND ".join(where)
-
-    # Ingest stores each main session's signals (SIGNALS_VERSION rules) after it inserts the
-    # session, so the queue reads one row per session instead of scanning messages.
+def require_signals(conn) -> None:
+    """Ingest stores each main session's signals (SIGNALS_VERSION rules) after it inserts the
+    session, so a queue reads one row per session instead of scanning messages."""
     if not conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_signals'"
     ).fetchone() or conn.execute(
@@ -209,6 +206,24 @@ def queue_candidates(conn, dest, *, threshold, sample, seed, harnesses, since, u
             f"the index has no session signals at version {SIGNALS_VERSION}; run the "
             "transcript-ingest skill (ingest) first"
         )
+
+
+def main_session_filter(since, harnesses) -> tuple[list[str], list]:
+    """WHERE clauses and params over `sessions s` shared by both queues."""
+    where, params = ["s.kind = 'main'"], []
+    if since:
+        where.append("s.started_at >= ?")
+        params.append(since)
+    if harnesses:
+        where.append("s.harness IN (%s)" % ",".join("?" for _ in harnesses))
+        params += list(harnesses)
+    return where, params
+
+
+def queue_candidates(conn, dest, *, threshold, sample, seed, harnesses, since, unreviewed):
+    where, params = main_session_filter(since, harnesses)
+    clause = " AND ".join(where)
+    require_signals(conn)
     sessions = conn.execute(
         f"SELECT s.harness, s.native_id, s.started_at, g.message_count,"
         f" g.ends_on_user, g.correction FROM sessions s"
@@ -464,23 +479,46 @@ ANCHOR_WINDOW = 3  # messages kept either side of an anchor: the call, its resul
 
 def anchor_ords(conn, dest: Path, session_id: int, harness: str, native_id: str,
                 limit: int = ANCHOR_MAX) -> list[int]:
-    """Ords the sweep's issue evidence points at — the lines the elision must not cut.
+    """Ords the elision must not cut: recorded review evidence, the user's short corrections,
+    then the sweep's issue evidence — in that priority when `limit` cuts.
 
     Without this a 12k-message session renders its first and last fifty messages and the
-    judge never sees the errors the sweep flagged it for.
+    judge never sees the errors the sweep flagged it for, or the turn where the user
+    stopped the agent.
     """
+    flags, reviewed = [], []
     db = findings_path(dest)
-    if not db.exists():
-        return []
-    fconn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    try:
-        flags = fconn.execute(
-            "SELECT kind, evidence FROM sweep_flags"
-            " WHERE harness = ? AND native_id = ? AND severity = 'issue'",
-            (harness, native_id),
-        ).fetchall()
-    finally:
-        fconn.close()
+    if db.exists():
+        fconn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            flags = fconn.execute(
+                "SELECT kind, evidence FROM sweep_flags"
+                " WHERE harness = ? AND native_id = ? AND severity = 'issue'",
+                (harness, native_id),
+            ).fetchall()
+            reviewed = [ord_ for (ord_,) in fconn.execute(
+                "SELECT DISTINCT evidence_ord FROM review_flags WHERE harness = ?"
+                " AND native_id = ? AND present = 1 AND evidence_ord IS NOT NULL"
+                " ORDER BY evidence_ord",
+                (harness, native_id),
+            )]
+        finally:
+            fconn.close()
+    # Ingest's signal pass already knows whether the session holds any correction.
+    has_correction = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_signals'"
+    ).fetchone() and conn.execute(
+        "SELECT 1 FROM session_signals WHERE session_id = ? AND correction IS NOT NULL",
+        (session_id,),
+    ).fetchone()
+    for ord_, text in conn.execute(
+        "SELECT ord, text FROM messages WHERE session_id = ? AND role = 'user'"
+        " AND length(text) <= ? ORDER BY ord",
+        (session_id, SIGNAL_TEXT_MAX),
+    ) if has_correction else ():
+        if ord_ not in reviewed and correction_text(text, harness):
+            reviewed.append(ord_)
+    reviewed = reviewed[:limit]
 
     def rank(kind: str) -> int:
         return ANCHOR_KINDS.index(kind) if kind in ANCHOR_KINDS else len(ANCHOR_KINDS)
@@ -495,17 +533,15 @@ def anchor_ords(conn, dest: Path, session_id: int, harness: str, native_id: str,
             mid = item.get("message_id") if isinstance(item, dict) else None
             if isinstance(mid, int) and mid not in message_ids:
                 message_ids.append(mid)
-    message_ids = message_ids[:limit]
-    if not message_ids:
-        return []
+    message_ids = message_ids[:limit - len(reviewed)]
     # An index rebuild renumbers message ids, so an evidence id that no longer exists is
-    # simply not an anchor.
+    # simply not an anchor. Ords survive a rebuild, so review evidence needs no lookup.
     found = dict(conn.execute(
         "SELECT id, ord FROM messages WHERE session_id = ? AND id IN (%s)"
         % ",".join("?" for _ in message_ids),
         [session_id, *message_ids],
-    ).fetchall())
-    return sorted({found[mid] for mid in message_ids if mid in found})
+    ).fetchall()) if message_ids else {}
+    return sorted(set(reviewed) | {found[mid] for mid in message_ids if mid in found})
 
 
 def fit_budget(units: list[Unit], budget: int, anchors=()) -> list[int]:
@@ -574,7 +610,8 @@ def cmd_view(args) -> int:
     if flags:
         header.append("sweep: " + "  ".join(f"{k}={c}({s})" for k, c, s in flags))
     if anchors:
-        header.append("anchors (sweep evidence, ±%d messages kept): %s"
+        header.append("anchors (review evidence, corrections, sweep evidence; ±%d messages "
+                      "kept): %s"
                       % (ANCHOR_WINDOW, ", ".join(str(a) for a in anchors)))
 
     body: list[str] = []
@@ -1180,8 +1217,8 @@ def paginate(units: list[Unit], page_chars: int) -> list[list[Unit]]:
 
 def check_run(fconn, run_id: int) -> None:
     if fconn.execute("SELECT 1 FROM runs WHERE id = ?", (run_id,)).fetchone() is None:
-        raise SystemExit(f"no run {run_id} in findings.db; start one with "
-                         "`record-analysis --new-run --model NAME`")
+        raise SystemExit(f"no run {run_id} in findings.db; start one with the recording "
+                         "command's `--new-run --model NAME`")
 
 
 def log_access(dest: Path, run_id: int | None, harness: str, native_id: str, **fields) -> None:
@@ -1388,37 +1425,43 @@ def coverage_gap(fconn, run_id: int, harness: str, native_id: str) -> str | None
             f"{', '.join(map(str, missing))} were never read with --run-id {run_id}")
 
 
-def cmd_record_analysis(args) -> int:
+def begin_recording(args, skill: str, validate, noun: str):
+    """What every record-* command does before storing: `--new-run` starts a run and prints
+    its id; otherwise one session's JSON (--file or stdin) is parsed and validated. Returns
+    an exit code to stop with, or (fconn, run_id, harness, native_id, validated payload)."""
     dest = resolve_dest(args.dest)
     findings = load_findings()
     fconn = findings.open_findings(dest)
-
-    run_id = args.run_id
     if args.new_run:
         if not args.model:
             print("--new-run needs --model", file=sys.stderr)
             return 2
-        print(findings.start_run(fconn, ANALYZE_SKILL, args.model,
-                                 json.dumps(vars(args), default=str)))
+        print(findings.start_run(fconn, skill, args.model, json.dumps(vars(args), default=str)))
         return 0
-    if run_id is None or not args.session:
+    if args.run_id is None or not args.session:
         print("pass a session and --run-id (or --new-run --model NAME to start a run)",
               file=sys.stderr)
         return 2
-    check_run(fconn, run_id)
-
+    check_run(fconn, args.run_id)
     conn = connect(dest)
-    session = resolve_session(conn, args.session)
-    session_id, harness, native_id = session[0], session[1], session[2]
+    session_id, harness, native_id = resolve_session(conn, args.session)[:3]
     raw = Path(args.file).expanduser().read_text(encoding="utf-8") if args.file else sys.stdin.read()
     try:
-        analysis = validate_analysis(json.loads(raw), conn, session_id, harness)
+        payload = validate(json.loads(raw), conn, session_id, harness)
     except ValueError as exc:  # json.JSONDecodeError
-        print(f"analysis is not valid JSON: {exc}", file=sys.stderr)
+        print(f"the {noun} is not valid JSON: {exc}", file=sys.stderr)
         return 2
     except Invalid as exc:
-        print(f"invalid analysis: {exc}", file=sys.stderr)
+        print(f"invalid {noun}: {exc}", file=sys.stderr)
         return 2
+    return fconn, args.run_id, harness, native_id, payload
+
+
+def cmd_record_analysis(args) -> int:
+    started = begin_recording(args, ANALYZE_SKILL, validate_analysis, "analysis")
+    if isinstance(started, int):
+        return started
+    fconn, run_id, harness, native_id, analysis = started
     gap = coverage_gap(fconn, run_id, harness, native_id)
     if gap:
         print(f"refused: {gap}", file=sys.stderr)
@@ -1542,6 +1585,283 @@ def cmd_analysis_shape(args) -> int:
     return 0
 
 
+# -------------------------------------------------------------------- learn
+
+LEARN_SKILL = "transcript-learn"
+# Where a lesson lands in a repo, narrowest first: a durable fact, a repeatable procedure
+# (skill + script), behavior that needs a hook or a bundle of skills, a rule every session
+# must follow (AGENTS.md / CLAUDE.md).
+HOMES = ("wiki", "skill", "hook", "rule")
+GLOBAL_REPO = "global"  # a lesson about how the agent works anywhere, not about one repo
+REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
+LABEL_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+LESSON_KEYS = ("repo", "home", "label", "statement", "ord", "quote", "note")
+LESSON_STATUSES = ("applied", "duplicate", "stale", "rejected")
+# Review categories that point at something the repo's agent knowledge could have prevented.
+LESSON_CATEGORIES = ("user_correction", "repeat_failing_approach", "ignored_instruction",
+                     "wasted_exploration", "unnecessary_question", "tool_contract_friction",
+                     "tool_misuse")
+# pr-flow's worktrees sit inside the checkout and are torn down after merge, so a path in
+# one is attributed to the main checkout that outlives it.
+WORKTREE_RE = re.compile(r"/\.(?:claude|agents)/worktrees/[^/]+")
+SHELL_DIR_RE = re.compile(r"""(?:^|[\s;&|(])(?:cd|-C)\s+["']?(/[^\s"';&|)]+)""")
+
+
+class RepoResolver:
+    """Map the absolute paths a session touched to `owner/name` from the checkout's origin."""
+
+    def __init__(self, maps: list[tuple[str, str]]):
+        self.maps = maps
+        self.roots: dict[str, str | None] = {}
+        self.slugs: dict[str, str | None] = {}
+
+    def root(self, path: str) -> str | None:
+        for src, dst in self.maps:
+            if path == src or path.startswith(src + "/"):
+                path = dst + path[len(src):]
+                break
+        path = WORKTREE_RE.sub("", path)
+        if path not in self.roots:
+            self.roots[path] = next((str(d) for d in (Path(path), *Path(path).parents)
+                                     if (d / ".git").exists()), None)
+        return self.roots[path]
+
+    def slug(self, path: str) -> str | None:
+        root = self.root(path)
+        if root is None:
+            return None
+        if root not in self.slugs:
+            url = subprocess.run(["git", "-C", root, "config", "--get", "remote.origin.url"],
+                                 capture_output=True, text=True, check=False).stdout.strip()
+            m = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$", url)
+            self.slugs[root] = m.group(1) if m else None
+        return self.slugs[root]
+
+    def session_repos(self, conn, session_id: int, cwd: str | None) -> Counter:
+        """How often each repo was touched: file-tool paths, `cd`/`-C` targets, the cwd."""
+        paths = [cwd] if cwd else []
+        for row in conn.execute(
+            "SELECT json_extract(t.arguments, '$.file_path'), json_extract(t.arguments, '$.path'),"
+            " json_extract(t.arguments, '$.notebook_path'),"
+            " substr(json_extract(t.arguments, '$.command'), 1, 2000)"
+            " FROM tool_calls t JOIN messages m ON m.id = t.message_id"
+            " WHERE m.session_id = ? AND json_valid(t.arguments)",
+            (session_id,),
+        ):
+            *direct, command = row
+            paths += [p for p in direct if isinstance(p, str) and p.startswith("/")]
+            if isinstance(command, str):
+                paths += SHELL_DIR_RE.findall(command)
+        return Counter(s for s in map(self.slug, paths) if s)
+
+
+def parse_maps(values: list[str] | None) -> list[tuple[str, str]]:
+    maps = []
+    for value in values or []:
+        src, sep, dst = value.partition("=")
+        if not sep or not src.startswith("/") or not dst:
+            raise SystemExit(f"--map {value!r}: expected /FROM=TO, e.g. /workspaces=<repos dir>")
+        maps.append((src.rstrip("/"), str(Path(dst).expanduser()).rstrip("/")))
+    return maps
+
+
+def learn_candidates(conn, fconn, *, harnesses, since, unlearned) -> list[dict]:
+    """Main sessions holding a lesson signal, best first: review findings in a lesson
+    category, a short user correction, an analysis that made recommendations."""
+    require_signals(conn)
+    signals: dict[tuple[str, str], set] = {}
+    for harness, native_id, category in fconn.execute(
+        "SELECT DISTINCT harness, native_id, category FROM review_flags WHERE present = 1"
+        " AND category IN (%s)" % ",".join("?" for _ in LESSON_CATEGORIES), LESSON_CATEGORIES,
+    ):
+        signals.setdefault((harness, native_id), set()).add(category)
+    for harness, native_id in fconn.execute(
+        "SELECT harness, native_id FROM session_analyses"
+        " WHERE json_array_length(body, '$.recommendations') > 0"
+    ):
+        signals.setdefault((harness, native_id), set()).add("analysis")
+    skip = set(fconn.execute("SELECT DISTINCT harness, native_id FROM session_lessons")
+               ) if unlearned else set()
+    where, params = main_session_filter(since, harnesses)
+    out = []
+    for session_id, harness, native_id, cwd, started_at, correction in conn.execute(
+        "SELECT s.id, s.harness, s.native_id, s.cwd, s.started_at, g.correction FROM sessions s"
+        " JOIN session_signals g ON g.session_id = s.id WHERE " + " AND ".join(where), params,
+    ):
+        key = (harness, native_id)
+        why: set[str] = set(signals.get(key, ()))
+        if correction is not None:
+            why.add("correction")
+        if not why or key in skip:
+            continue
+        out.append({"session_id": session_id, "harness": harness, "native_id": native_id,
+                    "cwd": cwd, "started_at": started_at, "score": len(why),
+                    "why": ",".join(sorted(why))})
+    # Newest first within a score (two stable sorts): a recent lesson is likelier to still hold.
+    out.sort(key=lambda r: r["started_at"] or "", reverse=True)
+    out.sort(key=lambda r: -r["score"])
+    return out
+
+
+def cmd_learn_queue(args) -> int:
+    dest = resolve_dest(args.dest)
+    conn = connect(dest)
+    # Not read-only: opening migrates a store older than the lesson tables (it only adds them).
+    fconn = load_findings().open_findings(dest)
+    resolver = RepoResolver(parse_maps(args.map))
+    rows = []
+    # Attribution reads every tool call, so it runs only until the limit is filled.
+    for row in learn_candidates(conn, fconn, harnesses=args.harness, since=args.since,
+                                unlearned=args.unlearned):
+        repos = resolver.session_repos(conn, row.pop("session_id"), row.pop("cwd"))
+        ranked = [slug for slug, _ in repos.most_common()]
+        row["repo"] = ranked[0] if ranked else "-"
+        row["other_repos"] = ranked[1:4]
+        if args.repo and row["repo"] not in args.repo:
+            continue
+        rows.append(row)
+        if len(rows) >= args.limit:
+            break
+    if args.json:
+        for row in rows:
+            print(json.dumps(row, ensure_ascii=False))
+        return 0
+    if not rows:
+        print("no candidate sessions")
+        return 0
+    print(render_table(
+        ["harness", "native_id", "started_at", "repo", "score", "why"],
+        [[r["harness"], r["native_id"], r["started_at"],
+          r["repo"] + (f" (+{len(r['other_repos'])})" if r["other_repos"] else ""),
+          r["score"], r["why"]] for r in rows],
+    ))
+    print(f"\n{len(rows)} candidates; mine them one at a time with `view`, then `record-lessons`")
+    return 0
+
+
+def validate_lessons(payload, conn, session_id: int, harness: str) -> list[dict]:
+    if not isinstance(payload, dict) or set(payload) != {"lessons"} \
+            or not isinstance(payload["lessons"], list):
+        raise Invalid('the payload must be {"lessons": [...]}; an empty list records '
+                      "a session that taught nothing durable")
+    out, seen = [], set()
+    for i, item in enumerate(payload["lessons"]):
+        where = f"lessons[{i}]"
+        if not isinstance(item, dict) or set(item) != set(LESSON_KEYS):
+            raise Invalid(f"{where}: keys must be exactly {', '.join(LESSON_KEYS)}")
+        repo, home, label = item["repo"], item["home"], item["label"]
+        if not isinstance(repo, str) or not (repo == GLOBAL_REPO or REPO_RE.match(repo)):
+            raise Invalid(f"{where}: repo must be owner/name or {GLOBAL_REPO!r}")
+        if home not in HOMES:
+            raise Invalid(f"{where}: home must be one of {'/'.join(HOMES)}")
+        if not isinstance(label, str) or not LABEL_RE.match(label) or len(label) > LABEL_MAX:
+            raise Invalid(f"{where}: label must be kebab-case, at most {LABEL_MAX} characters")
+        if (repo, label) in seen:
+            raise Invalid(f"{where}: {repo} {label} appears twice; merge them into one lesson")
+        seen.add((repo, label))
+        clean = check_evidence(item, where, conn, session_id, harness)
+        clean.update(repo=repo, home=home, label=label,
+                     statement=text_field(item, "statement", NOTE_MAX))
+        out.append(clean)
+    return out
+
+
+def cmd_record_lessons(args) -> int:
+    started = begin_recording(args, LEARN_SKILL, validate_lessons, "lessons")
+    if isinstance(started, int):
+        return started
+    fconn, run_id, harness, native_id, lessons = started
+    fconn.execute(
+        "DELETE FROM session_lessons WHERE run_id = ? AND harness = ? AND native_id = ?",
+        (run_id, harness, native_id),
+    )
+    fconn.execute(
+        "INSERT INTO session_lessons (run_id, harness, native_id, body, created_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (run_id, harness, native_id, json.dumps(lessons, ensure_ascii=False), now_iso()),
+    )
+    fconn.commit()
+    print(f"recorded {len(lessons)} lesson(s) from {harness}/{native_id} in run {run_id}")
+    return 0
+
+
+def lesson_clusters(conn, fconn) -> list[dict]:
+    """Every session's latest lessons grouped by (repo, label), with the newest outcome."""
+    latest = {(harness, native_id): json.loads(body) for harness, native_id, body in
+              fconn.execute("SELECT harness, native_id, body FROM session_lessons WHERE id IN"
+                            " (SELECT max(id) FROM session_lessons GROUP BY harness, native_id)")}
+    outcomes = {(repo, label): (status, pr_url) for repo, label, status, pr_url
+                in fconn.execute("SELECT repo, label, status, pr_url FROM lesson_outcomes"
+                                 " ORDER BY id")}
+    meta = session_meta(conn, set(latest))
+    clusters: dict[tuple[str, str], dict] = {}
+    for (harness, native_id), lessons in latest.items():
+        seen = meta[(harness, native_id)][1]
+        for lesson in lessons:
+            key = (lesson["repo"], lesson["label"])
+            c = clusters.setdefault(key, {"repo": key[0], "label": key[1], "lessons": []})
+            c["lessons"].append({"harness": harness, "native_id": native_id, "seen": seen,
+                                 **{k: lesson[k] for k in
+                                    ("home", "statement", "ord", "quote", "note")}})
+    out = []
+    for key, c in clusters.items():
+        status, pr_url = outcomes.get(key, (None, None))
+        c.update(sessions=len({(x["harness"], x["native_id"]) for x in c["lessons"]}),
+                 homes=dict(Counter(x["home"] for x in c["lessons"])),
+                 last_seen=max((x["seen"][:10] for x in c["lessons"] if x["seen"]), default=None),
+                 status=status, pr_url=pr_url)
+        out.append(c)
+    out.sort(key=lambda c: (c["repo"], -c["sessions"], c["label"]))
+    return out
+
+
+def cmd_lessons(args) -> int:
+    dest = resolve_dest(args.dest)
+    clusters = [
+        c for c in lesson_clusters(connect(dest), load_findings().open_findings(dest))
+        if (not args.repo or c["repo"] in args.repo) and (not args.open or c["status"] is None)
+    ]
+    if args.json:
+        for c in clusters:
+            print(json.dumps(c, ensure_ascii=False))
+        return 0
+    if not clusters:
+        print("no lessons in this scope")
+        return 0
+    print(render_table(
+        ["repo", "label", "sessions", "last_seen", "homes", "status", "statement"],
+        [[c["repo"], c["label"], c["sessions"], c["last_seen"],
+          ",".join(f"{h}×{n}" if n > 1 else h for h, n in c["homes"].items()),
+          c["status"] or "open", one_line(c["lessons"][-1]["statement"], 80)]
+         for c in clusters],
+    ))
+    for c in clusters:
+        if c["pr_url"]:
+            print(f"{c['repo']} {c['label']}: {c['pr_url']}")
+    return 0
+
+
+def cmd_lesson_status(args) -> int:
+    dest = resolve_dest(args.dest)
+    fconn = load_findings().open_findings(dest)
+    if not fconn.execute(
+        "SELECT 1 FROM session_lessons s, json_each(s.body) j"
+        " WHERE json_extract(j.value, '$.repo') = ? AND json_extract(j.value, '$.label') = ?"
+        " LIMIT 1", (args.repo, args.label),
+    ).fetchone():
+        print(f"no recorded lesson {args.repo} {args.label}; `lessons` lists them",
+              file=sys.stderr)
+        return 2
+    fconn.execute(
+        "INSERT INTO lesson_outcomes (repo, label, status, pr_url, note, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (args.repo, args.label, args.status, args.pr_url, args.note, now_iso()),
+    )
+    fconn.commit()
+    print(f"{args.repo} {args.label}: {args.status}" + (f" {args.pr_url}" if args.pr_url else ""))
+    return 0
+
+
 # --------------------------------------------------------------------- main
 
 
@@ -1640,6 +1960,41 @@ def main(argv: list[str] | None = None) -> int:
 
     sh = sub.add_parser("analysis-shape", help="print the analysis JSON shape")
     sh.set_defaults(func=cmd_analysis_shape)
+
+    lq = sub.add_parser("learn-queue", help="sessions likely to hold a lesson, with their repo")
+    lq.add_argument("--limit", type=int, default=20)
+    lq.add_argument("--harness", action="append", choices=["claude", "pi", "dsh"])
+    lq.add_argument("--since", help="only sessions started at or after this ISO8601 timestamp")
+    lq.add_argument("--repo", action="append", help="only sessions attributed to owner/name")
+    lq.add_argument("--unlearned", action="store_true",
+                    help="skip sessions already recorded with record-lessons")
+    lq.add_argument("--map", action="append", metavar="/FROM=TO",
+                    help="rewrite a path prefix before attribution, e.g. a dev container's "
+                         "/workspaces to the host directory holding the checkouts")
+    lq.add_argument("--json", action="store_true", help="JSONL instead of a table")
+    lq.set_defaults(func=cmd_learn_queue)
+
+    rl = sub.add_parser("record-lessons", help="validate one session's lessons and store them")
+    rl.add_argument("session", nargs="?", help="native id or numeric id")
+    rl.add_argument("--run-id", type=int)
+    rl.add_argument("--new-run", action="store_true", help="start a run; prints its id")
+    rl.add_argument("--model", help="the model mining the lessons")
+    rl.add_argument("--file", help="lessons JSON (default: stdin)")
+    rl.set_defaults(func=cmd_record_lessons)
+
+    ls = sub.add_parser("lessons", help="recorded lessons grouped by repo and label")
+    ls.add_argument("--repo", action="append", help="only this owner/name (or 'global')")
+    ls.add_argument("--open", action="store_true", help="only lessons with no outcome yet")
+    ls.add_argument("--json", action="store_true", help="JSONL, one lesson group per line")
+    ls.set_defaults(func=cmd_lessons)
+
+    st = sub.add_parser("lesson-status", help="record what applying one lesson came to")
+    st.add_argument("--repo", required=True)
+    st.add_argument("--label", required=True)
+    st.add_argument("--status", required=True, choices=LESSON_STATUSES)
+    st.add_argument("--pr-url")
+    st.add_argument("--note")
+    st.set_defaults(func=cmd_lesson_status)
 
     args = ap.parse_args(argv)
     return args.func(args)

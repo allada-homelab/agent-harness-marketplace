@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -544,7 +545,7 @@ def test_view_keeps_a_window_around_the_sweep_evidence(index, store, tmp_path, c
     out = view(tmp_path, capsys, "v5", "--budget", "2000")
     assert "ImportError: no module named acme" in out   # the flagged error is visible
     assert "[%d] CALL Bash" % bad in out
-    assert "anchors (sweep evidence" in out and str(bad) in out.split("\n\n")[0]
+    assert "anchors (review evidence" in out and str(bad) in out.split("\n\n")[0]
     assert "elided" in out
     assert len(out.split("\n\n")[1]) < 2400
 
@@ -1322,3 +1323,261 @@ def test_themes_counts_expansions_per_session(index, store, tmp_path, capsys):
 
     rv.main(["--dest", str(tmp_path), "themes"])
     assert "mean 0.5, max 1, none in 1 of 2" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------- learn
+
+
+def review_flag(store, native_id, category, ord_, harness="claude"):
+    conn, run_id = store
+    conn.execute(
+        "INSERT INTO review_flags (run_id, harness, native_id, category, present, confidence,"
+        " evidence_ord, created_at) VALUES (?, ?, ?, ?, 1, 'high', ?, 'now')",
+        (run_id, harness, native_id, category, ord_),
+    )
+    conn.commit()
+
+
+def learn_queue(tmp_path, capsys, *extra):
+    assert rv.main(["--dest", str(tmp_path), "learn-queue", "--json", *extra]) == 0
+    return [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+
+
+def git_checkout(path: Path, origin: str) -> Path:
+    path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(["git", "-C", str(path), "remote", "add", "origin", origin], check=True)
+    return path
+
+
+def lesson(ord_, **overrides):
+    entry = {"repo": "acme/widgets", "home": "rule", "label": "read-lockfile-first",
+             "statement": "Read the lockfile before reinstalling after a peer-dep error.",
+             "ord": ord_, "quote": "read the lockfile", "note": "the user had to say it"}
+    entry.update(overrides)
+    return entry
+
+
+def record_lessons(tmp_path, session, lessons, run_id):
+    path = tmp_path / "lessons.json"
+    path.write_text(json.dumps({"lessons": lessons}), encoding="utf-8")
+    return rv.main(["--dest", str(tmp_path), "record-lessons", session, "--run-id",
+                    str(run_id), "--file", str(path)])
+
+
+def corrected_session(index, name):
+    s = index.session(name)
+    index.user(s, "fix the install")
+    return index.user(s, "no, read the lockfile")
+
+
+def learn_run(store):
+    return fi.start_run(store[0], "transcript-learn", "m", "{}")
+
+
+def lessons(tmp_path, capsys, *extra):
+    assert rv.main(["--dest", str(tmp_path), "lessons", "--json", *extra]) == 0
+    return [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+
+
+def test_learn_queue_ranks_review_findings_above_a_bare_correction(index, store, tmp_path, capsys):
+    corrected_session(index, "bare")
+    corrected_session(index, "judged")
+    index.session("quiet")
+    index.close()
+    review_flag(store, "judged", "repeat_failing_approach", 2)
+
+    rows = learn_queue(tmp_path, capsys)
+
+    assert [(r["native_id"], r["why"]) for r in rows] == [
+        ("judged", "correction,repeat_failing_approach"), ("bare", "correction")]
+
+
+def test_learn_queue_ignores_review_categories_that_teach_no_lesson(index, store, tmp_path, capsys):
+    s = index.session("leaky")
+    index.assistant(s, "token is abc")
+    index.close()
+    review_flag(store, "leaky", "secret_exposure", 1)
+
+    assert learn_queue(tmp_path, capsys) == []
+
+
+def test_learn_queue_attributes_a_worktree_path_to_the_main_checkouts_origin(
+        index, store, tmp_path, capsys):
+    repo = git_checkout(tmp_path / "src/widgets", "git@github.com:acme/widgets.git")
+    s = index.session("w1")
+    index.user(s, "no, read the lockfile")
+    index.call(s, "Edit", json.dumps({"file_path": f"{repo}/.claude/worktrees/fix-x/a.py"}))
+    index.close()
+
+    (row,) = learn_queue(tmp_path, capsys)
+
+    assert row["repo"] == "acme/widgets"
+
+
+def test_learn_queue_attributes_cd_and_dash_c_targets(index, store, tmp_path, capsys):
+    widgets = git_checkout(tmp_path / "widgets", "https://github.com/acme/widgets")
+    gadgets = git_checkout(tmp_path / "gadgets", "https://github.com/acme/gadgets.git")
+    s = index.session("w2")
+    index.user(s, "no, wrong repo")
+    for command in (f"cd {widgets} && make", f"git -C {widgets}/sub status", f"cd {gadgets}"):
+        index.call(s, "Bash", json.dumps({"command": command}))
+    index.close()
+
+    (row,) = learn_queue(tmp_path, capsys)
+
+    assert (row["repo"], row["other_repos"]) == ("acme/widgets", ["acme/gadgets"])
+
+
+def test_learn_queue_map_rewrites_a_dev_container_path(index, store, tmp_path, capsys):
+    git_checkout(tmp_path / "repos/widgets", "git@github.com:acme/widgets.git")
+    s = index.session("w3")
+    index.user(s, "no, read the lockfile")
+    index.call(s, "Read", json.dumps({"file_path": "/workspaces/widgets/a.py"}))
+    index.close()
+
+    (row,) = learn_queue(tmp_path, capsys, "--map", f"/workspaces={tmp_path / 'repos'}")
+
+    assert row["repo"] == "acme/widgets"
+
+
+def test_learn_queue_repo_filter_and_unattributed_marker(index, store, tmp_path, capsys):
+    repo = git_checkout(tmp_path / "widgets", "git@github.com:acme/widgets.git")
+    attributed = index.session("in-repo")
+    index.user(attributed, "no, read the lockfile")
+    index.call(attributed, "Read", json.dumps({"file_path": f"{repo}/a.py"}))
+    corrected_session(index, "nowhere")
+    index.close()
+
+    assert {r["native_id"]: r["repo"] for r in learn_queue(tmp_path, capsys)} == {
+        "in-repo": "acme/widgets", "nowhere": "-"}
+    assert [r["native_id"] for r in learn_queue(tmp_path, capsys, "--repo", "acme/widgets")] == [
+        "in-repo"]
+
+
+def test_learn_queue_unlearned_skips_mined_sessions(index, store, tmp_path, capsys):
+    corrected_session(index, "mined")
+    corrected_session(index, "fresh")
+    index.close()
+    assert record_lessons(tmp_path, "mined", [], learn_run(store)) == 0
+    capsys.readouterr()
+
+    rows = learn_queue(tmp_path, capsys, "--unlearned")
+
+    assert [r["native_id"] for r in rows] == ["fresh"]
+
+
+def test_record_lessons_stores_a_valid_lesson(index, store, tmp_path, capsys):
+    ord_ = corrected_session(index, "l1")
+    index.close()
+
+    assert record_lessons(tmp_path, "l1", [lesson(ord_)],
+                          learn_run(store)) == 0
+    assert "recorded 1 lesson(s)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("override, message", [
+    ({"home": "readme"}, "home must be one of"),
+    ({"repo": "widgets"}, "repo must be owner/name"),
+    ({"label": "Read Lockfile"}, "label must be kebab-case"),
+    ({"quote": "an invented line"}, "quote is not in message"),
+    ({"statement": ""}, "statement"),
+])
+def test_record_lessons_rejects_a_bad_lesson(index, store, tmp_path, capsys, override, message):
+    ord_ = corrected_session(index, "l2")
+    index.close()
+
+    code = record_lessons(tmp_path, "l2", [lesson(ord_, **override)],
+                          learn_run(store))
+
+    assert code == 2 and message in capsys.readouterr().err
+
+
+def test_record_lessons_rejects_the_same_lesson_twice_in_one_session(index, store, tmp_path, capsys):
+    ord_ = corrected_session(index, "l3")
+    index.close()
+    twice = [lesson(ord_)] * 2
+
+    assert record_lessons(tmp_path, "l3", twice, learn_run(store)) == 2
+    assert "appears twice" in capsys.readouterr().err
+
+
+def test_lessons_groups_the_same_lesson_across_sessions(index, store, tmp_path, capsys):
+    ords = {name: corrected_session(index, name) for name in ("g1", "g2")}
+    index.close()
+    run_id = learn_run(store)
+    for name, ord_ in ords.items():
+        record_lessons(tmp_path, name, [lesson(ord_)], run_id)
+    capsys.readouterr()
+
+    (cluster,) = lessons(tmp_path, capsys)
+
+    assert (cluster["repo"], cluster["label"], cluster["sessions"], cluster["status"]) == (
+        "acme/widgets", "read-lockfile-first", 2, None)
+
+
+def test_lesson_status_closes_a_lesson_for_open(index, store, tmp_path, capsys):
+    ord_ = corrected_session(index, "o1")
+    index.close()
+    record_lessons(tmp_path, "o1", [lesson(ord_)], learn_run(store))
+    url = "https://github.com/acme/widgets/pull/7"
+
+    assert rv.main(["--dest", str(tmp_path), "lesson-status", "--repo", "acme/widgets",
+                    "--label", "read-lockfile-first", "--status", "applied",
+                    "--pr-url", url]) == 0
+    capsys.readouterr()
+    assert lessons(tmp_path, capsys, "--open") == []
+    assert lessons(tmp_path, capsys)[0]["pr_url"] == url
+
+
+def test_lesson_status_refuses_an_unknown_lesson(index, store, tmp_path, capsys):
+    index.close()
+
+    assert rv.main(["--dest", str(tmp_path), "lesson-status", "--repo", "acme/widgets",
+                    "--label", "nope", "--status", "applied"]) == 2
+    assert "no recorded lesson" in capsys.readouterr().err
+
+
+def test_view_keeps_a_window_around_review_evidence(index, store, tmp_path, capsys):
+    s = index.session("v6")
+    index.user(s, "start")
+    for i in range(80):
+        index.call(s, "Read", '{"path": "p%d"}' % i, result="head %d" % i)
+    said = index.user(s, "no, use the make target instead")
+    for i in range(80):
+        index.call(s, "Read", '{"path": "q%d"}' % i, result="tail %d" % i)
+    index.close()
+    review_flag(store, "v6", "user_correction", said)
+
+    out = view(tmp_path, capsys, "v6", "--budget", "2000")
+
+    assert "no, use the make target instead" in out
+
+
+def test_the_learn_skill_example_is_one_record_lessons_accepts(index, store, tmp_path, capsys):
+    skill = (MODULE / "skills/transcript-learn/SKILL.md").read_text(encoding="utf-8")
+    payload = json.loads(skill.split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0])
+    s = index.session("ex")
+    for item in payload["lessons"]:  # the example names its own ords
+        index.conn.execute(
+            "INSERT INTO messages (session_id, ord, on_main_path, role, text)"
+            " VALUES (?, ?, 1, 'user', ?)", (s, item["ord"], item["quote"]),
+        )
+    index.close()
+
+    assert record_lessons(tmp_path, "ex", payload["lessons"], learn_run(store)) == 0
+
+
+def test_view_keeps_a_window_around_a_correction_without_any_findings(index, tmp_path, capsys):
+    s = index.session("v7")
+    index.user(s, "start")
+    for i in range(80):
+        index.call(s, "Read", '{"path": "p%d"}' % i, result="head %d" % i)
+    index.user(s, "no, that's the wrong file again")
+    for i in range(80):
+        index.call(s, "Read", '{"path": "q%d"}' % i, result="tail %d" % i)
+    index.close()
+
+    out = view(tmp_path, capsys, "v7", "--budget", "2000")
+
+    assert "no, that's the wrong file again" in out

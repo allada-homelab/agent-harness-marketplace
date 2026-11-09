@@ -1881,13 +1881,13 @@ def _update_signals(conn) -> int:
         for session_id, text in conn.execute(
             "SELECT m.session_id, m.text FROM messages m"
             " JOIN signal_targets t ON t.id = m.session_id"
-            " WHERE m.role = 'user' AND length(m.text) <= 8000 ORDER BY m.id"
+            " WHERE m.role = 'user' AND length(m.text) <= ? ORDER BY m.id",
+            (signals.SIGNAL_TEXT_MAX,),
         ):
             if session_id in corrections:
                 continue
-            clean = signals.human_text(text or "", harness[session_id])
-            if (clean and len(clean) < signals.SHORT_USER
-                    and signals.CORRECTION_RE.search(clean)):
+            clean = signals.correction_text(text or "", harness[session_id])
+            if clean:
                 corrections[session_id] = clean
         conn.executemany(
             "INSERT INTO session_signals (session_id, signals_version, message_count,"

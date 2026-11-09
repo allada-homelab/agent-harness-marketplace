@@ -60,9 +60,9 @@ The session's **final report** is exempt from those line caps and is never elide
 report arrives as that call's arguments) are shown in full, up to 6000 characters each. That report is what the
 session claims; read all of it before judging a claim unverified.
 
-If the sweep flagged this session, the header lists `anchors` — the ords of the flagged
-errors — and the view keeps the messages around each of them, so an elision never hides the
-errors you are being asked about.
+The header lists `anchors` — the ords of recorded review evidence, of the user's short
+corrections and of the errors the sweep flagged — and the view keeps the messages around
+each of them, so an elision never hides the moments you are being asked about.
 
 Judge from this view. The one exception is checking a claim: the evidence for "the suite
 passed" may sit in a tool result the budget elided. Search the whole session for it —
