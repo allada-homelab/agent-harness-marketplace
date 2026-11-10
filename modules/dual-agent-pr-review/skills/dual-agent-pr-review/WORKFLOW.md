@@ -369,16 +369,17 @@ fixes made by the judge introduce defects of their own.
 **Anyone else's PR** — draft one review:
 
 - **Every Blocking, Non-blocking and Unresolved finding is its own inline
-  comment**, never folded into the review body. Prefix each comment body with its
-  label — severity, then the finding's `category`: `**[Blocking · correctness]**`,
-  `**[Non-blocking · documentation]**`. Never put the action in the label —
+  comment**, never folded into the review body. Start each comment body with
+  `[AI-Review]`, then its label — severity, then the finding's `category`:
+  `[AI-Review] **[Blocking · correctness]**`,
+  `[AI-Review] **[Non-blocking · documentation]**`. Never put the action in the label —
   "Non-blocking · fix-before-merge" reads as a contradiction; when a non-blocking
   fix can wait, say so in the comment text.
 - **Not posted, each recorded in `final.md` with its reason:** nits (an action of
   `nit` — in past runs none was significant, and authors fixed them anyway at a
   round's cost); not-worth-raising and author-deferred findings; and findings an
   existing thread already covers (below). The user sees all of them in Step 7.
-- **Unresolved findings are inline questions**, labelled `**[Open question]**`,
+- **Unresolved findings are inline questions**, labelled `[AI-Review] **[Open question]**`,
   stating both positions in one or two sentences.
 - **Anchor every comment inside a changed hunk.** Use the finding's `file` and
   `posting_line`, and check each one before posting:

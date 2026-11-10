@@ -380,7 +380,7 @@ modules:
     summary: Review a GitHub pull request with parallel reviewers and a confidence scorer, and post one
       comment holding only the high-confidence issues.
 - name: dual-agent-pr-review
-  version: 0.1.17
+  version: 0.1.18
   kinds:
   - skills
   - dsh-plugin
