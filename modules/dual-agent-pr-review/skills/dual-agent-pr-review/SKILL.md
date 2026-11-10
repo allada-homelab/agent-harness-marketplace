@@ -73,8 +73,8 @@ authority on the run, and its brief templates and schemas sit beside it under
 - **Someone else's PR always gets a pending (draft) review** (Step 8), published
   only when the user submits it; nothing is posted with `no-post`. The user's own PR
   gets a fix list. Every Blocking, Non-blocking and Unresolved finding is its own
-  inline comment with a severity · category label (e.g. `[Non-blocking ·
-  documentation]`). Nits, not-worth-raising and author-deferred findings, and ones
+  inline comment starting `[AI-Review]`, then a severity · category label (e.g.
+  `[AI-Review] **[Non-blocking · documentation]**`). Nits, not-worth-raising and author-deferred findings, and ones
   an existing thread already covers are not posted — the user sees them, and
   `final.md` records why.
 - **True is not enough.** A finding must also be worth the author's time: nothing
