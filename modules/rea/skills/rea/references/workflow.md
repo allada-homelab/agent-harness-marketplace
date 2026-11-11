@@ -134,8 +134,8 @@ confirm.
   literal commands to run. Otherwise workers spend their first dozens of steps
   rediscovering this.
 - **Scope each worker's finishing gate to its own targets** and print only its
-  verdict block (full output to a log file). A gate that fails for reasons
-  outside the worker's control is ignored.
+  verdict block (full output to a log file). Workers learn to ignore a gate
+  that fails for reasons outside their control.
 - **One unit of work per brief.** The worker appends each finished item to a
   results file named in the brief, so an interrupted worker still leaves its
   results. Each worker uses its own scratch directory (`mktemp -d`), never
