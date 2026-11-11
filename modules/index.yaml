@@ -552,7 +552,7 @@ modules:
     summary: Use whenever a task will change files in a git repository, or needs a worktree — creating
       one, setting it up, working in one or removing it.
 - name: rea
-  version: 0.2.0
+  version: 0.2.1
   kinds:
   - skills
   - dsh-plugin
