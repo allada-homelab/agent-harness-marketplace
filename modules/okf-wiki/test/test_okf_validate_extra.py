@@ -33,3 +33,11 @@ def test_word_count_skips_code_fences_and_verification_sections(repo):
     assert not any("words" in m for m in warns(repo, "fits"))
     concept(repo, "long", body=f"\n# T\n\n{prose} {' '.join(['more'] * 30)}\n\n## Verify\n\n- none: x\n")
     assert any(m.startswith("body is 412 words") for m in warns(repo, "long"))
+
+
+def test_body_warning_names_the_longest_section_and_the_overage(repo):
+    big, small = " ".join(["a"] * 298), " ".join(["b"] * 148)  # +2 heading words each = 300 and 150
+    concept(repo, "two", body=f"\n## Big\n\n{big}\n\n## Small\n\n{small}\n\n## Verify\n\n- none: x\n")
+    (msg,) = [m for m in warns(repo, "two") if m.startswith("body is")]
+    assert msg == ('body is 450 words, 50 over 400; longest section "Big" has 300 — '
+                   "advisory: trim once or split into two concepts, never loop")

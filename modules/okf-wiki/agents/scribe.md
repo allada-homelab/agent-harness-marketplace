@@ -75,7 +75,8 @@ Read the concept and the files its `## Verify` anchors name. `python3 <okf> anch
    value, version pin or wrapper script is an anchor.
 2. `python3 <okf> stamp <id> --by okf-wiki/<model> --generated --verified`: record the model
    you actually run as (`okf-wiki/<model>`); if you cannot tell, use `okf-wiki/unknown`.
-3. `python3 <okf> validate <id>`; fix every ERROR.
+3. `python3 <okf> validate <id>`; fix every ERROR. A WARN is advisory: make one trim pass,
+   then stamp. Never loop on a WARN.
 4. Reply with exactly one line per concept: `wiki: +<type>/<id>` (or the receipt named
    above). If you cannot finish one, its line is `wiki: ✗ <id> — <reason>`; add nothing else.
 

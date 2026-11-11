@@ -604,7 +604,7 @@ def check_concept(c: Concept) -> list[Finding]:
             warn(f"`{key}` is missing")
     d = m.get("description")
     if isinstance(d, str) and len(d) > DESC_MAX:
-        warn(f"description is {len(d)} chars; keep it one claim of at most {DESC_MAX}")
+        warn(f"description is {len(d)} chars, {len(d) - DESC_MAX} over {DESC_MAX} — advisory: keep one claim")
     if "status" in m and m["status"] not in ("draft", "stable", "deprecated"):
         warn(f"status {m['status']!r} is not draft, stable or deprecated")
     gen = m.get("generated")
@@ -648,9 +648,12 @@ def check_concept(c: Concept) -> list[Finding]:
             warn(f"anchor path {a.path} is not repo-relative; freshness cannot check it")
     if isinstance(t, str) and t in _tags(c):
         warn(f"tag {t!r} repeats the concept's type")
-    words = _prose_words(c.body)
+    sections = _section_words(c.body)
+    words = sum(n for _, n in sections)
     if words > WORDS_MAX:
-        warn(f"body is {words} words; trim or split below {WORDS_MAX}")
+        heading, n = max(sections, key=lambda s: s[1])
+        warn(f"body is {words} words, {words - WORDS_MAX} over {WORDS_MAX}; longest section "
+             f'"{heading}" has {n} — advisory: trim once or split into two concepts, never loop')
     for _, target in LINK_RE.findall(c.body):
         if URL_RE.match(target) or target.startswith("#"):
             continue
@@ -661,17 +664,22 @@ def check_concept(c: Concept) -> list[Finding]:
     return out
 
 
-def _prose_words(body: str) -> int:
-    """Body words outside fenced code and the Verify / Legacy verification sections."""
-    n, skip, fence = 0, False, False
+def _section_words(body: str) -> list[tuple[str, int]]:
+    """(heading, words) per `## ` section in document order, text before the first heading being
+    `(intro)`; fenced code and the Verify / Legacy verification sections are left out."""
+    out, skip, fence = [("(intro)", 0)], False, False
     for line in body.splitlines():
         if line.lstrip().startswith(("```", "~~~")):
             fence = not fence
         elif not fence:
             if line.startswith("## "):
-                skip = line[3:].strip() in ("Verify", "Legacy verification")
-            n += 0 if skip else len(line.split())
-    return n
+                heading = line[3:].strip()
+                skip = heading in ("Verify", "Legacy verification")
+                if not skip:
+                    out.append((heading, 0))
+            if not skip:
+                out[-1] = (out[-1][0], out[-1][1] + len(line.split()))
+    return out
 
 
 def check_bundle(bundle: Path, concepts: list[Concept]) -> list[Finding]:
