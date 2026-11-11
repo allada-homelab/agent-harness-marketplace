@@ -20,6 +20,11 @@ anchor: <path> :: <symbol>   (or: none: <reason>)
 A brief may repeat the `mode`…`anchor` block for several concepts; do them one at a time, in
 order, each through "finish".
 
+Before any write, run `git -C <root> rev-parse --git-dir` and `git -C <root> rev-parse
+--git-common-dir`. If they are equal, `<root>` is the repo's main checkout, shared with other
+sessions: write nothing and return `wiki: ✗ <id> — root is the main checkout; dispatch me with a
+worktree root` for every concept.
+
 Work only inside `<root>/.wiki/`, plus reading the files the brief names. When the brief has
 a `root`, every `python3 <okf> <verb>` below means `python3 <okf> --root <root> <verb>` and
 every `.wiki/` path means `<root>/.wiki/`; without one, the root is the git toplevel of your
