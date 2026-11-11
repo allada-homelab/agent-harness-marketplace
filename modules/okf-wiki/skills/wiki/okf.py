@@ -1294,6 +1294,23 @@ def cmd_fresh(args) -> int:
     return 0
 
 
+def cmd_todo(args) -> int:
+    root, bundle = _root_and_bundle(args)
+    concepts = load(bundle)
+    first_error: dict[str, Finding] = {}
+    for f in check_bundle(bundle, concepts):
+        if f.level == "error":
+            first_error.setdefault(f.id, f)
+    res = freshness(root, [c for c in concepts if not c.error and c.id not in first_error])
+    lines = [str(f) for _, f in sorted(first_error.items())]
+    lines += [f"{st} {cid}" for cid, (st, _) in sorted(res.items())
+              if st in ("STALE", "UNVERIFIED", "UNANCHORED")]
+    for line in lines:
+        print(line)
+    status("todo", f"{len(lines)} concepts" if lines else "none")
+    return 0
+
+
 def cmd_anchor(args) -> int:
     root, bundle = _root_and_bundle(args)
     c = find(load(bundle), args.id)
@@ -2064,6 +2081,7 @@ def main(argv: list[str] | None = None) -> int:
          __human_confirmed={"action": "store_true"})
     verb("digest", cmd_digest)
     verb("fresh", cmd_fresh, "ids")
+    verb("todo", cmd_todo)
     verb("anchor", cmd_anchor, "id")
     verb("mv", cmd_mv, "old", "new")
     verb("tags", cmd_tags, ("tags", {"nargs": "*"}), __suggest={"action": "store_true"})

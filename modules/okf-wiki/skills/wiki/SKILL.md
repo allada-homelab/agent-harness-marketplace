@@ -100,6 +100,7 @@ with `python3` from anywhere inside the repository. The last line is always
 | `validate [ids]` | conformance; fix every ERROR |
 | `anchor <id>` | evaluate the Verify anchors |
 | `fresh [ids]` | FRESH / TOUCHED / STALE / UNANCHORED / UNVERIFIED from git: TOUCHED means an anchor file changed but the anchors still pass (not ⚠); STALE (⚠) means an anchor failed or its matched text changed |
+| `todo` | one line per concept needing work (`ERROR <id>: ...`, STALE, UNVERIFIED, UNANCHORED) then `okf: todo none` or `okf: todo <n> concepts`; exit 0; TOUCHED and WARN are not work |
 | `mv <old> <new>` | rename and rewrite every inbound link |
 | `tags [tag...] [--suggest]` | every tag by use count; with tags, the concepts carrying each; `--suggest` lists spelling and plural variants to merge, redundant and malformed tags |
 | `retag <old> <new>`, `retag <old> --drop` | rename or merge a tag across every concept, or remove it |
