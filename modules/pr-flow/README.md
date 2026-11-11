@@ -57,9 +57,14 @@ date" protection refuses such a merge. An empty
 workflow's `paths` filter misses the change) or the gap right after `open`'s
 push before GitHub Actions registers its check runs. `watch` tells them apart
 with `gh api repos/{owner}/{repo}/actions/runs?head_sha=`: a matching workflow
-registers a run within seconds, so zero runs on a head whose
+usually registers a run within seconds, so zero runs on a head whose
 `mergeStateStatus` is `CLEAN`, held for `--no-runs-confirm` seconds (default
-20), is a verified green that `--merge` acts on. Otherwise the empty rollup is
+20), is a verified green that `--merge` acts on — except in a repo with a
+workflow that runs on every pull request (an `on: pull_request` with no
+`paths`/`paths-ignore` filter). There zero runs only means GitHub has not
+dispatched the run yet, which has taken over ten minutes, so `watch` skips the
+shortcut and waits out the grace window, and `--merge` refuses the unverified
+result. Otherwise the empty rollup is
 polled, at most every `--no-checks-poll` seconds (default 15, no backoff), for
 up to `--no-checks-grace` seconds (default 300, reset whenever the head moves)
 before `watch` treats it as an unverified green — a check that shows up during

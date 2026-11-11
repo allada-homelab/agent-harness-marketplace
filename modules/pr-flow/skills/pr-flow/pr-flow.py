@@ -384,6 +384,41 @@ def workflow_runs_for(cwd, sha):
         return None
 
 
+def unfiltered_pr_workflow(cwd):
+    """The first workflow file that runs on EVERY pull request, or None.
+
+    For such a repo zero runs on a head only means GitHub has not dispatched the run yet,
+    which can take minutes; it never means "no CI applies". Line-based on purpose (stdlib
+    only): a workflow counts when its top-level `on:` names `pull_request` or
+    `pull_request_target` and no `paths`/`paths-ignore` filter appears inside that block.
+    """
+    try:
+        root = Path(git("rev-parse", "--show-toplevel", cwd=cwd))
+    except (Fail, subprocess.TimeoutExpired):
+        return None
+    for f in sorted((root / ".github" / "workflows").glob("*.y*ml")):
+        try:
+            lines = f.read_text().splitlines()
+        except OSError:
+            continue
+        block = None
+        for line in lines:
+            if block is None:
+                m = re.match(r"""^['"]?(on|true)['"]?:(.*)$""", line)
+                if m:
+                    block = [m.group(2)]
+            elif line.strip() and not line.startswith((" ", "\t", "#")):
+                break
+            else:
+                block.append(line)
+        if block is None:
+            continue
+        text = "\n".join(block)
+        if re.search(r"\bpull_request(_target)?\b", text) and not re.search(r"^\s*paths(-ignore)?\s*:", text, re.M):
+            return f.name
+    return None
+
+
 RUN_ID = re.compile(r"/actions/runs/(\d+)")
 # A check that waits on an owner's approval, not on CI (teamlumos' ownership action posts it).
 # It stays pending until someone approves, so watching for it to finish only runs out the timeout.
@@ -676,6 +711,7 @@ def cmd_watch(a):
     no_checks_since = None
     stale_since = None
     grace_expired = False
+    pr_workflow = unfiltered_pr_workflow(cwd)
     while True:
         try:
             pr = poll(cwd)
@@ -727,17 +763,18 @@ def cmd_watch(a):
                 # Empty statusCheckRollup: could be a repo with no CI (or no workflow whose
                 # paths filter matches this PR), or the gap between the push and GitHub Actions
                 # registering its check runs. The two are told apart by asking GitHub for
-                # workflow runs on this head: a matching workflow registers a run within
-                # seconds, so zero runs on a head GitHub already calls mergeable, held for
-                # --no-runs-confirm, is a verified "no CI applies" green that --merge may act
-                # on. Anything less certain polls through the grace window (reset whenever the
-                # head moves) and comes out unverified, as before.
+                # workflow runs on this head: zero runs on a head GitHub already calls
+                # mergeable, held for --no-runs-confirm, is a verified "no CI applies" green
+                # that --merge may act on — unless a workflow runs on every PR, where zero runs
+                # only means GitHub has not dispatched it yet (seen 10 min late). Anything less
+                # certain polls through the grace window (reset whenever the head moves) and
+                # comes out unverified, which --merge refuses.
                 now = time.time()
                 if no_checks_since is None:
                     no_checks_since = now
                 elapsed = now - no_checks_since
                 runs = None
-                if not grace_expired and pr.get("mergeStateStatus") == "CLEAN":
+                if not grace_expired and pr.get("mergeStateStatus") == "CLEAN" and pr_workflow is None:
                     runs = workflow_runs_for(cwd, pr.get("headRefOid") or "")
                 if runs == 0 and elapsed >= a.no_runs_confirm:
                     print(f"no workflow run exists for this head after {elapsed:.0f}s and GitHub reports it "

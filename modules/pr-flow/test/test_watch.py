@@ -399,6 +399,36 @@ def test_no_workflow_runs_and_clean_is_verified_green_and_merges(repo):
     assert not wt.exists()
 
 
+def test_no_runs_is_not_proof_when_a_workflow_runs_on_every_pr(repo):
+    # GitHub can dispatch a pull_request run minutes late (or never fire the event). With an
+    # unfiltered pull_request workflow in the repo, zero runs is "not started yet": watch must
+    # not call it a verified green, and --merge must refuse.
+    root, wt = opened(repo)
+    wf = wt / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "tests.yml").write_text("name: tests\non:\n  push:\n    branches: [main]\n  pull_request:\njobs: {}\n")
+    r = run("watch", "--merge", "--no-runs-confirm", "0", "--no-checks-grace", "0", cwd=wt,
+            replay={"pr_view": [pr(checks=[])], "workflow_runs": 0})
+    assert r.returncode == 0, r.stderr
+    assert "no CI applies" not in r.stdout
+    assert "refusing --merge" in r.stdout
+    calls = [json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()]
+    assert not any(c[0] == "api" and "/actions/runs" in c[1] for c in calls)
+
+
+def test_paths_filtered_pr_workflow_still_allows_the_no_ci_green(repo):
+    # The docs-only case the shortcut exists for: every pull_request workflow is paths-filtered.
+    _, wt = opened(repo)
+    wf = wt / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yaml").write_text("on:\n  pull_request:\n    paths:\n      - 'src/**'\njobs: {}\n")
+    r = run("watch", "--merge", "--no-runs-confirm", "0", cwd=wt,
+            replay={"pr_view": [pr(checks=[])], "workflow_runs": 0})
+    assert r.returncode == 0, r.stderr
+    assert "no CI applies" in r.stdout
+    assert last(r).startswith("pr-flow: watch merged")
+
+
 def test_no_workflow_runs_but_not_clean_falls_back_to_unverified_grace(repo):
     _, wt = opened(repo)
     r = run("watch", "--merge", "--no-runs-confirm", "0", "--no-checks-grace", "0", cwd=wt,
