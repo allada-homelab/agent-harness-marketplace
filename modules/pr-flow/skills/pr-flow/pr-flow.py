@@ -344,7 +344,7 @@ BAD = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP
 OK = {"SUCCESS", "SKIPPED", "NEUTRAL"}
 SLEEP_SCALE = float(os.environ.get("PR_FLOW_SLEEP", "1"))
 THREADS_Q = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n)"
-             "{reviewThreads(first:100){nodes{isResolved}}}}}")
+             "{reviewThreads(first:100){nodes{isResolved,isOutdated}}}}}")
 
 
 def poll(cwd):
@@ -442,7 +442,9 @@ def unresolved_threads(cwd, number):
     out = json.loads(gh("api", "graphql", "-f", f"query={THREADS_Q}", "-F", f"o={owner}", "-F", f"r={repo}",
                         "-F", f"n={number}", cwd=cwd))
     nodes = out["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
-    return sum(1 for t in nodes if not t.get("isResolved"))
+    open_threads = [t for t in nodes if not t.get("isResolved")]
+    outdated = sum(1 for t in open_threads if t.get("isOutdated"))
+    return len(open_threads) - outdated, outdated
 
 
 def classify(pr, unresolved, runs):
@@ -671,7 +673,7 @@ def cmd_watch(a):
     ctx = repo_ctx(cwd)
     deadline = time.time() + a.timeout
     interval, last_head, pr, verdict = a.interval, None, {}, None
-    threads = {"n": 0}
+    threads = {"n": 0, "outdated": 0}
     consecutive_fails = 0
     no_checks_since = None
     stale_since = None
@@ -711,7 +713,7 @@ def cmd_watch(a):
 
             def unresolved():
                 try:
-                    threads["n"] = unresolved_threads(cwd, pr["number"])
+                    threads["n"], threads["outdated"] = unresolved_threads(cwd, pr["number"])
                 except (Fail, subprocess.TimeoutExpired) as e:
                     warn(f"could not check review threads: {e}")
                     raise _Retry from e
@@ -780,7 +782,8 @@ def cmd_watch(a):
             elif pr.get("mergeStateStatus") == "BLOCKED":
                 print("blocked by branch protection (approval or required check missing)")
             else:
-                print(f"{threads['n']} unresolved review thread(s); reviewDecision={pr.get('reviewDecision') or '-'}")
+                print(f"{threads['n']} unresolved review thread(s) ({threads['outdated']} outdated, not counted); "
+                      f"reviewDecision={pr.get('reviewDecision') or '-'}")
         elif verdict == "conflict":
             print(f"conflicts with base; in the worktree: {sync_hint(cwd, branch_base(ctx.main_root, ctx.branch))}, "
                   "watch again")

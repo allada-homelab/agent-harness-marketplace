@@ -69,7 +69,7 @@ def test_warnings(repo):
     concept(repo, "w", meta=f"type: gotcha\ntitle: W\ndescription: {long_desc}\n",
             body="\nSee [missing](./nope.md) and [abs](/x.md) and [^s9].\n")
     warns = msgs(repo, "warn")
-    assert "w: description is 201 chars; keep it one claim of at most 200" in warns
+    assert "w: description is 201 chars, 1 over 200 — advisory: keep one claim" in warns
     assert "w: no `## Verify` section" in warns
     assert "w: broken link ./nope.md" in warns
     assert "w: link /x.md is bundle-absolute; use a relative ./ link" in warns

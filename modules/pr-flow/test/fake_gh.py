@@ -67,7 +67,9 @@ elif argv[0] == "api" and "/actions/runs" in argv[1]:
         print(json.dumps(replay.get("runs", [])))
 elif argv[:2] == ["api", "graphql"]:
     n = int(replay.get("threads_unresolved", 0))
-    nodes = [{"isResolved": False}] * n + [{"isResolved": True}]
+    k = int(replay.get("threads_outdated", 0))
+    nodes = ([{"isResolved": False, "isOutdated": False}] * (n - k) + [{"isResolved": False, "isOutdated": True}] * k
+             + [{"isResolved": True, "isOutdated": False}])
     print(json.dumps({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": nodes}}}}}))
 elif argv[:2] == ["run", "view"]:
     print("\n".join(f"LOG-FOR-{argv[2]} line {i}" for i in range(300)))

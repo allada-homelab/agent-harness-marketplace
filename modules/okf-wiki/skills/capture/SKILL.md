@@ -42,6 +42,7 @@ One scribe brief may carry several concepts in sequence: `okf:` and `root:` once
 `root` is not optional when you work in a worktree: without it the scribe writes into the
 `.wiki/` of whatever checkout its own working directory is in, which can be the shared main
 checkout another session is using.
+The scribe refuses a `root` that is a main checkout (its `git-dir` equals its `git-common-dir`).
 
 ## 3. Dispatch
 
