@@ -141,6 +141,13 @@ def test_review_threads_and_changes_requested(repo):
     r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")])], "threads_unresolved": 2})
     assert r.returncode == 12
     assert "2 unresolved" in r.stdout
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")])], "threads_unresolved": 2,
+                                     "threads_outdated": 1})
+    assert r.returncode == 12
+    assert "1 unresolved review thread(s) (1 outdated, not counted)" in r.stdout
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")])], "threads_unresolved": 2,
+                                     "threads_outdated": 2})
+    assert r.returncode == 0
     r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], review="CHANGES_REQUESTED")]})
     assert r.returncode == 12
 
