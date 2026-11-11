@@ -431,7 +431,7 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: okf-wiki
-  version: 0.1.17
+  version: 0.1.18
   kinds:
   - skills
   - dsh-plugin
@@ -601,7 +601,7 @@ modules:
     summary: Review changed code for reuse, simplification, efficiency and altitude (code at the wrong
       layer) cleanups, then apply the fixes.
 - name: sleep-guard
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - dsh-plugin
   - hooks
