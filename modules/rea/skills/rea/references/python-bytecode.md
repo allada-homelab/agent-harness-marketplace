@@ -82,4 +82,14 @@ module, check what the previous pass produced. If the output files already exist
 (a baseline pass created them), say that they must be read before they can be
 overwritten — the read-before-write policy turns a blind overwrite into a
 retry. On pi and dsh, dispatch the module's `rea:python-module-reconstructor`
-agent instead of re-writing this brief every time.
+agent instead of re-writing this brief every time. For ledgers, per-target
+cards and gates across many workers, see "Running a campaign with many workers"
+in `./workflow.md`.
+
+- Diff tools used in the loop need an untruncated mode and a "first differing
+  instruction with context" mode; a truncated index-by-index diff hides the real
+  difference behind cascade noise.
+- Run the target's bundled interpreter in isolated mode (`-I`) so a stray file
+  in the working directory cannot shadow an import.
+- Python 3.11 and earlier reject reusing the outer quote inside an f-string
+  expression (`f"{d["k"]}"`); 3.12 allows it. Write `d['k']`.
