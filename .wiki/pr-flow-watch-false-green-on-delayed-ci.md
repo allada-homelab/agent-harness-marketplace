@@ -1,7 +1,7 @@
 ---
 type: gotcha
 title: pr-flow watch false-green on delayed CI
-description: Before 0.2.21 pr-flow watch called zero Actions runs 'no CI applies' and --merge merged early; 0.2.21 skips that shortcut when a workflow runs on every PR
+description: Before 0.2.22 pr-flow watch called zero Actions runs 'no CI applies' and --merge merged early; 0.2.22 skips that shortcut when a workflow runs on every PR
 tags: [pr-flow, watch, ci, github-actions, delayed]
 generated: {by: okf-wiki/haiku, at: 2026-10-05T15:44:10Z}
 verified:
@@ -21,11 +21,11 @@ Right after `pr-flow open`, `pr-flow watch` printed `no workflow run exists for 
 
 ## What fails
 
-Before pr-flow 0.2.21, when a PR had no checks and GitHub found no Actions run for its head, watch waited `--no-runs-confirm` seconds (default 20) and then called it a *verified* no-CI green, which `--merge` acted on. In a repo whose workflow runs on every `pull_request` with no paths filter[^s1] that verdict is never correct: zero runs only means GitHub has not dispatched the run yet. It merged a dotfiles PR before its CI ran on 2026-11-10, and called the next one green while GitHub never fired its `pull_request` event at all.[^s3]
+Before pr-flow 0.2.22, when a PR had no checks and GitHub found no Actions run for its head, watch waited `--no-runs-confirm` seconds (default 20) and then called it a *verified* no-CI green, which `--merge` acted on. In a repo whose workflow runs on every `pull_request` with no paths filter[^s1] that verdict is never correct: zero runs only means GitHub has not dispatched the run yet. It merged a dotfiles PR before its CI ran on 2026-11-10, and called the next one green while GitHub never fired its `pull_request` event at all.[^s3]
 
 ## What works
 
-- **Fixed in pr-flow 0.2.21:** watch reads `.github/workflows/` first; if any workflow runs on every pull request, it skips the no-runs shortcut, waits out `--no-checks-grace`, and `--merge` refuses the unverified green.
+- **Fixed in pr-flow 0.2.22:** watch reads `.github/workflows/` first; if any workflow runs on every pull request, it skips the no-runs shortcut, waits out `--no-checks-grace`, and `--merge` refuses the unverified green.
 - **On an older pin, or when the event never fires:** confirm with `gh pr checks <n>` before merging, and start CI with `gh workflow run <workflow> --ref <branch>`; once checks show up, a fresh `pr-flow watch --merge` merges on real green.[^s2]
 
 ## Why
