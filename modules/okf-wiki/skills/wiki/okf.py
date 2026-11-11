@@ -220,7 +220,9 @@ def _flow_value(s: str, i: int, line: int):
             key, i = _flow_token(s, i, line, stop=":,}")
             i = _skip_ws(s, i)
             if i >= len(s) or s[i] != ":":
-                raise FrontmatterError(f"line {line}: expected ':' in a flow mapping")
+                raise FrontmatterError(
+                    f"line {line}: expected ':' after {key!r} in a flow mapping — okf's YAML subset is "
+                    "stricter than PyYAML; quote any value containing ',' or ':' (resource: \"x, y\")")
             value, i = _flow_value(s, i + 1, line)
             if key in mapping:
                 raise FrontmatterError(f"line {line}: duplicate key {key!r}")
