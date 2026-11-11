@@ -61,20 +61,20 @@ Go to "finish".
 ## re-verify <id>
 
 Read the concept and the files its `## Verify` anchors name. `python3 <okf> anchor <id>`.
-- Still true: `python3 <okf> stamp <id> --by okf-wiki/<model> --verified`, receipt
+- Still true: `python3 <okf> stamp <id> --verified`, receipt
   `wiki: ~healed/<id>`. Stop.
 - Changed: fix the concept and its anchor to match the code, then "finish" (receipt
   `wiki: ~healed/<id>`).
 - Obsolete: set `status: deprecated`, add one sentence saying why, then
-  `python3 <okf> stamp <id> --by okf-wiki/<model> --generated`; receipt `wiki: -deprecated/<id>`.
+  `python3 <okf> stamp <id> --generated`; receipt `wiki: -deprecated/<id>`.
 
 ## finish
 
 1. `python3 <okf> anchor <id>` until it prints `confirmed` or `none`. Fix the anchor, not the
    code. `none:` only when no repo file configures, pins or wraps the behaviour; a config
    value, version pin or wrapper script is an anchor.
-2. `python3 <okf> stamp <id> --by okf-wiki/<model> --generated --verified`: record the model
-   you actually run as (`okf-wiki/<model>`); if you cannot tell, use `okf-wiki/unknown`.
+2. `python3 <okf> stamp <id> --generated --verified`. Omit `--by` unless your brief gives an
+   actor (then add `--by <actor>`); never look for your model name.
 3. `python3 <okf> validate <id>`; fix every ERROR. A WARN is advisory: make one trim pass,
    then stamp. Never loop on a WARN.
 4. Reply with exactly one line per concept: `wiki: +<type>/<id>` (or the receipt named

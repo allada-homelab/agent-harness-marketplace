@@ -1096,7 +1096,12 @@ def cmd_new(args) -> int:
 def cmd_stamp(args) -> int:
     root, bundle = _root_and_bundle(args)
     c = find(load(bundle), args.id)
-    stamp(root, c, args.by, args.generated, args.verified, args.human_confirmed)
+    by = args.by
+    if by is None:
+        by = os.environ.get("OKF_WIKI_ACTOR", "okf-wiki/unknown")
+        if not ACTOR_RE.match(by):
+            raise OkfError(f"OKF_WIKI_ACTOR={by} does not match okf-wiki/<model>, human:<who> or process:<what>")
+    stamp(root, c, by, args.generated, args.verified, args.human_confirmed)
     # `new` left the unfilled skeleton out of the index; stamp is the scribe's last write, so index it here.
     write_indexes(bundle)
     status("stamp", "ok", args.id)
@@ -2052,7 +2057,7 @@ def main(argv: list[str] | None = None) -> int:
     verb("index", cmd_index)
     verb("new", cmd_new, "type", "slug", __title={}, __force={"action": "store_true"},
          __check={"action": "store_true"})
-    verb("stamp", cmd_stamp, "id", __by={"required": True},
+    verb("stamp", cmd_stamp, "id", __by={},
          __generated={"action": "store_true"}, __verified={"action": "store_true"},
          __human_confirmed={"action": "store_true"})
     verb("digest", cmd_digest)
