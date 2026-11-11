@@ -63,6 +63,37 @@ def test_stamp_refuses_errors_bad_actor_and_unconfirmed_human(repo):
     assert "pass --generated, --verified" in run(repo, "stamp", "x", "--by", "okf-wiki/haiku").stdout
 
 
+def _generated_by(repo):
+    return okf.load(repo / ".wiki")[0].meta["generated"]["by"]
+
+
+def test_stamp_by_defaults_to_unknown_without_env(repo, monkeypatch):
+    monkeypatch.delenv("OKF_WIKI_ACTOR", raising=False)
+    concept(repo, "x")
+    assert run(repo, "stamp", "x", "--generated").returncode == 0
+    assert _generated_by(repo) == "okf-wiki/unknown"
+
+
+def test_stamp_by_defaults_to_okf_wiki_actor(repo):
+    concept(repo, "x")
+    assert run(repo, "stamp", "x", "--generated", env={"OKF_WIKI_ACTOR": "okf-wiki/opus"}).returncode == 0
+    assert _generated_by(repo) == "okf-wiki/opus"
+
+
+def test_stamp_refuses_an_invalid_okf_wiki_actor(repo):
+    concept(repo, "x")
+    r = run(repo, "stamp", "x", "--generated", env={"OKF_WIKI_ACTOR": "claude"})
+    assert r.returncode == 2
+    assert "OKF_WIKI_ACTOR=claude does not match okf-wiki/<model>, human:<who> or process:<what>" in r.stdout
+
+
+def test_explicit_by_wins_over_okf_wiki_actor(repo):
+    concept(repo, "x")
+    assert run(repo, "stamp", "x", "--by", "okf-wiki/haiku", "--generated",
+               env={"OKF_WIKI_ACTOR": "okf-wiki/opus"}).returncode == 0
+    assert _generated_by(repo) == "okf-wiki/haiku"
+
+
 def test_stamp_keeps_the_newest_five_verifications(repo):
     concept(repo, "x")
     for _ in range(7):

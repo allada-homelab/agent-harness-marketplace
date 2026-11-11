@@ -96,7 +96,7 @@ with `python3` from anywhere inside the repository. The last line is always
 | Verb | Use |
 |---|---|
 | `new <type> <slug> [--title T]` | scaffold a concept; exit 3 lists near-duplicates to update instead (`--force` only when they truly differ) |
-| `stamp <id> --by okf-wiki/<model> [--generated] [--verified]` | after a content change pass both; after a re-check pass `--verified`; it refuses while anchors fail |
+| `stamp <id> [--by <actor>] [--generated] [--verified]` | after a content change pass both; after a re-check pass `--verified`; it refuses while anchors fail |
 | `validate [ids]` | conformance; fix every ERROR |
 | `anchor <id>` | evaluate the Verify anchors |
 | `fresh [ids]` | FRESH / TOUCHED / STALE / UNANCHORED / UNVERIFIED from git: TOUCHED means an anchor file changed but the anchors still pass (not ⚠); STALE (⚠) means an anchor failed or its matched text changed |
