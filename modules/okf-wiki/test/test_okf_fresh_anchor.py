@@ -211,3 +211,20 @@ def test_anchor_with_nested_backticks_is_reported_not_skipped(repo):
     assert v.returncode == 1 and "ERROR nested: malformed Verify anchor" in v.stdout
     s = run(repo, "stamp", "nested", "--by", "okf-wiki/haiku", "--verified")
     assert s.returncode == 2 and "malformed Verify anchor" in s.stdout
+
+
+def test_todo_none_on_a_clean_bundle(repo):
+    stamped(repo)
+    r = run(repo, "todo")
+    assert r.returncode == 0 and r.stdout.splitlines() == ["okf: todo none"]
+
+
+def test_todo_lists_stale_and_error_concepts(repo):
+    stamped(repo)
+    commit_app(repo, "def resolve_peers(strict=False):\n    return 2\n")
+    concept(repo, "bad", meta="title: no type\n")
+    r = run(repo, "todo")
+    lines = r.stdout.splitlines()
+    assert r.returncode == 0 and len(lines) == 3, r.stdout
+    assert lines[0].startswith("ERROR bad: ") and lines[1] == "STALE x"
+    assert lines[2] == "okf: todo 2 concepts"
