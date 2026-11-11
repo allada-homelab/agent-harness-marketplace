@@ -27,3 +27,11 @@ their own runtime tables, so start with metadata before decompiling.
 - Go binaries are usually large; `rea decompile-all` can take a long time.
   Prefer targeted `decompile`/`function` calls once `search` identified the
   procedures of interest.
+
+## Reconstructing source that recompiles to match
+
+- Functions must sit on their debug-info declaration line, so realign padding
+  mechanically after any edit that changes line counts.
+- Match the Go toolchain and module versions of the binary (read them with
+  `inspect-go-binary`) before comparing.
+- Compare per function, not per package.

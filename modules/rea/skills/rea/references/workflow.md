@@ -69,6 +69,15 @@ notes and the tooling in the repo.
   across interpreter versions and is the right way to test whether a module
   matches upstream source or a previous reconstruction. Bytecode equality is
   only meaningful when both sides were produced by the same interpreter.
+- **Recompile and diff where the compiler can be reproduced.** The acceptance
+  test is recompile-and-diff against the original: byte-identical, or a
+  difference proven inert. "Parses" is `verified`, never `MATCH`.
+- **Line placement is mechanical.** Line tables, first-line numbers and
+  debug-info declaration lines depend on padding: use or write an aligner that
+  inserts or removes it, run it once, re-verify. Never adjust blank lines by
+  hand; edit tools cannot reliably count runs of blank lines.
+- **Match the original toolchain and dependency versions exactly** before
+  trusting any diff.
 - **Re-verify after every pass** — baseline, reconstruction, fixes. The final
   state is the only state that counts.
 
@@ -98,3 +107,24 @@ Verification scope: <which modules parse, which are MATCH, which are broken>
 Report the honest limitations next to the findings: state what was verified and
 what was inferred, and never claim a root cause that only runtime data could
 confirm.
+
+## Running a campaign with many workers
+
+- **Keep an attempts ledger:** one row per target per worker run (worker,
+  target, verdict, sizes). A target with three attempts and no match is residue:
+  re-assign it only with a hypothesis no earlier attempt tried, or once the
+  target it was blocked on matches. Do not fill idle worker seats with residue.
+- **Give each worker a card per target:** the unique key the verifier accepts,
+  source file and line, expected size, current verdict, prior attempts, and the
+  literal commands to run. Otherwise workers spend their first dozens of steps
+  rediscovering this.
+- **Scope each worker's finishing gate to its own targets** and print only its
+  verdict block (full output to a log file). A gate that fails for reasons
+  outside the worker's control is ignored.
+- **One unit of work per brief.** The worker appends each finished item to a
+  results file named in the brief, so an interrupted worker still leaves its
+  results. Each worker uses its own scratch directory (`mktemp -d`), never
+  shared temp paths.
+- **Concurrency:** measure model latency as workers are added and stop where
+  latency climbs faster than total throughput (a few workers on one local model
+  server).
