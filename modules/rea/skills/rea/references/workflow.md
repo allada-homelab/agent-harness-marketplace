@@ -78,6 +78,21 @@ notes and the tooling in the repo.
   hand; edit tools cannot reliably count runs of blank lines.
 - **Match the original toolchain and dependency versions exactly** before
   trusting any diff.
+- **Keep an explicit accepted-residuals list.** Each entry names the function
+  or code object, the exact difference, and the evidence (a note or a minimal
+  repro) that no source produces the original bytes. Any difference not on that
+  list is `NOT MATCH`, never "close enough".
+- **Some compiler output is unreachable from any accepted source**, for example
+  an artifact of one optimizer pass. When three structurally different attempts
+  produce the same wrong shape, try to prove the artifact with a minimal repro,
+  record it as a residual, and stop looping on it.
+- **A recompile-and-diff match proves the machine code, not the behavior** that
+  compilation erases or keeps only as data: string literals, struct tags or
+  serialization field names, and generic instantiation shapes. When the
+  reconstruction must run, add a second check: run it next to the original on an
+  identical setup and diff the observable behavior.
+- **Report per function or code object** as `k/N matched` with the failing
+  names, never one pass/fail per module.
 - **Re-verify after every pass** — baseline, reconstruction, fixes. The final
   state is the only state that counts.
 
@@ -125,6 +140,12 @@ confirm.
   results file named in the brief, so an interrupted worker still leaves its
   results. Each worker uses its own scratch directory (`mktemp -d`), never
   shared temp paths.
+- **Keep a symptom catalogue:** each recurring mismatch shape (what the diff
+  shows) mapped to the source idiom that causes it. Workers check it before they
+  form a hypothesis and add a row when they find a new one.
+- **Per-worker build caches grow without bound** and nothing deletes them. Give
+  each worker its own cache directory under one parent, and delete them when the
+  campaign ends or before a large fan-out.
 - **Concurrency:** measure model latency as workers are added and stop where
   latency climbs faster than total throughput (a few workers on one local model
   server).
