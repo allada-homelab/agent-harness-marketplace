@@ -1403,6 +1403,7 @@ COVERAGE: dict[str, dict[str, str]] = {
         ), _PARSED),
         "rec:attachment/hook_success": "parsed: SessionStart additionalContext only",
         "rec:attachment/hook_additional_context": "parsed: SessionStart additionalContext only",
+        "rec:attachment/pdf_reference": "skip: uploaded-file reference; the user message carries the text",
         "block:thinking": _REASONING,
         "block:redacted_thinking": _REASONING,
         "block:image": _IMAGE,
@@ -1426,7 +1427,7 @@ COVERAGE: dict[str, dict[str, str]] = {
         **dict.fromkeys((f"rec:attachment/{t}" for t in (
             "agent_listing_delta", "auto_mode", "auto_mode_exit", "bash_output_audience_note",
             "batching_reminder_sent", "command_permissions", "compact_file_reference",
-            "credential_org", "date", "date_change", "deferred_tools_delta",
+            "credential_org", "critical_system_reminder", "date", "date_change", "deferred_tools_delta",
             "deferred_tools_record", "diagnostics", "dynamic_skill", "edited_text_file",
             "environment", "file", "goal_status", "hook_blocking_error", "hook_cancelled",
             "hook_non_blocking_error", "hook_system_message", "inlined_image_paths",
@@ -1459,6 +1460,7 @@ COVERAGE: dict[str, dict[str, str]] = {
                         "parsed: from its tool/call row, which carries the same call"),
         "block:reasoning": _REASONING,
         **dict.fromkeys(("block:image", "block:tool-result>image"), _IMAGE),
+        "block:file": "skip: attachment reference, no text",
         **dict.fromkeys((f"rec:{t}" for t in (
             "assistant/chunk", "reasoning-chunks", "text-chunks", "tool-call-chunks",
         )), _STREAM),
