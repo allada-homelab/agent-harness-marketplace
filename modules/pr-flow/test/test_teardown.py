@@ -35,6 +35,43 @@ def test_teardown_removes_worktree_branch_and_state(repo):
     assert last(r) == "pr-flow: teardown ok feat/w"
 
 
+def test_teardown_checks_the_default_branch_when_the_recorded_base_is_gone(repo):
+    # Fix a PR from another branch: start on its branch, push onto it, it merges and GitHub
+    # deletes it. Fetching the recorded base now fails; teardown must still prove the merge.
+    root, _ = repo
+    git("push", "-q", "origin", "main:other", cwd=root)
+    assert run("start", "fix", "--base", "other", cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / "feat-fix"
+    (wt / "fix.txt").write_text("x\n")
+    git("add", "fix.txt", cwd=wt)
+    git("commit", "-q", "-m", "fix", cwd=wt)
+    git("push", "-q", "origin", "HEAD:other", cwd=wt)
+    git("fetch", "-q", "origin", cwd=root)
+    git("merge", "-q", "--no-ff", "-m", "merge", "origin/other", cwd=root)
+    git("push", "-q", "origin", "main", cwd=root)
+    git("push", "-q", "origin", "--delete", "other", cwd=root)
+    r = run("teardown", "feat/fix", cwd=root)
+    assert r.returncode == 0, r.stderr
+    assert "other is gone from origin" in r.stderr
+    assert not wt.exists()
+    assert last(r) == "pr-flow: teardown ok feat/fix"
+
+
+def test_teardown_refuses_unmerged_work_when_the_recorded_base_is_gone(repo):
+    root, _ = repo
+    git("push", "-q", "origin", "main:other", cwd=root)
+    assert run("start", "fix", "--base", "other", cwd=root).returncode == 0
+    wt = root / ".claude" / "worktrees" / "feat-fix"
+    (wt / "fix.txt").write_text("x\n")
+    git("add", "fix.txt", cwd=wt)
+    git("commit", "-q", "-m", "fix", cwd=wt)
+    git("push", "-q", "origin", "--delete", "other", cwd=root)
+    r = run("teardown", "feat/fix", cwd=root)
+    assert r.returncode != 0
+    assert "not merged into origin/main" in r.stderr
+    assert wt.exists()
+
+
 def fake_devc(tmp_path, rc=0):
     """A devc that logs its argv and whether the worktree still existed when it ran."""
     log = tmp_path / "devc.log"
