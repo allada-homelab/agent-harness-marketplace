@@ -679,7 +679,17 @@ def teardown(ctx, branch, dry_run=False):
         if dirty:
             raise Fail(f"worktree {wt} is dirty; commit or discard first:\n{dirty}")
     base = branch_base(root, branch)
-    fetch_tracking(base, root)
+    try:
+        fetch_tracking(base, root)
+    except Fail:
+        # A stacked base that merged has usually been deleted on origin; its commits are now on
+        # the default branch, so prove the merge there. A real fetch failure fails this too.
+        default = default_base(root)
+        if base == default:
+            raise
+        warn(f"base {base} is gone from origin (merged and deleted?); checking against {default}")
+        base = default
+        fetch_tracking(base, root)
     merged = subprocess.run([GIT, "merge-base", "--is-ancestor", branch, f"origin/{base}"], cwd=root).returncode == 0
     # A squash or rebase merge lands the change as new commits, so the branch head is never an
     # ancestor of the base; GitHub's own merged state is the proof then.
