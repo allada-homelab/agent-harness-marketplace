@@ -44,9 +44,9 @@
     },
     {
       "name": "local-workers",
-      "description": "Delegate explicitly requested work to self-hosted models: the pi agent through the pi-run script (resumable, forkable sessions) and the d3-ultra decision model for batched yes/no, choice and score questions",
+      "description": "Explicitly requested delegation to self-hosted models: the pi agent through the pi-run script (resumable, forkable sessions), the d3-ultra decision model for batched yes/no, choice and score questions, a mixed local+cloud fleet skill, and a replay benchmark against merged fixes",
       "category": "development",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "source": "./modules/local-workers"
     },
     {

@@ -431,25 +431,43 @@ modules:
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
 - name: local-workers
-  version: 0.1.0
+  version: 0.2.0
   kinds:
   - skills
   - dsh-plugin
   harness:
   - claude
-  description: 'Delegate explicitly requested work to self-hosted models: the pi agent through the pi-run
-    script (resumable, forkable sessions) and the d3-ultra decision model for batched yes/no, choice and
-    score questions'
+  description: 'Explicitly requested delegation to self-hosted models: the pi agent through the pi-run
+    script (resumable, forkable sessions), the d3-ultra decision model for batched yes/no, choice and
+    score questions, a mixed local+cloud fleet skill, and a replay benchmark against merged fixes'
   skills:
+  - name: complete-tasks-mixed-tier
+    path: modules/local-workers/skills/complete-tasks-mixed-tier/SKILL.md
+    harness:
+    - claude
+    tags: []
+    command: false
+    summary: Own a piece of work end-to-end by decomposing it and fanning it out to a mixed fleet of parallel
+      workers — local pi-run runs where a piece suits the local model, Sonnet or Opus subagents for pieces
+      above its ceiling — while you hold the plan, gate every result on the real artifact, and synthesize.
   - name: delegate
     path: modules/local-workers/skills/delegate/SKILL.md
     harness:
     - claude
     tags: []
     command: false
-    summary: 'Hand work to David''s self-hosted pi agent or local decision model — the pi-run script (the
-      pi coding agent on the local LLM, with resumable and forkable sessions) and the decide MCP tool
-      (the d3-ultra decision model: batched yes/no, choice and score questions).'
+    summary: 'Hand work to David''s self-hosted models — the pi-run script (the pi coding agent on the
+      local LLM, with resumable and forkable sessions) and the decide MCP tool (the d3-ultra decision
+      model: batched yes/no, choice and score questions).'
+  - name: replay-eval
+    path: modules/local-workers/skills/replay-eval/SKILL.md
+    harness:
+    - claude
+    tags: []
+    command: true
+    summary: Benchmark the local model on David's own codebase by replaying already-merged fixes — check
+      out the commit before a fix, re-implement it with pi-run from the issue alone, and grade the result
+      against the merged change as ground truth (MATCH / PARTIAL / MISS).
 - name: okf-wiki
   version: 0.1.19
   kinds:
