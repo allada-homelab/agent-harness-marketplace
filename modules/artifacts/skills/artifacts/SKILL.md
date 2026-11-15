@@ -69,5 +69,9 @@ loaded from); the script sits beside it. Run it with `python3`, never import it.
 - Never a download link, never `window.claude`, never a claude.ai URL.
 - Action buttons are `type="button"` with click handlers; a `submit` event never fires in the dsh
   preview.
+- The agent sees only the file on disk, never what the user does on the page. When the page
+  collects input you need back (ticks, picks, notes, edited values), give it a primary
+  `Copy for chat` button that copies those answers as text, and close with one line telling the
+  user to press it and paste the result. Never say or imply you can see their ticks or entries.
 - Say one plain sentence about the design direction at most; the token plan lives in the
   file, not in the reply.
