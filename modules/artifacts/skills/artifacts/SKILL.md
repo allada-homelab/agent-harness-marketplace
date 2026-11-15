@@ -23,20 +23,20 @@ acceptable. A single fact, a short list or an answer the user will act on at onc
 1. **Read first.** `./references/design.md` — its *Local page contract* is binding; the
    fundamentals and process below it are the craft. For a chart, graph, KPI row or dashboard
    also read `./references/dataviz/README.md`. Start from these validated five-slot categorical palettes, and run `./references/dataviz/scripts/validate_palette.py` (run it, don't read it) whenever you change or extend them: light on a near-white surface `#0072B2,#009E73,#D55E00,#B2548F,#C77F00`; dark on a near-black surface `#357FB5,#009E73,#D55E00,#A64E97,#C77F00`. Every template uses these; they supersede the example slots in `references/dataviz/references/palette.md`.
-   For a diagram read `./references/diagramming.md`. For anything beyond one viewer's own
-   browser storage — shared state, a file download, a model call — read
-   `./references/runtime-seam.md` and design for its absence.
+   For a diagram read `./references/diagramming.md`. When the page collects input the user
+   hands back to you, or needs anything beyond one viewer's own browser storage, read
+   `./references/runtime-seam.md`.
 2. **Prepare the output dir.** `python3 <skill dir>/artifactctl.py prepare` prints the
    directory: one folder per project under `$AGENT_ARTIFACTS_DIR`, else `artifacts/` in the
    dsh home (`$DSH_HOME`, default `.dsh` under the user's home directory), named like dsh names
    that project's `sessions/`
    folder, never inside a repo.
    `prepare --here` instead uses `.artifacts/` under the working directory, git-excluded, when
-   the user wants the page next to the code. The file is `<slug-of-title>.html` inside it; a
-   revision overwrites the same file.
+   the user wants the page next to the code. The file is `<slug-of-title>.artifact.html` inside
+   it (dsh gives that suffix the chat bridge); a revision overwrites the same file.
 3. **Write the page.** Start from the closest template: read `./templates/README.md`, copy
-   that file to the output dir as `<slug>.html`, replace its slots and its `DATA`, and keep its
-   token block and interaction code — they already satisfy the contract. Only when no template
+   that file to the output dir as `<slug>.artifact.html`, replace its slots and its `DATA`, and
+   keep its token block and interaction code — they already satisfy the contract. Only when no template
    is close write the document from scratch with the `write` tool: doctype, head, title,
    description meta, viewport with `viewport-fit=cover`, tokens on `:root`, body; scripts only
    from the CDN allowlist, everything else inline.
@@ -70,8 +70,10 @@ loaded from); the script sits beside it. Run it with `python3`, never import it.
 - Action buttons are `type="button"` with click handlers; a `submit` event never fires in the dsh
   preview.
 - The agent sees only the file on disk, never what the user does on the page. When the page
-  collects input you need back (ticks, picks, notes, edited values), give it a primary
-  `Copy for chat` button that copies those answers as text, and close with one line telling the
-  user to press it and paste the result. Never say or imply you can see their ticks or entries.
+  collects input you need back (ticks, picks, notes, edited values), give it one primary button
+  that hands those answers over as text: `artifact.submit(text)` labelled *Send to chat* when
+  `globalThis.artifact` exists (dsh puts the text in the user's message box), else
+  *Copy for chat* through the clipboard (`checklist.html` has both). Close with one line telling
+  the user to press it and send the message. Never say or imply you can see their ticks or entries.
 - Say one plain sentence about the design direction at most; the token plan lives in the
   file, not in the reply.
