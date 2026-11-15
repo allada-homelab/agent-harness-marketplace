@@ -1,16 +1,22 @@
 # local-workers
 
-Explicitly requested delegation to self-hosted models: a `pi-run` command, one MCP tool and one skill.
-Claude Code only (the skill is scoped `harness: [claude]`).
+Explicitly requested delegation to self-hosted models: a `pi-run` command, one MCP tool and three
+skills. Claude Code only (every skill is scoped `harness: [claude]`).
 
 | Worker | Backend | What it does |
 |---|---|---|
 | `pi-run` (`bin/`, on the Bash `PATH`) | the pi agent | One task, brief on stdin or as arguments; prints pi's final answer. Every run is a resumable session; options in `pi-run --help` |
 | `decide` | d3-ultra-INT4 on vllm-srun (`decision-default`) | A batch of ≤ 128 `choice` / `noul` / `score` questions; flags floored, low-confidence and truncated answers |
 
-The `delegate` skill loads only when a request names pi or the local decision model (generic
-"local LLM" / homelab requests stay with the `local-llm` plugin), and tells Claude how to brief pi, batch decisions, and verify results before relaying them.
-Nothing here ever falls back to an Anthropic model: failures come back as typed results.
+| Skill | Loads when | What it does |
+|---|---|---|
+| `delegate` | A request names pi or the decision model, or opts in to the local LLM ("run this on local", "use local subagents") | Triage (scale-out vs reason-out, size floor), hand-off vs orchestrate, brief templates, the artifact gate, failure recovery, and the `decide` batching rules |
+| `complete-tasks-mixed-tier` | Multi-part work for a local + cloud fleet ("get this done with local workers, escalate what they can't") | Owner loop: pi-run for local-suited pieces, Sonnet/Opus subagents above the local ceiling, every result gated on the artifact |
+| `replay-eval` | `/local-workers:replay-eval <PR \| commit \| last N>` | Re-solves merged fixes from the issue alone with pi-run and grades MATCH / PARTIAL / MISS against the merged change |
+
+Nothing here ever falls back to an Anthropic model: failures come back as typed results. These
+skills absorb the retired `local-llm` plugin's doctrine; its `claude -p` transport and tiered agents
+are gone, since pi-run reaches the same models with one tier (`large-default`).
 
 ## Requirements
 
