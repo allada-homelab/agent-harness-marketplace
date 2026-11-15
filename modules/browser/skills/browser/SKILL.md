@@ -27,15 +27,17 @@ the browser is externally owned and must NOT be repointed.
 ## Procedure
 
 1. **Check once per task:** `browserctl doctor`. A non-zero exit names what is
-   missing; stop and tell the user rather than working around it.
+   missing; stop and tell the user rather than working around it. Never launch
+   Chrome without its sandbox (`--no-sandbox`): pages are untrusted code.
 2. **Pick an identity.** `scratch` for untrusted or unknown sites; a named
    identity for a service the user has already logged into. `browserctl
    identities` lists what exists.
 3. **Pick a session name once** and pass `--session <name>` on every call
    (omit it and the name derives from the working directory — fine for one
-   task, wrong when two tasks run in one directory). An `auto` session is
-   closed after 30 minutes idle; the login stays in the profile, so a later
-   command just starts it again.
+   task, wrong when two tasks run in one directory). Tasks running at the same
+   time also need different identities: a profile opens in one browser only. An
+   `auto` session is closed after 30 minutes idle; the login stays in the
+   profile, so a later command just starts it again.
 4. **Drive:** `browserctl run --identity work --session t1 -- <agent-browser
    command>`. The vocabulary is in `./references/commands.md`. Always
    `snapshot -i` after navigating; act on `@eN` refs from the latest snapshot
