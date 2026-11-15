@@ -157,7 +157,7 @@ textarea.copy-fallback { min-height: 10rem; font-family: var(--font-data) }
     </div>
   </header>
 
-  <p class="callout" data-slot="intro">Work top to bottom; the restore itself takes about an hour. The agent cannot see your ticks: press <em>Copy for chat</em> and paste the result into the chat to send them.</p>
+  <p class="callout" data-slot="intro">Work top to bottom; the restore itself takes about an hour. The agent sees your ticks only when you send them: press the green button and send the message.</p>
 
   <section class="panel progress" aria-label="Progress">
     <div class="tally">
@@ -422,6 +422,10 @@ function asText() {
   }
   return out.join("\n");
 }
+// dsh's artifact bridge puts the text straight into the chat draft; elsewhere the user copies it.
+const bridge = globalThis.artifact;
+const sendLabel = bridge ? "Send to chat" : "Copy for chat";
+$("copy").textContent = sendLabel;
 $("copy").addEventListener("click", (e) => {
   const btn = e.currentTarget;
   const value = asText();
@@ -433,11 +437,16 @@ $("copy").addEventListener("click", (e) => {
     ta.select();
     btn.textContent = "Selected: copy it";
   };
+  const done = (label) => {
+    btn.textContent = label;
+    setTimeout(() => { btn.textContent = sendLabel; }, 2000);
+  };
+  if (bridge) {
+    bridge.submit(value).then((ok) => ok ? done("Added to your message") : fallback(), fallback);
+    return;
+  }
   if (!navigator.clipboard) { fallback(); return; }
-  navigator.clipboard.writeText(value).then(() => {
-    btn.textContent = "Copied";
-    setTimeout(() => { btn.textContent = "Copy for chat"; }, 2000);
-  }, fallback);
+  navigator.clipboard.writeText(value).then(() => done("Copied"), fallback);
 });
 
 build();
