@@ -14,11 +14,12 @@
 //   browserctl close  --identity <name> [--session <id>]
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readlinkSync, statSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, statSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-export const AGENT_BROWSER_VERSION = "0.37.1";
+export const AGENT_BROWSER_VERSION = "0.43.0";
+const SUID_SANDBOX = "/opt/google/chrome/chrome-sandbox";
 const HOME = homedir();
 const ROOT = join(HOME, ".browserctl");
 const PROFILES = join(ROOT, "profiles");
@@ -87,8 +88,24 @@ function display() {
   return "none";
 }
 
+// Ubuntu 23.10+ AppArmor blocks the unprivileged user namespaces Chrome for
+// Testing sandboxes with, and CfT ships no setuid helper — Chrome dies with "No
+// usable sandbox". Borrow a system Chrome's setuid helper rather than run
+// --no-sandbox against untrusted pages. Returns the helper path, "" when the
+// namespace sandbox works, or null when neither is available.
+function chromeSandbox() {
+  if (process.env.CHROME_DEVEL_SANDBOX) return process.env.CHROME_DEVEL_SANDBOX;
+  let restricted = false;
+  try { restricted = readFileSync("/proc/sys/kernel/apparmor_restrict_unprivileged_userns", "utf8").trim() === "1"; } catch { /* not Linux, or no such knob */ }
+  if (!restricted) return "";
+  try { const s = statSync(SUID_SANDBOX); if (s.uid === 0 && (s.mode & 0o4000)) return SUID_SANDBOX; } catch { /* absent */ }
+  return null;
+}
+const NO_SANDBOX = `no usable Chrome sandbox: AppArmor restricts user namespaces and there is no setuid-root ${SUID_SANDBOX} (install google-chrome, or point CHROME_DEVEL_SANDBOX at a setuid chrome-sandbox)`;
+
 function doctor(opts) {
   const problems = [];
+  if (chromeSandbox() === null) problems.push(NO_SANDBOX);
   const ab = agentBrowserVersion();
   if (!ab) problems.push("agent-browser not on PATH");
   else if (ab !== AGENT_BROWSER_VERSION) problems.push(`agent-browser ${ab} installed; this skill expects ${AGENT_BROWSER_VERSION}`);
@@ -135,13 +152,17 @@ function invoke(opts, tail) {
   const id = identity(opts);
   const mode = opts.mode || "auto";
   if (mode !== "auto" && mode !== "hybrid") die("--mode must be auto or hybrid");
+  if (mode === "hybrid" && display() === "none") die("--mode hybrid opens a window and this machine has no display (DISPLAY/WAYLAND_DISPLAY unset); use --mode auto, or run on a machine with a GUI");
   const chrome = resolveChrome();
   if (!chrome) die("no Chrome for Testing found — run `browserctl doctor`");
+  const sandbox = chromeSandbox();
+  if (sandbox === null) die(NO_SANDBOX);
+  const env = sandbox ? { ...process.env, CHROME_DEVEL_SANDBOX: sandbox } : process.env;
   const args = ["--session", sessionName(opts, id), "--profile", profileDir(id), "--executable-path", chrome, "--pin-tab"];
   // A headed browser is exempt from agent-browser's default idle timeout; a
   // headless one is reaped after 30 min idle so orphaned daemons don't linger.
   if (mode === "hybrid") args.push("--headed"); else args.push("--idle-timeout", "30m");
-  const r = spawnSync("agent-browser", [...args, ...tail], { stdio: "inherit" });
+  const r = spawnSync("agent-browser", [...args, ...tail], { stdio: "inherit", env });
   if (r.error) die(`cannot exec agent-browser: ${r.error.message}`);
   process.exit(r.status ?? 1);
 }

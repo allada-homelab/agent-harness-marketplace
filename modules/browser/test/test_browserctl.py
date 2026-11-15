@@ -7,7 +7,7 @@ def test_doctor_ok_json(sandbox, run):
     assert r.returncode == 0, r.stderr
     d = json.loads(r.stdout)
     assert d["ok"] is True
-    assert d["agentBrowser"] == "0.37.1"
+    assert d["agentBrowser"] == "0.43.0"
     assert d["chrome"].endswith("chrome-linux64/chrome")
 
 
@@ -40,11 +40,26 @@ def test_run_auto_composes_flags_and_creates_profile(sandbox, run, argv):
 
 
 def test_run_hybrid_is_headed_without_idle_timeout(sandbox, run, argv):
-    r = run(sandbox, "run", "--identity", "work", "--mode", "hybrid", "--session", "s1", "--", "open", "https://example.com")
+    r = run(sandbox, "run", "--identity", "work", "--mode", "hybrid", "--session", "s1", "--", "open", "https://example.com", env={"DISPLAY": ":0"})
     assert r.returncode == 0, r.stderr
     a = argv(sandbox)
     assert "--headed" in a
     assert "--idle-timeout" not in a
+
+
+def test_run_hybrid_refuses_without_a_display(sandbox, run):
+    home, _, _ = sandbox
+    r = run(sandbox, "run", "--identity", "work", "--mode", "hybrid", "--session", "s1", "--", "open", "https://example.com")
+    assert r.returncode == 2
+    assert "no display" in r.stderr
+    assert not (home / "ab-argv.json").exists()
+
+
+def test_run_hands_the_sandbox_helper_to_agent_browser(sandbox, run):
+    home, _, _ = sandbox
+    r = run(sandbox, "run", "--identity", "work", "--session", "s1", "--", "get", "url")
+    assert r.returncode == 0, r.stderr
+    assert (home / "ab-sandbox.txt").read_text() == "/fake/chrome-sandbox"
 
 
 def test_run_default_session_is_identity_plus_cwd_hash(sandbox, tmp_path, run, argv):

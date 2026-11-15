@@ -20,8 +20,9 @@ def sandbox(tmp_path):
         "#!/usr/bin/env python3\n"
         "import json, os, sys\n"
         "if sys.argv[1:] == ['--version']:\n"
-        "    print('agent-browser 0.37.1'); sys.exit(0)\n"
+        "    print('agent-browser 0.43.0'); sys.exit(0)\n"
         "open(os.path.join(os.environ['HOME'], 'ab-argv.json'), 'w').write(json.dumps(sys.argv[1:]))\n"
+        "open(os.path.join(os.environ['HOME'], 'ab-sandbox.txt'), 'w').write(os.environ.get('CHROME_DEVEL_SANDBOX', ''))\n"
         "sys.exit(int(os.environ.get('FAKE_AB_EXIT', '0')))\n"
     )
     fake.chmod(0o755)
@@ -35,7 +36,8 @@ def sandbox(tmp_path):
 
 def _run(sandbox, *args, env=None, cwd=None):
     home, binp, _ = sandbox
-    e = {"HOME": str(home), "PATH": f"{binp}:{os.environ['PATH']}"}
+    # A fixed sandbox helper keeps results independent of the host's AppArmor policy.
+    e = {"HOME": str(home), "PATH": f"{binp}:{os.environ['PATH']}", "CHROME_DEVEL_SANDBOX": "/fake/chrome-sandbox"}
     e.update(env or {})
     return subprocess.run(["node", str(SCRIPT), *args], env=e, cwd=cwd or home, text=True, capture_output=True)
 
