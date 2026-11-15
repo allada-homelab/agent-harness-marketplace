@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# pi-run: hand one task to the pi agent and print its final answer; see --help.
+set -euo pipefail
+
+usage() {
+	cat <<'EOF'
+Usage: pi-run [options] [--] [brief...]
+
+Runs pi non-interactively on the brief (the arguments, or stdin when there are none) and
+prints pi's final answer on stdout. "pi-run: session <id>" goes to stderr first; pass that id
+to --session to send a follow-up, or to --fork to branch from it. Exit status is pi's
+(non-zero when the run errored or was truncated), 124 on timeout, 2 on a usage error.
+
+  --session ID    continue session ID with this brief, in the directory it started in
+  --fork ID       new session that starts from a copy of ID's history (parallel follow-ups)
+  --file PATH     attach PATH's contents (text or image) to the brief; repeatable
+  --model M       provider/id[:thinking]; default llama-swap/large-default
+  --thinking L    off|minimal|low|medium|high|xhigh|max
+  --read-only     only the read, grep, find and ls tools
+  --timeout SECS  wall-clock limit, default 1800
+
+Sessions live in ${XDG_STATE_HOME:-~/.local/state}/pi-run/<id>/ and are pruned after 14 days.
+EOF
+}
+die() { echo "pi-run: $*" >&2; exit 2; }
+
+root=${XDG_STATE_HOME:-$HOME/.local/state}/pi-run
+session='' fork='' timeout=1800 model=llama-swap/large-default files=() pi_args=()
+while (($#)); do
+	case $1 in
+	--session | --fork | --file | --model | --thinking | --timeout) (($# >= 2)) || die "$1 needs a value" ;;&
+	--session) session=$2; shift 2 ;;
+	--fork) fork=$2; shift 2 ;;
+	--file) [[ -r $2 ]] || die "cannot read $2"; files+=("@$(realpath "$2")"); shift 2 ;;
+	--model) model=$2; shift 2 ;;
+	--thinking) pi_args+=("$1" "$2"); shift 2 ;;
+	--timeout) [[ $2 =~ ^[1-9][0-9]*$ ]] || die "--timeout takes whole seconds"; timeout=$2; shift 2 ;;
+	--read-only) pi_args+=(--tools "read,grep,find,ls" --no-mcp); shift ;;
+	-h | --help) usage; exit 0 ;;
+	--) shift; break ;;
+	-*) die "unknown option $1 (see --help)" ;;
+	*) break ;;
+	esac
+done
+[[ -z $session || -z $fork ]] || die "--session and --fork are exclusive"
+if (($#)); then
+	brief="$*"
+elif [[ ! -t 0 ]]; then
+	brief=$(cat)
+else
+	die "no brief: pass it as arguments or on stdin"
+fi
+[[ -n ${brief//[[:space:]]/} ]] || die "the brief is empty"
+
+# pi scopes sessions to the directory they started in, so each session gets its own dir that
+# records that cwd; a follow-up from anywhere else would otherwise silently start blank.
+session_dir() {
+	[[ $1 =~ ^[0-9a-f-]+$ && -f $root/$1/cwd ]] || die "no session $1 under $root"
+	echo "$root/$1"
+}
+mkdir -p "$root"
+# Unused for 14 days (each run touches its dir) and not locked by a run in flight.
+find "$root" -mindepth 1 -maxdepth 1 -type d -mtime +14 -print0 |
+	while IFS= read -r -d '' old; do flock -n "$old/cwd" rm -rf "$old" || true; done
+
+if [[ -n $session ]]; then
+	dir=$(session_dir "$session")
+	id=$session
+	pi_args+=(--continue)
+else
+	id=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen | tr '[:upper:]' '[:lower:]')
+	dir=$root/$id
+	if [[ -n $fork ]]; then
+		parent=$(session_dir "$fork")
+		parent_files=("$parent"/*.jsonl) # one per dir (--continue appends); names sort by start time
+		[[ -f ${parent_files[-1]} ]] || die "session $fork has no history to fork"
+		# Shared: any number of forks may read the parent at once, but not while it is being continued.
+		exec 8<"$parent/cwd"
+		flock -s -n 8 || die "session $fork is busy; fork it once that run finishes"
+		pi_args+=(--fork "${parent_files[-1]}")
+		start_cwd=$(<"$parent/cwd")
+	else
+		start_cwd=$PWD
+	fi
+	mkdir "$dir"
+	printf '%s\n' "$start_cwd" >"$dir/cwd"
+fi
+# Two runs appending to one session file would interleave it; a parallel follow-up is a --fork.
+exec 9<"$dir/cwd"
+flock -n 9 || die "session $id is busy; use --fork $id for a parallel follow-up"
+touch "$dir"
+cd "$(<"$dir/cwd")"
+
+echo "pi-run: session $id" >&2
+# switchboard's hooks would register every delegated run as a peer session and inject the
+# roster into its context.
+export PI_HOOK_EXCLUDE_MODULES=${PI_HOOK_EXCLUDE_MODULES:+$PI_HOOK_EXCLUDE_MODULES,}switchboard
+# pi joins stdin to any @file text with no separator. The lock fds stay with this shell, so a
+# process pi leaves running cannot keep the session busy.
+printf '%s\n' "$brief" | timeout -k 10 "$timeout" pi -p --session-dir "$dir" --model "$model" "${pi_args[@]}" -- "${files[@]}" 8<&- 9<&-

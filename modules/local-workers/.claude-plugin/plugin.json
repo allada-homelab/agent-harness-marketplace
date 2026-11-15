@@ -1,0 +1,33 @@
+{
+  "name": "local-workers",
+  "version": "0.1.0",
+  "description": "Delegate explicitly requested work to self-hosted models: the pi agent through the pi-run script (resumable, forkable sessions) and the d3-ultra decision model for batched yes/no, choice and score questions",
+  "author": {
+    "name": "David Allada",
+    "email": "davidanilallada@gmail.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "local-llm",
+    "pi",
+    "decision-model",
+    "delegation",
+    "homelab"
+  ],
+  "userConfig": {
+    "decision_url": {
+      "type": "string",
+      "title": "Decision model URL",
+      "description": "Base URL of the decision model server (POST <url>/v1/systemone, GET <url>/health)",
+      "default": "http://10.69.1.169:8690/upstream/decision-default"
+    },
+    "decide_concurrency": {
+      "type": "number",
+      "title": "Concurrent decision requests",
+      "description": "Max in-flight decision requests per batch",
+      "default": 8,
+      "min": 1,
+      "max": 64
+    }
+  }
+}

@@ -430,6 +430,26 @@ modules:
     tags: []
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
+- name: local-workers
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  description: 'Delegate explicitly requested work to self-hosted models: the pi agent through the pi-run
+    script (resumable, forkable sessions) and the d3-ultra decision model for batched yes/no, choice and
+    score questions'
+  skills:
+  - name: delegate
+    path: modules/local-workers/skills/delegate/SKILL.md
+    harness:
+    - claude
+    tags: []
+    command: false
+    summary: 'Hand work to David''s self-hosted pi agent or local decision model — the pi-run script (the
+      pi coding agent on the local LLM, with resumable and forkable sessions) and the decide MCP tool
+      (the d3-ultra decision model: batched yes/no, choice and score questions).'
 - name: okf-wiki
   version: 0.1.19
   kinds:
