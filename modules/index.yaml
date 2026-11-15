@@ -331,7 +331,7 @@ modules:
     summary: Rebuilds one best-practices rule set (uv, containers or python) from its upstream docs at
       pinned versions.
 - name: browser
-  version: 0.1.4
+  version: 0.1.5
   kinds:
   - skills
   - dsh-plugin

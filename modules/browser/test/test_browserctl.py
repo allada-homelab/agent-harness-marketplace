@@ -176,3 +176,21 @@ def test_attach_refuses_passthrough_flag_that_repoints_the_launcher(sandbox, run
     r = run(sandbox, "attach", "--identity", "work", "--session", "s1", "--cdp", "9222", "--", "--profile", "x", "get", "url")
     assert r.returncode == 2
     assert "--profile" in r.stderr
+
+
+def test_doctor_reports_a_chrome_that_cannot_start_sandboxed(sandbox, tmp_path, run):
+    broken = tmp_path / "chrome-nnp"
+    broken.write_text("#!/bin/sh\necho 'The setuid sandbox is not running as root. Common causes:' >&2\nexit 134\n")
+    broken.chmod(0o755)
+    r = run(sandbox, "doctor", "--json", env={"BROWSERCTL_CHROME": str(broken)})
+    assert r.returncode == 2
+    d = json.loads(r.stdout)
+    assert any("setuid sandbox is not running as root" in p for p in d["problems"])
+
+
+def test_run_refuses_passthrough_args_that_could_disable_the_sandbox(sandbox, run):
+    home, _, _ = sandbox
+    r = run(sandbox, "run", "--identity", "work", "--session", "s1", "--", "--args", "--no-sandbox", "open", "https://example.com")
+    assert r.returncode == 2
+    assert "--args" in r.stderr
+    assert not (home / "ab-argv.json").exists()
