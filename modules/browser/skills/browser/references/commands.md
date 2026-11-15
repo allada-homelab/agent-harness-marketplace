@@ -1,4 +1,4 @@
-# agent-browser vocabulary used by this skill (0.37.1)
+# agent-browser vocabulary used by this skill (0.43.0)
 
 Everything below goes after `browserctl run --identity <id> --session <s> --`.
 
@@ -26,7 +26,11 @@ The tree is Playwright-style, one node per line, refs in brackets:
 - button "Continue" [ref=e3]
 ```
 
-Act with `@` + the ref: `click @e3`. Refs are reassigned on every snapshot.
+Act with `@` + the ref: `click @e3`. A ref survives in-page updates while its
+element does; a navigation, or a replaced element, invalidates it. A control
+with an empty or shared name gets a hint after its ref (icon, `data-testid`,
+nearby row text) — use it to pick the right one. Prefer snapshots to
+screenshots; screenshot only when asked or for what the tree cannot show.
 
 ## Failures
 

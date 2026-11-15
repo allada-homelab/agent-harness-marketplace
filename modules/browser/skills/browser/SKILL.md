@@ -15,7 +15,7 @@ is how the browser gets running, and which one fits depends on the task:
 | Option | Command | Browser | Use when |
 |---|---|---|---|
 | headless | `browserctl run --mode auto` (default) | skill's own Chromium | unattended automation; no human in the loop |
-| hybrid | `browserctl run --mode hybrid` | skill's own Chromium | a human must log in, do MFA/CAPTCHA, or watch |
+| hybrid | `browserctl run --mode hybrid` | skill's own Chromium, in a window | a human must log in, do MFA/CAPTCHA, watch, or click alongside you — needs a machine with a GUI |
 | attach | `browserctl attach --cdp <port>` | a browser *the user* opened | the user wants their own browser driven |
 
 The tool is `browserctl` — on a fleet host it is on
@@ -39,7 +39,9 @@ the browser is externally owned and must NOT be repointed.
 4. **Drive:** `browserctl run --identity work --session t1 -- <agent-browser
    command>`. The vocabulary is in `./references/commands.md`. Always
    `snapshot -i` after navigating; act on `@eN` refs from the latest snapshot
-   only — refs go stale on any page change.
+   only — refs survive in-page updates but not a navigation. In a `hybrid`
+   window the operator may click too: `snapshot -i` before every action there,
+   because their last click may have changed the page under your refs.
 5. **Hit a login, MFA or CAPTCHA?** Follow `./references/handoff.md`: `close`
    the session, rerun the same `open` in `--mode hybrid`, ask the operator to
    finish in the window, wait for their reply, then continue in the same
