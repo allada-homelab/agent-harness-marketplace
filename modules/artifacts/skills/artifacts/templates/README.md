@@ -273,8 +273,8 @@ checklist, an onboarding list, a packing list with notes.
 check mark state (`aria-pressed`), optional steps marked; a progress header (done / total, "N
 required left", a block-level progress bar in `--accent`, per-group counts; groups are not
 categories, so no `--c` tokens); a per-step notes field (a `<textarea>` revealed by a
-*Note* button, its text kept with the step); *Reset* with two-click confirm; *Copy as text*
-producing a Markdown task list with notes (clipboard inside the click handler, selected fallback);
+*Note* button, its text kept with the step); *Reset* with two-click confirm; a primary *Copy for chat* button
+producing a Markdown task list with notes, the only way the ticks reach the agent (clipboard inside the click handler, selected fallback);
 a filter segmented control All / Open / Done with an empty state when it hides everything; state
 (checks, notes and the filter choice) kept through the try/catch store keyed by the page title,
 with the page fully working without it. The DOM is built once and updated in place, so focus and
