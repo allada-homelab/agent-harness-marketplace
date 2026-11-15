@@ -8,7 +8,8 @@ through the maintainer's dotfiles hook runners.
 
 | Part | What it is |
 |---|---|
-| `bin/switchboard` | The CLI (Python 3 standard library only), on the Bash tool's PATH while the plugin is enabled. |
+| `bin/switchboard` | The CLI's entry point, on the Bash tool's PATH while the plugin is enabled. A shim that imports the module below, so Python caches its bytecode instead of recompiling it on every hook call. |
+| `skills/switchboard/switchboard.py` | The CLI and the hook handlers (Python 3 standard library only). |
 | `hooks/hooks.json` | SessionStart registers the session, ends one `/clear` replaced, and injects a short digest; PreToolUse denies a resource-changing Bash command without the lease; UserPromptSubmit and PostToolUse record the session's history (worktree, branch, PRs, tickets, prompts, shared-DB writes) and deliver new posts, and PostToolUse renews the holder's lease; Stop delivers direct posts that arrived during the turn before the session goes idle. |
 | `skills/switchboard/` | When and how agents use it; commands and the adapter contract in `references/commands.md`. |
 | `test/` | End-to-end tests that drive the CLI and hooks against a temporary state dir and a stand-in adapter. |

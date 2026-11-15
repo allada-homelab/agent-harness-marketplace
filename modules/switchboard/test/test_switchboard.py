@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 BIN = Path(__file__).resolve().parent.parent / "bin" / "switchboard"
+MODULE = BIN.parent.parent / "skills" / "switchboard" / "switchboard.py"
 
 # A stand-in adapter: its resource lives in any directory holding a .demo-root file.
 DEMO_ADAPTER = """
@@ -138,6 +139,16 @@ class Switchboard(unittest.TestCase):
         self.assertIn("work-sid-", who)
         self.assertIn("(you)", who)
         self.assertEqual((self.home / "state").stat().st_mode & 0o777, 0o700, "the state dir holds prompts")
+
+    def test_digest_names_the_entry_point_when_the_cli_is_off_path(self):
+        self.hook("A", "session-start")
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}):
+            digest = self.hook("B", "session-start")
+        self.assertIn(f"run it as `python3 {BIN}`", digest)
+
+    def test_hook_rejects_an_unknown_event(self):
+        out = self.cli("A", "hook", "bogus", ok=False)
+        self.assertIn("usage: switchboard hook", out.stderr)
 
     def test_feed_delivery_once_and_directed(self):
         for s in "ABC":
@@ -442,7 +453,7 @@ class InProcess(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(self.tmp.cleanup)
-        loader = SourceFileLoader("switchboard_bin", str(BIN))
+        loader = SourceFileLoader("switchboard_bin", str(MODULE))
         self.sb = importlib.util.module_from_spec(importlib.util.spec_from_loader("switchboard_bin", loader))
         loader.exec_module(self.sb)
         self.db = self.sb.connect()
