@@ -116,7 +116,7 @@
       "name": "switchboard",
       "description": "Coordination for concurrent agent sessions (Claude Code, pi, dsh) on one machine: who is doing what, threaded messages between sessions, a todo board, a ledger of shared-state changes, and enforced leases on shared resources.",
       "category": "development",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "source": "./modules/switchboard"
     }
   ]
