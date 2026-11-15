@@ -43,6 +43,13 @@
       "source": "./modules/pr-flow"
     },
     {
+      "name": "local-workers",
+      "description": "Delegate explicitly requested work to self-hosted models: the pi agent through the pi-run script (resumable, forkable sessions) and the d3-ultra decision model for batched yes/no, choice and score questions",
+      "category": "development",
+      "version": "0.1.0",
+      "source": "./modules/local-workers"
+    },
+    {
       "name": "browser",
       "description": "Drive a browser from any harness: headless auto mode, headed hybrid mode where a human logs in and the agent takes over, or attach to a browser the user opened via its debug port — through agent-browser on a persistent per-identity profile.",
       "category": "development",

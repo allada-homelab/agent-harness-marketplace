@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "local": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--quiet",
+        "--script",
+        "${CLAUDE_PLUGIN_ROOT}/server/server.py"
+      ],
+      "env": {
+        "LW_DECISION_URL": "${user_config.decision_url}",
+        "LW_DECIDE_CONCURRENCY": "${user_config.decide_concurrency}"
+      }
+    }
+  }
+}

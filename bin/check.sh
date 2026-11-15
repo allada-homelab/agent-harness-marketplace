@@ -263,12 +263,13 @@ step "nothing in a module points at a path only this machine has"
 # /home/<user>/ is a private path; /home/vscode/ is the dev-container fixture path.
 # ~/.local/, $HOME/.local/ and /root/.local/ are XDG user paths, not .local mDNS hosts;
 # host.docker.internal is Docker's own name for the host, not a private one.
+# local-workers' decision-model URL is published on purpose (decided 2026-11-15).
 # Also catch homelab hostnames, RFC1918 IPs, and the author's homelab machine name
 # (but not the @allada-homelab/ package scope or the repo name allada-homelab/agent-harness-marketplace).
 if grep -rnIE \
     'davidallada-developer-setup|~/\.agents/lib|/home/[a-z]+/|[a-z0-9-]+\.(lan|home\.arpa|internal)\b|(://|@)[a-z0-9.-]*\.local\b|\.local[:/]|\b10\.[0-9]+\.[0-9]+\.[0-9]+\b|\b192\.168\.[0-9]+\.[0-9]+\b|\b172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+\b|allada-homelab\.[a-z]' \
     modules docs README.md --exclude-dir=node_modules --exclude-dir=__pycache__ --exclude=index.yaml \
-    | grep -v '/home/vscode/' | grep -vE '(~|\$HOME|/root)/\.local/' | grep -v 'host\.docker\.internal'; then
+    | grep -v '/home/vscode/' | grep -vE '(~|\$HOME|/root)/\.local/' | grep -v 'host\.docker\.internal' | grep -v '^modules/local-workers/[^:]*:[0-9]*:.*http://10\.69\.1\.169:8690/upstream/decision-default'; then
     echo "  FAIL: private or absolute path in publishable content"; fail=1
 else
     echo "  ok"
@@ -282,7 +283,7 @@ suites=()
 compgen -G "modules/*/test/test_*.py" >/dev/null && suites+=(modules/*/test)
 compgen -G "tests/test_*.py" >/dev/null && suites+=(tests)
 if [ "${#suites[@]}" -gt 0 ]; then
-    uv run --with pytest --with pyyaml --with zstandard --python 3.12 pytest -q "${suites[@]}" || fail=1
+    uv run --with pytest --with pyyaml --with zstandard --with 'mcp>=2.1,<3' --python 3.12 pytest -q "${suites[@]}" || fail=1
 else
     echo "  (none)"
 fi
