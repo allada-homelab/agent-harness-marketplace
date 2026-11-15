@@ -79,6 +79,10 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    because a wait timed out (no check ever reported) exits 0 but `--merge`
    refuses and says so: merge by hand once you have evidence CI ran. A refused
    merge prints gh's message and the likely cause.
+   Run `watch` from a directory outside the worktree (the main checkout or
+   `$HOME`), not from inside it: a merge tears the worktree down, and a shell
+   whose cwd was that directory ends the call with a `getcwd` error — the
+   merge succeeded but the tool call is recorded as failed.
 6. **Merge only when told.** `pr-flow watch --merge` is allowed only when the
    user said, ahead of time and for this task, that the PR may be merged when
    green. Silence means no. A green PR without that permission ends the turn
@@ -98,6 +102,9 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    per-worktree volumes; a failure there is a warning, never a blocked teardown.
    `pr-flow gc` tears down every worktree whose PR has
    merged; run it when you notice stale worktrees.
+   Same cwd rule as `watch`: run `teardown` from outside the worktree, or the
+   call's own shell loses its working directory the moment the worktree is
+   removed.
 
 ## Editing on main anyway
 
