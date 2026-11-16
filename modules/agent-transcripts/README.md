@@ -28,7 +28,9 @@ work dir, with `--next` to pull the messages after the head window. `cluster.py`
 sessions by shared failure signature, and `verdict.schema.json` validates a fan-out of excerpt
 readers. The ingest `annotate` pass marks a message `injected` when it is a `system` message or
 a non-`tool_result` message repeated across several sessions — the standing-instruction
-signature — so those scripts can filter it out.
+signature — so those scripts can filter it out. Because it counts repetition, it also marks
+common short human replies ("yes", "go", "commit and push"); never use it to decide whether
+the human said something.
 
 ## The sweep
 
@@ -71,6 +73,19 @@ run logged a read of every page and every cited quote occurs in its message. `th
 groups recorded analyses by outcome, problem category and label, and recommendation
 target. Its commands live in `transcript-review`'s script, which they share code with. A
 session longer than four pages is split across child agents.
+
+The same skill reads weeks of sessions through a fan-out. `corpus.py sizes` splits each
+session's characters into human turns, assistant prose, system rows and tool traffic.
+`corpus.py plan` picks three strata (the sessions where the human typed most, a seeded
+random control, and whole scripted runs found by their shared template opening), renders
+each, and packs them into reader-sized batches in the cache's work dir. `render.py`
+re-creates one session as a single file: every human turn, assistant prose, one line per
+tool call, results hidden behind short hints, system rows by kind (a skill body as one
+line, a compaction as a marked boundary with what the agent was doing, a background
+subagent's report shown and linked to its session), and, for sessions too large to read
+whole, an outline that folds scripted loops. `render.py expand` shows the full text behind
+any line, including a tool call's arguments. The skill ships the reader and synthesis
+briefs the fan-out uses, and a table of which setup answers which question.
 
 ## The learning pass
 

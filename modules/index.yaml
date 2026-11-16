@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: agent-transcripts
-  version: 0.13.1
+  version: 0.14.0
   kinds:
   - skills
   - dsh-plugin
@@ -24,9 +24,9 @@ modules:
     tags:
     - observability
     command: false
-    summary: Read one agent session transcript end to end, with tool results hidden until asked for, and
-      record a whole-session analysis of its goal, turning points, what went well and badly, why, and
-      what to change.
+    summary: Read agent session transcripts end to end, with tool results hidden until asked for — one
+      session in depth, or many through parallel readers over compact re-creations — and record what went
+      well and badly, why, and what to change.
   - name: transcript-decide
     path: modules/agent-transcripts/skills/transcript-decide/SKILL.md
     harness:
