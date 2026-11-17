@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-SIGNALS_VERSION = 1
+SIGNALS_VERSION = 2
 
 SHORT_USER = 300  # a correction is a short turn; a long one is a new instruction
 # Longer user turns are pasted logs, never read for signals: keeps whole transcripts out of memory.
@@ -27,8 +27,6 @@ BOILERPLATE = (
     ("task-notification", "claude",
      re.compile(r"<task-notification>.*?</task-notification>", re.S)),
     ("task-notification", "claude", re.compile(r"<task-notification>.*", re.S)),
-    ("slash-command", "claude",
-     re.compile(r"<command-(name|message|args)>.*?</command-\1>", re.S)),
     ("local-command-output", "claude",
      re.compile(r"<local-command-(stdout|stderr|caveat)>.*?</local-command-\1>", re.S)),
     ("skill-body", "claude", re.compile(r"^Base directory for this skill:.*", re.S | re.M)),
@@ -48,6 +46,22 @@ BOILERPLATE = (
     ("background-job", "dsh", re.compile(r"^background job \S+ .*", re.S | re.M)),
     ("goal-blocked", "dsh", re.compile(r"<goal_blocked>.*?</goal_blocked>", re.S)),
 )
+
+# What the user typed, wrapped in Claude's tags: a slash command and a `!` shell command. The
+# tags go and the command stays (`/review PR 12`), so a turn that is only a command is not empty.
+COMMAND_NAME = re.compile(r"<command-name>(.*?)</command-name>", re.S)
+COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
+COMMAND_EXTRA = re.compile(r"<command-(message|args)>.*?</command-\1>", re.S)
+BASH_INPUT = re.compile(r"<bash-input>(.*?)</bash-input>", re.S)
+
+
+def typed_commands(text: str) -> str:
+    args = COMMAND_ARGS.search(text)
+    text = COMMAND_EXTRA.sub("", text)
+    text = COMMAND_NAME.sub(
+        lambda m: f"{m.group(1)} {args.group(1).strip() if args else ''}".strip(), text)
+    return BASH_INPUT.sub(r"\1", text)
+
 
 # A short user turn that matches this is the user pulling the reins.
 CORRECTION_RE = re.compile(
@@ -71,6 +85,8 @@ def human_text(text: str, harness: str) -> str:
 def strip_boilerplate(text: str, harness: str) -> tuple[str, int]:
     """Replace injected blocks with `[stripped: label]`. Returns (text, blocks stripped)."""
     stripped = 0
+    if harness == "claude":
+        text = typed_commands(text or "")
     for label, scope, pattern in BOILERPLATE:
         if scope not in ("*", harness):
             continue

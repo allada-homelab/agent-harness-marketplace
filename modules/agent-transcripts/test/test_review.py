@@ -454,6 +454,16 @@ def test_queue_refuses_an_index_built_before_session_signals(index, tmp_path):
 # ----------------------------------------------------------------------- view
 
 
+def test_human_text_keeps_a_slash_command_as_name_and_args():
+    turn = ("<command-message>review is running…</command-message>\n"
+            "<command-name>/review</command-name>\n<command-args>PR 12</command-args>")
+    assert sg.human_text(turn, "claude") == "/review PR 12"
+
+
+def test_human_text_keeps_a_shell_command_the_user_ran():
+    assert sg.human_text("<bash-input>aws sso login</bash-input>", "claude") == "aws sso login"
+
+
 def test_view_strips_boilerplate_and_keeps_the_human_text(index, store, tmp_path, capsys):
     s = index.session("v1")
     index.user(s, "<system-reminder>\nnoise the harness injected\n</system-reminder>\nwhy is CI red?")

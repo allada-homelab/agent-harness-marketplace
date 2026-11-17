@@ -1141,17 +1141,6 @@ def capped(text: str, limit: int, total: int | None = None) -> str:
     return f"{flat[:limit]} …[of {total if total is not None else len(text):,} chars]"
 
 
-def user_text(text: str, harness: str) -> str:
-    """A user turn without harness blocks; a slash command (which the harness wraps in tags
-    that boilerplate stripping removes) shows as `/name args`."""
-    cmd = re.search(r"<command-name>(.*?)</command-name>", text or "")
-    if cmd:
-        args = re.search(r"<command-args>(.*?)</command-args>", text, re.S)
-        return f"{cmd.group(1)} {(args.group(1) if args else '').strip()}".strip()
-    # A `!` command the user ran keeps its text; only the wrapper tags go.
-    return re.sub(r"</?bash-input>", "", strip_boilerplate(text, harness)[0]).strip()
-
-
 def head_tail(text: str, limit: int) -> str:
     """One line keeping the first and last halves of `limit`: a decision menu sits at the end."""
     flat = normalize(text)
@@ -1257,7 +1246,7 @@ def build_read_units(conn, session, *, user_chars, assistant_chars, args_chars) 
     for message_id, ord_, role, text, length, tail in messages:
         text = text or ""
         if role == "user":
-            clean = user_text(text, harness) or "[empty]"
+            clean = strip_boilerplate(text, harness)[0].strip() or "[empty]"
             unit = Unit(user_lines(ord_, clean, user_chars), ord_=ord_)
             unit.user, unit.kind, unit.prose = True, "user", clean
             units.append(unit)
