@@ -67,6 +67,12 @@ problems in the agent's *approach*; you fix nothing.
   would have avoided; questions the agent could have answered itself; the wrong tool;
   acting on an approval the session does not show (check the `USER` lines just before
   any merge, push, deploy or external write).
+- Judge each session on what it shows. Evidence from another session (a later run that
+  measured it, a fix landed elsewhere) does not support an issue here; if you use it, set
+  `cross_session_evidence` and say where it came from.
+- When the agent itself admits the problem ("my mistake", "I was wrong earlier"), set
+  `self_reported`. It separates an agent that notices late (fix: move the check earlier)
+  from one that never notices (fix: a check outside the agent).
 - Write each `title` as a **reusable pattern**, not a one-off ("Retries a denied command
   with small variations instead of stopping", not "Ran sed on foo.py three times"). Titles
   are clustered across sessions later.
@@ -103,6 +109,8 @@ Write one JSON file to `<output path>`:
           "evidence": [{"ord": 123, "quote": "<at most 200 chars, verbatim>"}],
           "severity": "high | medium | low",
           "user_had_to_intervene": true,
+          "self_reported": false,
+          "cross_session_evidence": false,
           "cost": "<e.g. '~20 wasted tool calls', 'user correction', 'wrong result shipped'>",
           "root_cause": "<why: missing knowledge, ignored rule, bad default, tool gap…>",
           "existing_rule": "<the standing-instruction text this breaks, quoted, or null>",

@@ -1776,6 +1776,53 @@ def test_corpus_plan_writes_sessions_and_manifest_under_the_work_dir(index):
     assert all(Path(s["path"]).exists() for b in manifest["batches"] for s in b)
 
 
+PR = "https://github.com/acme/widgets/pull/"
+
+
+def plan_manifest(index, *args):
+    index.close()
+    assert cp.main(["--dest", str(index.root), "plan", "--run", "t", *args]) == 0
+    return json.loads((index.root / "work/t/manifest.json").read_text())
+
+
+def picked(manifest):
+    return sorted(s["session_id"] for b in manifest["batches"] for s in b)
+
+
+def test_corpus_plan_picks_one_interactive_session_per_pr_arc(index):
+    for name, typing, pr in [("heavy", 400, 7), ("sibling", 300, 7), ("other", 200, 8)]:
+        sid = index.session(name)
+        index.user(sid, f"{name}: fix {PR}{pr} " + "word " * typing)
+        index.assistant(sid, "a" * 4000)
+
+    manifest = plan_manifest(index, "--top", "3", "--random", "3", "--scripted", "0")
+
+    assert picked(manifest) == ["heavy", "other"]
+
+
+def test_corpus_plan_counts_scripted_runs_and_splits_them_by_pr(index):
+    for pr in (1, 2):
+        for i in range(3):
+            sid = index.session(f"pr{pr}-round{i}", project_key="review")
+            index.user(sid, TEMPLATE + f" {PR}{pr} round {i}")
+            index.assistant(sid, "a" * 4000)
+
+    manifest = plan_manifest(index, "--top", "0", "--random", "0", "--scripted", "1")
+
+    assert len({s["group"] for b in manifest["batches"] for s in b}) == 1
+    assert manifest["strata"] == {"scripted": 3}
+
+
+def test_corpus_plan_skips_the_running_session(index, monkeypatch):
+    for name in ("running", "done"):
+        index.user(index.session(name), "fix the bug " * 300)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "running")
+
+    manifest = plan_manifest(index, "--top", "5", "--random", "0", "--scripted", "0")
+
+    assert picked(manifest) == ["done"]
+
+
 def test_corpus_refuses_to_write_inside_a_git_worktree(tmp_path):
     repo = tmp_path / "repo"
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
