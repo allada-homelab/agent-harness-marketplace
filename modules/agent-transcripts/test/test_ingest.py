@@ -2221,3 +2221,34 @@ def test_coverage_exits_0_on_known_shapes_and_1_on_an_unknown_one(cache, capsys)
     ])
     assert tr.main(["coverage", "--dest", str(cache)]) == 1
     assert "claude\trec:surprise\t1\tUNKNOWN" in capsys.readouterr().out
+
+
+def _annotated_user_rows(tmp_path, texts_per_session):
+    """Index one user row per text in each of three sessions, annotate, return (text, injected)."""
+    conn = tr.open_db(tmp_path)
+    conn.execute("INSERT INTO files (id, harness, relpath, size, mtime, parser_version, status,"
+                 " parsed_at) VALUES (1, 'claude', 'a.jsonl', 1, 1, ?, 'ok', 'now')",
+                 (tr.PARSER_VERSION,))
+    for n in range(3):
+        sid = conn.execute("INSERT INTO sessions (harness, native_id, file_id, kind)"
+                           " VALUES ('claude', ?, 1, 'main')", (f"s{n}",)).lastrowid
+        for ord_, text in enumerate(texts_per_session):
+            conn.execute("INSERT INTO messages (session_id, ord, on_main_path, role, text,"
+                         " norm_key) VALUES (?, ?, 1, 'user', ?, ?)",
+                         (sid, ord_, text, tr._norm_key(text)))
+    conn.commit()
+    conn.close()
+    tr.annotate(tmp_path)
+    conn = sqlite3.connect(tmp_path / "transcripts.db")
+    rows = dict(conn.execute("SELECT DISTINCT text, injected FROM messages"))
+    conn.close()
+    return rows
+
+
+def test_annotate_never_flags_a_short_reply_the_human_typed_in_many_sessions(tmp_path):
+    assert _annotated_user_rows(tmp_path, ["yes"]) == {"yes": 0}
+
+
+def test_annotate_flags_long_text_repeated_across_sessions(tmp_path):
+    standing = "Always check for a dev container first. " * 10
+    assert _annotated_user_rows(tmp_path, [standing]) == {standing: 1}

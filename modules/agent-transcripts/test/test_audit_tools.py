@@ -20,8 +20,9 @@ import cluster as cl  # noqa: E402
 
 STANDING = (
     "Always check for the devcontainer first. If a .devcontainer exists, "
-    "work from the devcontainer."
-)
+    "work from the devcontainer. Run builds, tests and lint inside it, never on the host, "
+    "and say so when the container will not start instead of silently falling back."
+)  # longer than INJECTED_USER_MIN_CHARS: annotate never flags a short repeated user reply
 
 
 def _seed(root: Path) -> None:

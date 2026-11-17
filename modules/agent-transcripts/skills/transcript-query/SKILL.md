@@ -108,6 +108,61 @@ SELECT harness, sum(input_tokens) AS uncached, sum(cache_read_tokens) AS cache_r
 FROM messages GROUP BY 1
 ```
 
+How much a session says, without tool traffic. Tool results are their own `tool_result`
+rows and call arguments live in `tool_calls`; an assistant message that makes calls has
+empty text. So user plus assistant text is the conversation itself (`system` rows are
+counted apart because they are mostly harness text):
+
+```sql
+SELECT s.native_id,
+       sum(CASE WHEN m.role IN ('user', 'assistant') THEN length(m.text) END) AS chat,
+       sum(CASE WHEN m.role = 'system' THEN length(m.text) END) AS system_rows,
+       sum(CASE WHEN m.role = 'tool_result' THEN length(m.text) END) AS results
+FROM sessions s JOIN messages m ON m.session_id = s.id
+WHERE s.kind = 'main' AND s.started_at >= ?
+GROUP BY 1 ORDER BY chat DESC
+```
+
+`../transcript-analyze/corpus.py sizes` prints the same split as percentiles.
+
+## Schema facts that change answers
+
+Each was confirmed against a real index; get one wrong and a count or a judgment is wrong.
+
+- **`on_main_path = 0` is not "off to the side".** Every message before a compaction is off
+  the main path, and so is every message the user typed while the agent was working. In
+  long sessions most messages are off it (seen 2026-11-16). For the whole conversation,
+  order by `ord` and do not filter on `on_main_path`.
+- **`injected` is a frequency guess, not a source label.** The ingest `annotate` pass marks
+  text seen in several sessions. Before 0.14.0 that also caught short human replies ("yes",
+  "go", "commit and push": 770 rows in one index, seen 2026-11-16); it now skips user rows
+  under 200 characters, from the next ingest that parses anything (or
+  `transcripts.py annotate`). Use it to drop standing instructions from a search, never to
+  decide whether the human said something. To strip harness text from a user row, remove
+  `<system-reminder>` and similar blocks by structure, as `review.py` does.
+- **Mid-turn messages are ordinary `user` rows** (ingested from `queued_command`
+  attachments, `on_main_path = 0`). A copy may also appear inside a `tool_result`; the
+  `user` row is the one to count.
+- **`system` rows are mostly harness text,** distinguishable by their opening:
+  `Base directory for this skill:` (a skill body, reloaded on every invocation; one
+  scheduled session reloaded skills 677 times, 26 million characters),
+  `This session is being continued from a previous` (a compaction summary),
+  `<agent-message` or `Another Claude session sent a message` (a subagent's or peer's
+  report), `<task-notification>`.
+- **A final report may live in `tool_calls.arguments`, not in message text.** A subagent or
+  headless run that answers through `StructuredOutput` or `SubagentHandback` leaves its
+  message text empty. Read it with
+  `SELECT name, arguments FROM tool_calls WHERE message_id = ?`, or
+  `../transcript-review/review.py expand <session> <ord>`.
+- **A background subagent's result is not its report.** The `Agent` call's result says the
+  agent was launched; the report arrives later as a `system` row. The subagent's own session
+  has `parent_native_id` set to the parent and its first user message equal to the call's
+  `prompt` argument, which is how to join them.
+- **Scripted sessions can be half of a window.** Headless review rounds and scheduled jobs
+  open with a long template, which counts as user text, so they top any "most user text"
+  ranking (121 of 245 recent main sessions in one index, seen 2026-11-16). Tell them apart
+  by a shared long opening, as `corpus.py plan` does.
+
 ## Full-text search
 
 The `messages_fts` index searches message text. Search returns **where** something was
@@ -156,7 +211,9 @@ uv run --script ./search.py --term '"devcontainer-cli"' --min-hits 3
 ```
 
 - `--exclude-injected` drops messages the ingest `annotate` pass flagged as standing
-  instructions, so hit counts reflect what a session actually *did*.
+  instructions, so hit counts reflect what a session actually *did*. On an index annotated
+  before 0.14.0 it also drops short human replies (see "Schema facts that change
+  answers").
 - `--errors` sorts by the number of matches that also carry a failure signal (`error`,
   `failed`, `permission denied`, `not found`, `exit code`, …), so problem sessions float up.
 - `--harness` / `--roles` narrow to a harness and/or role; `--min-hits` filters the tail.

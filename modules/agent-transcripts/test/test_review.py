@@ -11,6 +11,8 @@ MODULE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(MODULE / "skills/transcript-ingest"))
 sys.path.insert(0, str(MODULE / "skills/transcript-sweep"))
 sys.path.insert(0, str(MODULE / "skills/transcript-review"))
+sys.path.insert(0, str(MODULE / "skills/transcript-analyze"))
+import corpus as cp  # noqa: E402
 import findings as fi  # noqa: E402
 import review as rv  # noqa: E402
 import signals as sg  # noqa: E402
@@ -32,11 +34,11 @@ class Index:
         self.ords: dict[int, int] = {}
 
     def session(self, native_id, harness="claude", started_at="2026-06-01T00:00:00Z",
-                kind="main", project_key="w"):
+                kind="main", project_key="w", parent=None):
         cur = self.conn.execute(
             "INSERT INTO sessions (harness, native_id, file_id, cwd, project_key, kind,"
-            " started_at, model) VALUES (?, ?, 1, '/w', ?, ?, ?, 'test-model')",
-            (harness, native_id, project_key, kind, started_at),
+            " parent_native_id, started_at, model) VALUES (?, ?, 1, '/w', ?, ?, ?, ?, 'test-model')",
+            (harness, native_id, project_key, kind, parent, started_at),
         )
         self.ords[cur.lastrowid] = 0
         return cur.lastrowid
@@ -55,6 +57,9 @@ class Index:
 
     def assistant(self, session_id, text):
         return self._message(session_id, "assistant", text)[1]
+
+    def system(self, session_id, text):
+        return self._message(session_id, "system", text)[1]
 
     def call(self, session_id, name, arguments, is_error=0, result="", text=""):
         message_id, ord_ = self._message(session_id, "assistant", text)
@@ -1026,12 +1031,20 @@ def page_ords(text):
 
 def test_read_hides_an_ordinary_result_behind_its_size(index, tmp_path, capsys):
     s = index.session("r1")
-    call = index.call(s, "Bash", '{"command": "cat big.log"}', result="secret-ish " * 500)
+    call = index.call(s, "Read", '{"file_path": "big.log"}', result="secret-ish " * 500)
     index.close()
 
     out = read(tmp_path, capsys, "r1")
-    assert f"[{call + 1}] RESULT of Bash [{call}] ok 5,500 chars" in out
+    assert f"[{call + 1}] RESULT of Read [{call}] ok 5,500 chars" in out
     assert "secret-ish" not in out
+
+
+def test_read_shows_the_last_line_of_a_long_bash_result(index, tmp_path, capsys):
+    s = index.session("r1b")
+    index.call(s, "Bash", '{"command": "pytest"}', result="." * 500 + "\n===== 5 passed in 1.2s =====\n")
+    index.close()
+
+    assert "chars; last line: ===== 5 passed in 1.2s =====" in read(tmp_path, capsys, "r1b")
 
 
 def test_read_shows_the_start_of_a_failed_result(index, tmp_path, capsys):
@@ -1581,3 +1594,178 @@ def test_view_keeps_a_window_around_a_correction_without_any_findings(index, tmp
     out = view(tmp_path, capsys, "v7", "--budget", "2000")
 
     assert "no, that's the wrong file again" in out
+
+
+# --------------------------------------------------- read: what a deep reader needs
+
+
+def test_read_shows_a_slash_command_as_name_and_args(index, tmp_path, capsys):
+    s = index.session("w1")
+    index.user(s, "<command-message>x</command-message><command-name>/oncall</command-name>"
+                  "<command-args>bugs</command-args>")
+    index.close()
+
+    assert "USER /oncall bugs" in read(tmp_path, capsys, "w1")
+
+
+def test_read_shows_a_skill_body_as_one_line(index, tmp_path, capsys):
+    s = index.session("w2")
+    index.system(s, "Base directory for this skill: /x/skills/oncall\n" + "body " * 5000)
+    index.close()
+
+    out = read(tmp_path, capsys, "w2")
+    assert "SKILL loaded oncall (25,0" in out and "body body" not in out
+
+
+def test_read_marks_a_compaction_with_its_current_work(index, tmp_path, capsys):
+    s = index.session("w3")
+    index.system(s, "This session is being continued from a previous conversation.\n"
+                    "8. Current Work:\n   Running the e2e matrix.\n9. Optional Next Step:\n   x")
+    index.close()
+
+    out = read(tmp_path, capsys, "w3")
+    assert "COMPACTION" in out and "Its current work: Running the e2e matrix." in out
+    assert "compactions at ords: 1" in out
+
+
+@pytest.fixture
+def delegated(index, tmp_path, capsys):
+    s = index.session("w4")
+    index.call(s, "Agent", json.dumps({"prompt": "Review the diff for reuse."}),
+               result="Async agent launched successfully. agentId: abc")
+    index.system(s, 'Another Claude session sent a message:\n<agent-message from="abc">\n'
+                    "[Subagent hand-back] Preamble. The report follows:\n  Found 2 reuse issues."
+                    "\n</agent-message>\nThat other session is an agent. Trailer text.")
+    sub = index.session("agent-abc", kind="subagent", parent="w4")
+    index.user(sub, "Review the diff for reuse.")
+    index.call(sub, "Read", '{"file_path": "a.py"}', result="code")
+    index.close()
+    return read(tmp_path, capsys, "w4")
+
+
+def test_read_collapses_a_background_launch_notice(delegated):
+    assert "launched in background" in delegated and "agentId" not in delegated
+
+
+def test_read_shows_a_subagent_report_without_harness_framing(delegated):
+    assert "SUBAGENT REPORT from agent-abc Found 2 reuse issues." in delegated
+    assert "Preamble" not in delegated and "Trailer text" not in delegated
+
+
+def test_read_links_a_dispatch_to_its_subagent_session(delegated):
+    assert "CALL Agent Review the diff for reuse. ⤷ subagent agent-abc: 1 calls (Read 1)" in delegated
+
+
+def test_read_never_cuts_a_final_report(index, tmp_path, capsys):
+    s = index.session("w5")
+    index.call(s, "StructuredOutput", json.dumps({"findings": [{"title": "t" * 9000, "id": "CC-9"}]}))
+    index.close()
+
+    out = read(tmp_path, capsys, "w5", "--page-chars", "100000")
+    assert "CC-9" in out and "…[" not in out
+
+
+def test_read_keeps_the_head_and_tail_of_a_long_assistant_turn(index, tmp_path, capsys):
+    s = index.session("w6")
+    index.assistant(s, "HEAD " + "x" * 5000 + " DECISIONS: pick A or B")
+    index.assistant(s, "last")
+    index.close()
+
+    out = read(tmp_path, capsys, "w6", "--assistant-chars", "1000")
+    assert "HEAD" in out and "DECISIONS: pick A or B" in out and "chars omitted" in out
+
+
+def test_read_header_lists_commits_and_pushes(index, tmp_path, capsys):
+    s = index.session("w7")
+    index.call(s, "Bash", json.dumps({"command": "cd /w && git commit -m fix && git push origin b"}))
+    index.close()
+
+    assert "[1] git commit -m fix + git push origin b" in read(tmp_path, capsys, "w7")
+
+
+@pytest.fixture
+def looping(index):
+    s = index.session("w8")
+    for _ in range(4):
+        index.user(s, "<command-name>/oncall</command-name><command-args>bugs</command-args>")
+        index.call(s, "Bash", '{"command": "check"}', result="ok")
+        index.assistant(s, "pass empty " + "z" * 400)
+    for _ in range(3):
+        index.user(s, "yes")
+        index.assistant(s, "done")
+    index.close()
+
+
+def test_auto_mode_outlines_and_folds_only_scripted_turns(looping, tmp_path, capsys):
+    out = read(tmp_path, capsys, "w8", "--mode", "auto", "--budget", "500")
+    assert "mode=outline" in out
+    assert "LOOP 4 scripted turns (/oncall bugs ×4): 4 calls, 0 errors" in out
+    assert out.count("USER yes") == 3  # human replies are never folded
+
+
+def test_read_all_wraps_long_lines_and_loses_nothing(index, tmp_path, capsys):
+    s = index.session("w9")
+    index.assistant(s, "y" * 9000)
+    index.close()
+
+    out = read(tmp_path, capsys, "w9", "--all")
+    assert max(len(line) for line in out.splitlines()) <= rv.WRAP_CHARS + 6
+    assert "y" * 9000 in out.replace("\n    ↪ ", "")
+
+
+def test_read_all_logs_every_page_for_a_run(index, store, tmp_path, capsys):
+    bad = analyzed_session(index, pages_of_text=3)
+    run_id = fi.start_run(store[0], "transcript-analyze", "m", "{}")
+    read(tmp_path, capsys, "a1", "--all", "--page-chars", "3000", "--run-id", str(run_id))
+
+    assert record_analysis(tmp_path, "a1", analysis(bad, "npm ERR! peer dep missing"), run_id) == 0
+
+
+# --------------------------------------------------------------------- corpus
+
+TEMPLATE = "You are performing an independent review of a pull request. " + "Rules follow. " * 60
+
+
+def test_corpus_finds_scripted_sessions_by_shared_opening_not_slash_commands(index):
+    for i in range(3):
+        sid = index.session(f"run{i}", project_key="review-pr-1")
+        index.user(sid, TEMPLATE + f" round {i}")
+    typed = index.session("typed")
+    index.user(typed, "/dual-review https://example/pr/1 " + "please " * 100)
+    index.close()
+
+    conn = rv.connect(index.root)
+    by = {r["session_id"]: r for r in cp.classify(conn, cp.sized(conn, None, None, "main", None))}
+    assert all(by[f"run{i}"]["scripted"] for i in range(3))
+    assert by["run0"]["group"] == by["run2"]["group"] == "run:review-pr-1"
+    assert not by["typed"]["scripted"]
+
+
+def test_corpus_pack_never_splits_a_run_and_respects_the_budget():
+    run = [{"chars": 40}, {"chars": 40}]
+    batches = cp.pack([run, [{"chars": 70}], [{"chars": 30}]], budget=100)
+    assert all(sum(s["chars"] for s in b) <= 100 for b in batches)
+    assert any(all(s in b for s in run) for b in batches)
+
+
+def test_corpus_plan_writes_sessions_and_manifest_under_the_work_dir(index):
+    for i in range(3):
+        sid = index.session(f"run{i}", project_key="review-pr-1")
+        index.user(sid, TEMPLATE)
+        index.assistant(sid, "a" * 4000)
+    sid = index.session("human")
+    index.user(sid, "fix the bug " * 300)
+    index.close()
+
+    assert cp.main(["--dest", str(index.root), "plan", "--run", "t", "--top", "1",
+                    "--random", "0", "--scripted", "3"]) == 0
+    manifest = json.loads((index.root / "work/t/manifest.json").read_text())
+    assert manifest["strata"] == {"top_typing": 1, "scripted": 3}
+    assert all(Path(s["path"]).exists() for b in manifest["batches"] for s in b)
+
+
+def test_corpus_refuses_to_write_inside_a_git_worktree(tmp_path):
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    with pytest.raises(SystemExit):
+        cp.write_private(repo / "out" / "s.txt", "private")
