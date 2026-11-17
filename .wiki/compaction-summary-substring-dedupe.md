@@ -1,15 +1,13 @@
 ---
 type: gotcha
 title: Compaction summaries quote earlier prompts; substring dedupe drops real ones
-description: parse_claude drops a queued prompt only when the next human turn repeats it, start or end; substring hits compaction summaries, and any turn lets an earlier "go" swallow later ones.
+description: parse_claude drops queued prompts that a user record repeats; a compaction summary quotes every earlier prompt, so match exact or start/end, never substring, or real prompts vanish.
 tags: [injection]
 generated: {by: okf-wiki/claude-haiku-5-5, at: 2026-11-01T14:44:39Z}
 verified:
   - {by: okf-wiki/claude-haiku-5-5, at: 2026-11-01T14:44:39Z, commit: bae30dea28b6}
-  - {by: okf-wiki/claude-opus-5-5, at: 2026-11-17T03:10:15Z, commit: 1ff103651bb4}
 sources:
   - {id: measure-2026-11-01, resource: "local measurement 2026-11-01 on 5,270 queued_command prompts from a real Claude transcript corpus"}
-  - {id: measure-2026-11-16, resource: "local measurement 2026-11-16 on 6,153 queued_command prompts from the same corpus"}
 ---
 
 # Compaction summaries quote earlier prompts; substring dedupe drops real ones
@@ -24,7 +22,7 @@ A substring test ("this prompt appears anywhere in a user record") matches insid
 
 ## What works
 
-Treat a user record as a repeat only when its text equals the prompt, or starts or ends with it, **and** it is the next human turn after the prompt. Matching any turn in the session was wrong too: an earlier `go` swallowed every later queued `go`, which hid the user's merge approvals from readers. Across 6,153 queued prompts, about 43 matched some turn, but only 2 matched one within 40 records after them, and both of those were separate prompts [^measure-2026-11-16].
+Treat a user record as a repeat only when its text equals the prompt, or starts or ends with it. In the same sample, 34 duplicates were exact and 10 were wrapped at the start or end. The rule in `parse_claude` drops only those [^measure-2026-11-01].
 
 ## Why
 

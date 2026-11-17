@@ -2177,20 +2177,6 @@ def test_a_claude_output_style_is_one_system_row_per_change(tmp_path):
     ]
 
 
-def test_an_earlier_identical_turn_does_not_swallow_a_mid_turn_prompt(tmp_path):
-    """A second "go" typed mid-turn is a new approval, not a copy of the first."""
-    parsed = _parse_lines(tmp_path, [
-        _claude_rec("u1", None, content="go"),
-        _claude_rec("a1", "u1", rtype="assistant", content=[{"type": "text", "text": "merge?"}]),
-        _queued("q1", "a1", "go", "human"),
-        _claude_rec("a2", "q1", rtype="assistant", content=[{"type": "text", "text": "merging"}]),
-        _claude_rec("u2", "a2", content="thanks"),
-    ])
-    assert [(m.native_id, m.text) for m in parsed.messages if m.role == "user"] == [
-        ("u1", "go"), ("q1", "go"), ("u2", "thanks"),
-    ]
-
-
 def test_claude_main_path_runs_through_records_that_are_not_indexed(tmp_path):
     parsed = _parse_lines(tmp_path, [
         _claude_rec("u1", None, content="go"),

@@ -484,8 +484,7 @@ def export_sources(
 # 11: text the harness injected as a user turn is a `system` row (native author fields);
 #     Claude mid-turn prompts, custom titles and API errors, dsh compaction summaries and
 #     interrupts are kept; Claude parents resolve through records that are not indexed.
-# 12: a Claude mid-turn prompt is a repeat only of the next human turn, not of any turn.
-#     A Claude output style's text is a `system` row.
+# 12: a Claude output style's text is a `system` row.
 #     A resumed session's shorter prefix copy in another project directory is dropped.
 PARSER_VERSION = 12
 
@@ -984,8 +983,8 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
     # Every record's parent, indexed or not: a message's parent is often a hook attachment
     # or a system line, and the tree must be walked through those to reach the next message.
     parent_of: dict[str, str | None] = {}
-    pending: list[Message] = []  # mid-turn prompts not yet followed by a human turn
-    dupes: set[int] = set()
+    queued: list[Message] = []  # mid-turn prompts; dropped below when a user record repeats one
+    turn_texts: list[str] = []
     custom_title = None
     for line in _json_lines(path):
         rec = json.loads(line)
@@ -1006,13 +1005,13 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
             text = _blocks_text(att.get("prompt"))
             if text.strip():
                 injected = _claude_injected((att.get("origin") or {}).get("kind"), text)
-                pending.append(Message(
+                queued.append(Message(
                     ord=len(messages), native_id=rec.get("uuid"),
                     parent_native_id=rec.get("parentUuid"), on_main_path=False,
                     role="system" if injected else "user", ts=rec.get("timestamp"), text=text,
                     model=None, stop_reason=None, input_tokens=None, output_tokens=None,
                 ))
-                messages.append(pending[-1])
+                messages.append(queued[-1])
             continue
         if rtype == "attachment":
             for text in _session_start_contexts(att) + _output_style_text(att):
@@ -1076,14 +1075,7 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
             or _claude_injected((rec.get("origin") or {}).get("kind"), text)
         )
         if role == "user" and not injected:
-            # Some versions also write a queued prompt as an ordinary user record, alone or
-            # with a wrapper before or after it: only the next human turn can be that copy.
-            # Matching any turn let an earlier "go" swallow every later queued "go".
-            # Start/end, not substring — a compaction summary quotes every earlier prompt.
-            turn = text.strip()
-            dupes.update(id(q) for q in pending if turn.startswith(q.text.strip())
-                         or turn.endswith(q.text.strip()))
-            pending.clear()
+            turn_texts.append(text.strip())
         messages.append(
             Message(
                 ord=len(messages),
@@ -1116,6 +1108,14 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
             for r in rows:
                 setattr(r, f, None)
             setattr(rows[-1], f, max(seen) if seen else None)
+    # Some versions also write a queued prompt as an ordinary user record, alone or with a
+    # wrapper before or after it: keep that one. Not a substring anywhere — a compaction
+    # summary quotes every earlier prompt.
+    dupes = set()
+    for q in queued:
+        text = q.text.strip()
+        if any(t.startswith(text) or t.endswith(text) for t in turn_texts):
+            dupes.add(id(q))
     messages = [m for m in messages if id(m) not in dupes]
     for i, m in enumerate(messages):
         m.ord = i
