@@ -134,12 +134,12 @@ Each was confirmed against a real index; get one wrong and a count or a judgment
   long sessions most messages are off it (seen 2026-11-16). For the whole conversation,
   order by `ord` and do not filter on `on_main_path`.
 - **`injected` is a frequency guess, not a source label.** The ingest `annotate` pass marks
-  any text seen in several sessions, so it also marks common short human replies: "yes",
-  "go", "commit and push", "status?", `[Request interrupted by user]` (770 short human
-  rows in one index, seen 2026-11-16). Use it to drop standing instructions from a search,
-  never to decide whether the human said something. To strip harness text from a user row,
-  remove `<system-reminder>` and similar blocks by structure, as `review.py` and
-  `render.py` do.
+  text seen in several sessions. Before 0.14.0 that also caught short human replies ("yes",
+  "go", "commit and push": 770 rows in one index, seen 2026-11-16); it now skips user rows
+  under 200 characters, from the next ingest that parses anything (or
+  `transcripts.py annotate`). Use it to drop standing instructions from a search, never to
+  decide whether the human said something. To strip harness text from a user row, remove
+  `<system-reminder>` and similar blocks by structure, as `review.py` does.
 - **Mid-turn messages are ordinary `user` rows** (ingested from `queued_command`
   attachments, `on_main_path = 0`). A copy may also appear inside a `tool_result`; the
   `user` row is the one to count.
@@ -153,7 +153,7 @@ Each was confirmed against a real index; get one wrong and a count or a judgment
   headless run that answers through `StructuredOutput` or `SubagentHandback` leaves its
   message text empty. Read it with
   `SELECT name, arguments FROM tool_calls WHERE message_id = ?`, or
-  `../transcript-analyze/render.py expand <message id>`.
+  `../transcript-review/review.py expand <session> <ord>`.
 - **A background subagent's result is not its report.** The `Agent` call's result says the
   agent was launched; the report arrives later as a `system` row. The subagent's own session
   has `parent_native_id` set to the parent and its first user message equal to the call's
@@ -211,9 +211,9 @@ uv run --script ./search.py --term '"devcontainer-cli"' --min-hits 3
 ```
 
 - `--exclude-injected` drops messages the ingest `annotate` pass flagged as standing
-  instructions, so hit counts reflect what a session actually *did*. It also drops common
-  short human replies (see "Schema facts that change answers"), so do not use it when the
-  term could be something the user typed.
+  instructions, so hit counts reflect what a session actually *did*. On an index annotated
+  before 0.14.0 it also drops short human replies (see "Schema facts that change
+  answers").
 - `--errors` sorts by the number of matches that also carry a failure signal (`error`,
   `failed`, `permission denied`, `not found`, `exit code`, …), so problem sessions float up.
 - `--harness` / `--roles` narrow to a harness and/or role; `--min-hits` filters the tail.

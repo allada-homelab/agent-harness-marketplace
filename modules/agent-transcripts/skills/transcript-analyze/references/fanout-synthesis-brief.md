@@ -16,7 +16,7 @@ agent's standing instructions, skills, hooks and tools.
 - `<work dir>/manifest.json` maps each session to its stratum: `top_typing` (interactive,
   most human typing), `random` (interactive control) or `scripted` (grouped by run).
 - The user's standing instructions for agents: `<path, or "none">`. Read them.
-- To check one piece of evidence: `<command for render.py expand>` `<id>`. Keep checks
+- To check one piece of evidence: `<command for review.py expand>` `<session id> <ord>`. Keep checks
   few and targeted: the evidence behind the top clusters and anything that looks wrong.
 
 ## Task

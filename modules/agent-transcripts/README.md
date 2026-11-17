@@ -28,9 +28,9 @@ work dir, with `--next` to pull the messages after the head window. `cluster.py`
 sessions by shared failure signature, and `verdict.schema.json` validates a fan-out of excerpt
 readers. The ingest `annotate` pass marks a message `injected` when it is a `system` message or
 a non-`tool_result` message repeated across several sessions — the standing-instruction
-signature — so those scripts can filter it out. Because it counts repetition, it also marks
-common short human replies ("yes", "go", "commit and push"); never use it to decide whether
-the human said something.
+signature — so those scripts can filter it out. A user row under 200 characters is never
+marked, so a short reply the human typed in many sessions ("yes", "commit and push") stays
+visible; still, never use the flag to decide whether the human said something.
 
 ## The sweep
 
@@ -78,12 +78,12 @@ The same skill reads weeks of sessions through a fan-out. `corpus.py sizes` spli
 session's characters into human turns, assistant prose, system rows and tool traffic.
 `corpus.py plan` picks three strata (the sessions where the human typed most, a seeded
 random control, and whole scripted runs found by their shared template opening), renders
-each, and packs them into reader-sized batches in the cache's work dir. `render.py`
-re-creates one session as a single file: every human turn, assistant prose, one line per
+each with `review.py read --all`, and packs them into reader-sized batches in the cache's
+work dir. That view re-creates one session as a single file: every human turn, assistant prose, one line per
 tool call, results hidden behind short hints, system rows by kind (a skill body as one
 line, a compaction as a marked boundary with what the agent was doing, a background
 subagent's report shown and linked to its session), and, for sessions too large to read
-whole, an outline that folds scripted loops. `render.py expand` shows the full text behind
+whole, an outline that folds scripted loops. `review.py expand` shows the full text behind
 any line, including a tool call's arguments. The skill ships the reader and synthesis
 briefs the fan-out uses, and a table of which setup answers which question.
 

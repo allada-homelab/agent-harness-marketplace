@@ -2033,6 +2033,13 @@ def _norm_key(text: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest() if key else ""
 
 
+# A repeated user row shorter than this is a human reply or command ("yes", "go", "commit and
+# push", "/compact"), not a standing instruction: harness injections are system rows since
+# parser v11, and repeated instruction text is long. 770 short human rows were flagged
+# before this bound (seen 2026-11-16).
+INJECTED_USER_MIN_CHARS = 200
+
+
 def annotate(
     dest_root: Path,
     min_sessions: int = 3,
@@ -2046,7 +2053,9 @@ def annotate(
     context), or when its normalized text appears, outside the excluded roles, in
     `min_sessions` or more distinct sessions — the signature of a standing
     instruction the harness prepends to every session (e.g. the AGENTS.md
-    "always check for a dev container first" rule). `tool_result` messages are
+    "always check for a dev container first" rule). A user row shorter than
+    `INJECTED_USER_MIN_CHARS` is never flagged that way: it is something the human
+    typed, however often they type it. `tool_result` messages are
     excluded by default so a recurring *error* (identical text across sessions) is
     not mistaken for boilerplate and hidden from issue hunts.
 
@@ -2077,8 +2086,8 @@ def annotate(
         f"INSERT INTO annotate_target SELECT id FROM messages WHERE norm_key IN ("
         f" SELECT norm_key FROM messages WHERE norm_key != ''{role_clause}"
         f" GROUP BY norm_key HAVING COUNT(DISTINCT session_id) >= ?)"
-        f"{role_clause}",
-        params,
+        f"{role_clause} AND NOT (role = 'user' AND length(text) < ?)",
+        (*params, INJECTED_USER_MIN_CHARS),
     )
     flagged = conn.execute("SELECT count(*) FROM annotate_target").fetchone()[0]
     conn.execute(

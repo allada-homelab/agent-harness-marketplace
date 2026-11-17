@@ -9,7 +9,7 @@ matter for reading them: human turns, assistant prose, system rows, and tool tra
 arguments plus results). Percentiles first, so you can size a reading budget before
 reading anything.
 
-`corpus.py plan --run <name>` picks sessions to read, renders each with render.py into
+`corpus.py plan --run <name>` picks sessions to read, renders each with `review.py read --all --mode auto` into
 `<cache>/work/<run>/sessions/`, and packs them into batches of at most `--budget`
 characters, one batch per reader. It writes `<cache>/work/<run>/manifest.json`.
 
@@ -39,9 +39,18 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "transcript-query"))
-from query import connect, resolve_dest  # noqa: E402
-from render import clean_user, one, render_session, write_private  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "transcript-review"))
+from review import (  # noqa: E402  review.py also puts transcript-ingest on sys.path
+    connect, normalize, render_whole, resolve_dest, resolve_session, user_text)
+from transcripts import assert_outside_worktree  # noqa: E402
+
+
+def write_private(path: Path, text: str) -> None:
+    """Derived transcript data stays on device: never inside a git worktree."""
+    assert_outside_worktree(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
 
 TEMPLATE_MIN_CHARS = 500  # a first message this long, shared by 3+ sessions, is a template
 TEMPLATE_MIN_SESSIONS = 3
@@ -53,14 +62,14 @@ SELECT s.id, s.native_id, s.kind, s.project_key, s.started_at,
   coalesce(sum(CASE WHEN m.role = 'system' THEN length(m.text) END), 0),
   coalesce(sum(CASE WHEN m.role = 'tool_result' THEN length(m.text) END), 0),
   (SELECT coalesce(sum(length(t.arguments)), 0) FROM tool_calls t
-     JOIN messages m2 ON m2.id = t.message_id WHERE m2.session_id = s.id)
+     JOIN messages m2 ON m2.id = t.message_id WHERE m2.session_id = s.id), s.harness
 FROM sessions s LEFT JOIN messages m ON m.session_id = s.id
 WHERE (:since IS NULL OR s.started_at >= :since) AND (:until IS NULL OR s.started_at < :until)
   AND (:kind IS NULL OR s.kind = :kind) AND (:harness IS NULL OR s.harness = :harness)
 GROUP BY s.id
 """
 COLUMNS = ("session_id", "kind", "project", "started_at", "user_chars", "assistant_chars",
-           "system_chars", "tool_result_chars", "tool_arg_chars")
+           "system_chars", "tool_result_chars", "tool_arg_chars", "harness")
 
 
 def sized(conn, since, until, kind, harness) -> list[dict]:
@@ -99,8 +108,8 @@ def cmd_sizes(conn, args) -> int:
     return 0
 
 
-def first_and_typed(conn, db_id) -> tuple[str, int]:
-    texts = [clean_user(t or "") for (t,) in conn.execute(
+def first_and_typed(conn, db_id, harness) -> tuple[str, int]:
+    texts = [user_text(t or "", harness) for (t,) in conn.execute(
         "SELECT text FROM messages WHERE session_id = ? AND role = 'user' ORDER BY ord", (db_id,))]
     texts = [t for t in texts if t]
     return (texts[0] if texts else ""), sum(len(t) for t in texts)
@@ -110,12 +119,12 @@ def opening(first: str) -> str | None:
     """The template key of a first message, or None if it cannot be a template."""
     if len(first) < TEMPLATE_MIN_CHARS or first.startswith("/"):
         return None  # a human typing a slash command is not a script
-    return re.sub(r"\d+", "#", one(first))[:120]
+    return re.sub(r"\d+", "#", normalize(first))[:120]
 
 
 def classify(conn, rows):
     for r in rows:
-        first, r["typed"] = first_and_typed(conn, r["db_id"])
+        first, r["typed"] = first_and_typed(conn, r["db_id"], r["harness"])
         r["opening"] = opening(first)
     shared = collections.Counter(r["opening"] for r in rows if r["opening"])
     for r in rows:
@@ -171,7 +180,8 @@ def cmd_plan(conn, args) -> int:
     units = collections.defaultdict(list)
     oversize = []
     for r in chosen:
-        native_id, mode, text = render_session(conn, r["session_id"], "auto", args.budget)
+        native_id = r["session_id"]
+        mode, text = render_whole(conn, resolve_session(conn, native_id), budget=args.budget)
         path = work / "sessions" / f"{native_id}.txt"
         write_private(path, text)
         entry = {"session_id": native_id, "path": str(path), "chars": len(text), "mode": mode,

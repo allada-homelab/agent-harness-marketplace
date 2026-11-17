@@ -49,18 +49,31 @@ page you read, and refuses the analysis later if any page was skipped.
 
 Each message starts with its ord, `[42]`:
 
-- `USER` is the human, with injected harness text replaced by `[stripped: …]`.
+- `USER` is the human, with injected harness text replaced by `[stripped: …]`; a slash
+  command shows as `/name args`.
 - `ASSISTANT` is the agent's text. `CALL <tool> <arguments>` is a tool call; `ERR` at the
   end means the tool reported failure. A shell command that exits non-zero is marked `ERR`
   even when its output was what the agent wanted (a `grep` that found nothing), so read
   the next turn before counting it as a failure.
 - Several `CALL` lines on one ord are parallel calls. Their results follow, each naming
   the call it answers: `[13] RESULT of Bash [12] …`.
-- `RESULT of Bash [12] ok 12,431 chars` is a tool result that is **hidden**. Only its
-  size is shown. A result of 200 characters or less is shown in full instead.
+- `RESULT of Read [12] ok 12,431 chars` is a tool result that is **hidden**. Only its
+  size is shown, plus, for Bash, its last line (test counts and exit summaries live there)
+  and, for Grep, its first line. A result of 200 characters or less is shown in full.
 - `RESULT of Bash [12] ERR <text>` is a failed result; its first 160 characters are shown.
-- A subagent's report (the result of an `Agent`, `Task`, `subagent` or `delegate_agent`
-  call) is shown up to 2,000 characters.
+- A dispatch (`Agent`, `Task`, `subagent` or `delegate_agent`) shows its brief up to 1,500
+  characters and, after `⤷ subagent`, the subagent's session id and tool counts. Its result
+  is shown up to 2,000 characters; a background launch notice collapses to one line, and the
+  report that arrives later is a `SUBAGENT REPORT` line.
+- System rows are shown by kind: `SKILL loaded <name>`, `════ COMPACTION ════` with the
+  summary's current work (the agent knows only what that summary kept), `SUBAGENT REPORT`,
+  `PEER MESSAGE`, `TASK NOTIFICATION`. Page 1's header lists the compactions and every
+  commit, push and PR action by ord.
+- A long `ASSISTANT` line keeps its head and tail (`…[N of M chars omitted]…`); the
+  session's final report is never cut.
+- `--mode outline` (or `auto`, which outlines only past `--budget` characters) shows each
+  human turn in full and the work after it as one `WORK` line, and folds a scripted turn
+  repeated three or more times into one `LOOP` block that lists each distinct outcome once.
 - `…[of N chars]` means that line was cut; N is the full length. It is a marker, never
   part of a quote.
 
@@ -179,8 +192,9 @@ narrow it.
 The loop above is for a few sessions read by you. To find what goes wrong *across* weeks of
 sessions, split the reading across cheap parallel readers, then have one strong agent
 cluster what they found. Two scripts beside this file do the mechanical parts:
-`./corpus.py` sizes and selects sessions, and `./render.py` re-creates each session as one
-file a reader can take in whole. This mode records JSON findings in a work dir instead of
+`./corpus.py` sizes and selects sessions, and writes each one as the single file
+`../transcript-review/review.py read <session> --all --mode auto` prints: the same view as
+the page loop above, whole, with long lines wrapped so a file reader loses nothing. This mode records JSON findings in a work dir instead of
 `record-analysis`, so the page-log rule below does not apply to it.
 
 ### 1. Size before you read
@@ -192,7 +206,7 @@ uv run --script ./corpus.py sizes --since 2026-11-02
 It prints totals and percentiles per session for human turns, assistant prose, system rows
 and tool traffic. Expect tool traffic to be several times the prose and system rows to
 dwarf both in a few sessions (a skill body reloaded on every scheduled pass). The prose is
-what a reader needs, which is why `render.py` hides the rest.
+what a reader needs, which is why `read` hides the rest.
 
 ### 2. Plan the read
 
@@ -215,7 +229,8 @@ only after the pilot's findings look real.
 Fill in `./references/fanout-reader-brief.md` for each batch and dispatch every reader in
 one message, on a mid-tier model. Give each reader the batch's file paths, the path to the
 user's standing agent instructions, its output path (`<work dir>/findings/batch-N.json`) and
-the expand command: `uv run --script <this skill>/render.py expand <id>`. A reader of about
+the expand command: `uv run --script ../transcript-review/review.py expand <session> <ord>`
+(as an absolute path for the reader). A reader of about
 350,000 characters took two to three minutes and about 250,000 tokens in the pilot
 (seen 2026-11-16).
 
@@ -224,13 +239,13 @@ the expand command: `uv run --script <this skill>/render.py expand <id>`. A read
 When every reader has returned, dispatch one strong-model agent with
 `./references/fanout-synthesis-brief.md`. It clusters findings by underlying behavior,
 checks each cluster against the user's standing instructions, and critiques the run. Before
-reporting a cluster, check its best evidence yourself with `render.py expand`. In the pilot
+reporting a cluster, check its best evidence yourself with `review.py expand`. In the pilot
 the synthesizer's own spot-check overturned one finding that the view had misled a reader
 into. To land lessons in repos, hand the confirmed clusters to the `transcript-learn` skill.
 
 ### What the view keeps, and why
 
-`render.py` was tuned by giving readers probe questions with known answers and comparing
+`read` was tuned by giving readers probe questions with known answers and comparing
 renders (seen 2026-11-16). What mattered:
 
 - **System rows are rendered by kind.** Printed in full, skill reloads made one week-long
@@ -240,9 +255,12 @@ renders (seen 2026-11-16). What mattered:
   the notice, shows the report, and links each call to its subagent session.
 - **Compactions are boundaries.** Each shows the summary's "current work", so a reader
   knows what the agent still remembered.
-- **Human turns are never hidden.** The index's `injected` flag also marks common short
-  replies ("yes", "go", "commit and push"); a view that hid them made a reader report an
-  approved push as unapproved.
+- **Human turns are never hidden.** A view that filtered on the `injected` flag hid short
+  replies ("yes", "commit and push") the flag used to mark, and a reader reported an
+  approved push as unapproved. `read` strips harness text from a user turn by structure
+  and ignores the flag. A slash command shows as `/name args`.
+- **Results stay hidden behind a hint.** A Bash result shows its last line (test counts and
+  exit summaries live there), a Grep result its first match, an error its start.
 - **Final reports are never cut,** including `StructuredOutput` arguments, which is where a
   scripted review round's findings live. Long assistant turns keep their head and tail,
   because decision menus sit at the end.
@@ -261,12 +279,12 @@ renders (seen 2026-11-16). What mattered:
 | Why you keep having to correct it | `plan --top 30 --random 10 --scripted 0` | Tell readers to anchor on each correction and judge the agent's action just before it |
 | Whether a prompt-driven skill works (a review skill, a scheduled monitor) | `plan --top 0 --random 0 --scripted 20`, or `--exclude` everything else | Give readers the skill's prompt files; the brief's scripted-run section asks for prompt-level fixes |
 | Whether a change you made helped | Two `plan` runs with the same seed and strata, one window each side of the change (`--until` / `--since`) | Same brief for both; compare the two `synthesis.json` cluster counts per session |
-| What happened in one long session | `render.py <id>` and read it alone, or the page loop above | Split an outline over 350,000 characters across children by its `↻ LOOP` and user-turn boundaries |
+| What happened in one long session | `review.py read <id> --mode auto`, paged as above | Split an outline over 350,000 characters across children by its `LOOP` and user-turn boundaries |
 | Whether it acted on approvals it really had | Any plan | Readers check the `USER` lines before each push, merge or external write |
-| What the agent lost at a compaction | Sessions with compactions (header `compactions at:`) | Compare the human's constraints before each boundary with the agent's actions after it |
+| What the agent lost at a compaction | Sessions with compactions (header `compactions at ords:`) | Compare the human's constraints before each boundary with the agent's actions after it |
 | Whether its "done" and "tested" claims hold | Any plan | Readers expand the result behind each claim; `../transcript-review/review.py grep` searches a whole session for the evidence |
-| How well it delegates | Sessions with subagents (header count) | Briefs are shown up to 1,500 characters with the subagent's call counts; `render.py <subagent id>` renders the subagent itself |
-| What a monitoring loop did over days | `render.py <id>` (auto picks the outline) | Each `↻ LOOP` block lists each distinct outcome once and keeps every error |
+| How well it delegates | Sessions with subagents (header count) | Briefs are shown up to 1,500 characters with the subagent's call counts; `review.py read <subagent id>` shows the subagent itself |
+| What a monitoring loop did over days | `review.py read <id> --mode auto` (picks the outline) | Each `LOOP` block lists each distinct outcome once and keeps every error |
 
 ## Hard rules
 
@@ -278,9 +296,9 @@ renders (seen 2026-11-16). What mattered:
 - **Quotes are copied, never typed from memory.** If you cannot find the line, leave the
   item out.
 - **Do not open raw transcripts** or query the index yourself. This is the user's private
-  history; `read`, `expand` and `grep` (and, for a fan-out, `corpus.py`, `render.py` and
-  `render.py expand`) are the only ways in.
+  history; `read`, `expand` and `grep` (and, for a fan-out, `corpus.py`) are the only ways
+  in.
 - **Rendered sessions and findings stay in the cache's work dir,** never in a git checkout;
-  `render.py` and `corpus.py` refuse to write inside one. They quote private history.
+  `corpus.py` refuses to write inside one. They quote private history.
 - **Read-only except for the findings database and the work dir.** Nothing here changes the
   index.

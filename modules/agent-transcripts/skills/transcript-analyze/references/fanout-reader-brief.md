@@ -17,28 +17,32 @@ problems in the agent's *approach*; you fix nothing.
 - The user's standing instructions for agents, if any: `<path to the user's global agent
   instructions, or "none">`. Read them first. A problem that breaks a rule written there is
   a different finding from one no rule covers, and its fix is different.
-- The command that shows the full text behind any `#id` in a file:
-  `<command for render.py expand>` `<id>` (add `--offset N` to page). It also shows a tool
-  call's full arguments, which is where a `StructuredOutput` final report lives.
+- The command that shows the full text behind any `[ord]` in a file:
+  `<command for review.py expand>` `<session id> <ord>` (add `--offset N` to page). It also
+  shows a tool call's full arguments, which is where a `StructuredOutput` final report
+  lives.
 
 ## How a session file reads
 
-- `USER [#id] (time): …` is the human, in full up to 4,000 characters. Scripted turns (a
-  slash command or a template repeated many times) may be folded into `↻ LOOP` blocks;
-  human replies never are.
-- `ASSISTANT [#id]: …` is the agent's prose. A long turn keeps its first and last 1,500
-  characters; the middle is marked `…[N chars omitted; expand #id]…`.
-- `  → Tool [#id] args` is a tool call. `  ← Tool [#id] …` is its result: hidden behind its
-  size, except errors (`← ERROR`), a Bash result's last line, a Grep result's first line,
-  and subagent reports.
-- `════ CONTEXT COMPACTION ════` marks where the agent's memory was replaced by a summary.
-  Judge what the agent did after it knowing it only had that summary.
-- `SUBAGENT REPORT` is what a background subagent sent back; `⤷ subagent` under an Agent
-  call counts that subagent's own tool calls.
-- In an outline (`# render mode: outline`), the work between two human turns is one
-  `[agent work …]` line of tool counts plus its errors and the agent's last message.
-- A Bash result marked `ERROR` with `Exit code 1` is often a search that found nothing.
-  Read the next turn before calling it a failure.
+- Every line starts with its `[ord]`, the message's position in the session.
+- `[ord] USER …` is the human, in full up to 8,000 characters. A slash command shows as
+  `/name args`. Scripted turns (a slash command or a template repeated many times) may be
+  folded into `LOOP` blocks; human replies never are.
+- `[ord] ASSISTANT …` is the agent's prose. A long turn keeps its head and tail; the middle
+  is marked `…[N of M chars omitted]…`. The session's final report is never cut.
+- `[ord] CALL Tool args` is a tool call. `[ord] RESULT of Tool [call ord] …` is its result:
+  hidden behind its size, except errors (`ERR`), short results, a Bash result's last line, a
+  Grep result's first line, and subagent results. An `Agent` call shows its brief and, after
+  `⤷ subagent`, that subagent's own tool counts.
+- `════ COMPACTION ════` marks where the agent's memory was replaced by a summary. Judge
+  what the agent did after it knowing it only had that summary.
+- `SUBAGENT REPORT` is what a background subagent sent back. `SKILL loaded` is a skill's
+  instructions entering the context.
+- In an outline (`mode=outline` in the header), the work between two human turns is one
+  `WORK` line of tool counts plus its errors, reports, dispatches and the agent's last
+  message.
+- A Bash result marked `ERR` with `Exit code 1` is often a search that found nothing. Read
+  the next turn before calling it a failure.
 
 ## Rules
 
@@ -47,7 +51,7 @@ problems in the agent's *approach*; you fix nothing.
 - Read-only. The only file you write is your findings file. The only command you run is the
   expand command above, at most about ten times per session, only when an issue depends on
   hidden text, and never to browse.
-- **Precision over recall.** Every issue cites `#id` evidence with a verbatim quote. Zero
+- **Precision over recall.** Every issue cites `[ord]` evidence with a verbatim quote. Zero
   issues for a clean session is a valid and useful answer; typical is zero to five. Leave
   out low-severity issues with no place to fix them.
 - Judge the agent, not the environment. A denied permission, a flaky service or a broken
@@ -93,7 +97,7 @@ Write one JSON file to `<output path>`:
           "category": "wrong_approach | inefficiency | ignored_instruction | unverified_claim | scope_creep | stopped_short | excessive_questions | tool_misuse | repeated_failure | misread_request | communication | other",
           "title": "<reusable pattern, at most 14 words>",
           "description": "<what happened, one to three sentences>",
-          "evidence": [{"msg_id": 123, "quote": "<at most 200 chars, verbatim>"}],
+          "evidence": [{"ord": 123, "quote": "<at most 200 chars, verbatim>"}],
           "severity": "high | medium | low",
           "user_had_to_intervene": true,
           "cost": "<e.g. '~20 wasted tool calls', 'user correction', 'wrong result shipped'>",
