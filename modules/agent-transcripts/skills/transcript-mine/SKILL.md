@@ -2,14 +2,23 @@
 name: transcript-mine
 description: One-step fan-out review of the last N days of agent sessions (default 7) — refresh the index, pick and batch sessions, read them with parallel cheap readers, cluster what they found with one strong synthesizer, verify, and report the recurring problems with fixes. Use when the user asks to "mine", "find learnings in" or "review" their recent sessions, or runs /transcript-mine.
 user-invocable: true
-argument-hint: "[days, default 7]"
+argument-hint: "[days] [--concurrency N] [--model NAME] [--chars N]"
 tags: [observability]
 ---
 
 # transcript-mine
 
 A recipe over `transcript-analyze`'s fan-out read, with defaults, so one command does it.
-Days to cover: $ARGUMENTS (a whole number; when it is empty or not a number, use 7).
+Arguments: $ARGUMENTS
+
+| Argument | Default | Meaning |
+|---|---|---|
+| days (a bare number) | 7 | how far back to look |
+| `--concurrency N` | 6 | readers running at once; the rest wait in a queue |
+| `--model NAME` | `sonnet` on Claude, `large-default` on local models | the readers' model |
+| `--chars N` | 350000 | the most a reader is given, in characters (about 90,000 tokens) |
+
+A `k` suffix means thousands (`--chars 500k`). Echo the settings you resolved before step 1.
 
 Read `../transcript-analyze/SKILL.md`, section "Many sessions: a fan-out read", before
 step 3. It has the reasons behind every default below; this skill only fixes the choices.
@@ -32,20 +41,25 @@ that exits 75 means another ingest is running: wait for it, then go on.
 `mine-<today>-<days>d`.
 
 ```bash
-uv run --script ../transcript-analyze/corpus.py plan --run RUN --since SINCE
+uv run --script ../transcript-analyze/corpus.py plan --run RUN --since SINCE --budget CHARS
 ```
 
 The defaults pick about 40 sessions: the 16 where the human typed most, 12 random
 interactive sessions as a control, and about 12 scripted sessions in whole runs. Report the
-plan's summary line and its batch count before dispatching. Each oversize session is read
-by a reader of its own.
+plan's summary line and its batch count before dispatching. A session too large for one
+reader arrives as `PART k/n` files spread over the batches.
 
 ## 3. Read and synthesize
 
 Follow steps 3 and 4 of the fan-out section exactly, with the briefs in
 `../transcript-analyze/references/`. Pass the user's standing agent instructions (the
-global instructions file their harness loads) to every reader and to the synthesizer. Run
-the readers in parallel on a mid-tier model and the synthesizer on a strong one. Check the
+global instructions file their harness loads) to every reader and to the synthesizer.
+
+Treat the manifest's batches as a queue. Start `--concurrency` readers on `--model`, each in
+the background on its own batch; whenever one returns, start the next batch, until the queue
+is empty and every reader has returned. Report progress as `readers done/total`. A reader
+that fails is retried once on the same batch; a second failure is reported and the run goes
+on without that batch. Then run the synthesizer, on a strong model. Check the
 best evidence of every cluster you report with `review.py expand` before reporting it.
 
 ## 4. Report

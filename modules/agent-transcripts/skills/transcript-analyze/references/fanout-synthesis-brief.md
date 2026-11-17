@@ -21,20 +21,22 @@ agent's standing instructions, skills, hooks and tools.
 
 ## Task
 
-1. Cluster the issues by **underlying behavior**, not by surface category. Merge
+1. Findings for one `session_id` may come from several readers, one per `PART k/n` of a long
+   session. Merge them into one session before counting, so a session counts once.
+2. Cluster the issues by **underlying behavior**, not by surface category. Merge
    near-duplicates across sessions. A one-session cluster is fine; label it as such.
-2. For each cluster give: a name; one paragraph; the sessions (first 8 chars of each id)
+3. For each cluster give: a name; one paragraph; the sessions (first 8 chars of each id)
    and how many; the severity mix; the best one or two quotes with their ids; the root
    cause; whether a standing instruction already covers it (quote it) or not; and one
    concrete fix with its home. When a rule exists and is being broken, more text will not
    help. Say why it is not working, and propose enforcement (a hook, a script that makes
    the step hard to skip, shorter wording placed where it is read) instead.
-3. Give a separate section for scripted runs: what they show about the prompts that drive
+4. Give a separate section for scripted runs: what they show about the prompts that drive
    them, with prompt-level fixes.
-4. Rank clusters by sessions affected × severity × how cheaply they can be fixed.
-5. Mark each cluster's confidence (high, medium, low). A cluster resting on one reader's
+5. Rank clusters by sessions affected × severity × how cheaply they can be fixed.
+6. Mark each cluster's confidence (high, medium, low). A cluster resting on one reader's
    judgment with thin evidence is low. Do not inflate counts.
-6. Critique the run itself in at most six bullets: reader calibration (lenient, strict,
+7. Critique the run itself in at most six bullets: reader calibration (lenient, strict,
    filler findings), selection bias, and what to change in the selection or brief before
    a larger run.
 

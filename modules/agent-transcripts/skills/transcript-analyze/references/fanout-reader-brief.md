@@ -25,6 +25,9 @@ problems in the agent's *approach*; you fix nothing.
 ## How a session file reads
 
 - Every line starts with its `[ord]`, the message's position in the session.
+- A file that opens `PART k/n of session …` holds only part of a long session; other readers
+  have the rest. Judge only what your part shows, say which part in `task_summary`, and do
+  not report the session's start or end as missing.
 - `[ord] USER …` is the human, in full up to 8,000 characters. A slash command shows as
   `/name args`. Scripted turns (a slash command or a template repeated many times) may be
   folded into `LOOP` blocks; human replies never are.
