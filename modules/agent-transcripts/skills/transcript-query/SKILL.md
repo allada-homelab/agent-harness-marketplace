@@ -271,7 +271,7 @@ uv run --script ./query.py "SELECT role, ts, text FROM messages WHERE id = ?" 12
 ```
 
 That is the sanctioned path for prose, one message at a time. To judge many flagged cases,
-hand each excerpt to a separate cheap subagent and collect verdicts, so the bulk of the text
+hand each excerpt to a separate subagent (Sonnet on Claude Code, `large-default` on any other harness) and collect verdicts, so the bulk of the text
 never lands in the orchestrating context.
 
 ## Privacy invariants
