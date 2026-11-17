@@ -8,7 +8,8 @@ In any checkout it also blocks `git worktree add` (worktrees come from `pr-flow 
 applies the setup rules) and a stash command that can take another session's entry from the
 one stash stack every worktree shares.
 PostToolUse (Edit/Write): hints, once per session per repo, after a tracked file is edited
-there. Never blocks.
+there. PostToolUse (Bash): after any `git push`, says a push is not a result until `pr-flow
+watch` returns. Neither ever blocks.
 
 A repo whose convention is to change the protected branch directly opts out with
 `git config pr-flow.allowMainCheckout true`. Runs on Claude natively and on pi/dsh through
@@ -97,7 +98,18 @@ def block(ev):
     return None
 
 
+def push_hint(ev):
+    cmd = (ev.get("tool_input") or {}).get("command") or ""
+    if not any(m.group(2) == "push" for m in GIT.finditer(cmd)):
+        return None
+    return ("pr-flow: a push is not a result. If it updated a PR, run `pr-flow -C <worktree> watch` before "
+            "reporting it: watch waits until the PR head is the commit you pushed (a GitHub error can drop a "
+            "push) and returns CI's verdict on it.")
+
+
 def hint(ev):
+    if ev.get("tool_name") == "Bash":
+        return push_hint(ev)
     if ev.get("tool_name") not in EDIT_TOOLS:
         return None
     ti = ev.get("tool_input") or {}

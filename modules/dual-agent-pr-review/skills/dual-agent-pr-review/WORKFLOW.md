@@ -415,7 +415,8 @@ fixes made by the judge introduce defects of their own.
   > independent AI reviewers whose findings were cross-checked against each other
   > and the code. Once each comment has been addressed, I'll do a once-over myself.
 
-Only with `no-post`: show the user the draft here and stop; post later only what they
+Only with `no-post`: show the user the draft here, run the cleanup at the end of
+this step, and stop; post later only what they
 then pick. If their answer does not map to exactly one of post all / pick ids /
 don't post, ask again rather than guessing — "post the fix" is not "post only that
 one".
@@ -451,8 +452,10 @@ ask you to, with the event they name: `gh api
 repos/<owner>/<repo>/pulls/<n>/reviews/<id>/events --method POST -f
 event=<REQUEST_CHANGES|COMMENT>`.
 
-Offer `dual_review.sh cleanup <RUN_DIR>` to remove the worktree. Run artifacts
-stay under `~/.claude/dual-review/runs/` for audit and for the next `--since`.
+**Every run ends with cleanup**, whichever path it took (posted, `no-post`, or the
+user's own PR): run `dual_review.sh cleanup <RUN_DIR>` to remove the review
+worktree — do not ask first. Run artifacts stay under `~/.claude/dual-review/runs/` for audit and
+for the next `--since`.
 
 ## When codex cannot run
 

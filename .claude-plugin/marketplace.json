@@ -25,7 +25,7 @@
       "name": "dual-agent-pr-review",
       "description": "Review a GitHub PR with Claude Code and Codex in parallel, then reconcile their findings into one consensus set.",
       "category": "development",
-      "version": "0.1.18",
+      "version": "0.1.19",
       "source": "./modules/dual-agent-pr-review"
     },
     {
@@ -39,7 +39,7 @@
       "name": "pr-flow",
       "description": "Work off main on every harness: branch + worktree, PR, watch CI until green, merge only when told, tear down after merge.",
       "category": "development",
-      "version": "0.2.23",
+      "version": "0.2.24",
       "source": "./modules/pr-flow"
     },
     {
@@ -116,7 +116,7 @@
       "name": "switchboard",
       "description": "Coordination for concurrent agent sessions (Claude Code, pi, dsh) on one machine: who is doing what, threaded messages between sessions, a todo board, a ledger of shared-state changes, and enforced leases on shared resources.",
       "category": "development",
-      "version": "0.7.1",
+      "version": "0.7.2",
       "source": "./modules/switchboard"
     }
   ]

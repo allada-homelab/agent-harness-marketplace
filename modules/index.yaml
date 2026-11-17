@@ -392,7 +392,7 @@ modules:
     summary: Review a GitHub pull request with parallel reviewers and a confidence scorer, and post one
       comment holding only the high-confidence issues.
 - name: dual-agent-pr-review
-  version: 0.1.18
+  version: 0.1.19
   kinds:
   - skills
   - dsh-plugin
@@ -577,7 +577,7 @@ modules:
     summary: Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent)
       will execute without the planner present.
 - name: pr-flow
-  version: 0.2.23
+  version: 0.2.24
   kinds:
   - skills
   - dsh-plugin
@@ -685,7 +685,7 @@ modules:
     summary: Write prose about 80% of the way to ASD-STE100 (Simplified Technical English), the controlled
       language from aerospace maintenance documentation.
 - name: switchboard
-  version: 0.7.1
+  version: 0.7.2
   kinds:
   - skills
   - dsh-plugin

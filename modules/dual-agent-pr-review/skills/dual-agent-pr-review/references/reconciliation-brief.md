@@ -44,6 +44,10 @@ You are **{{SELF_LABEL}}**. The other reviewer is **{{OTHER_LABEL}}**.
    **You cannot CONFIRM what you cannot read.** If the failure rests on another
    repository or a deployed service you have no checkout of, use REVISE and start
    `reasoning` with `unverifiable: external —` followed by what would settle it.
+   The same holds for third-party or browser runtime behavior: a claim marked
+   `UNVERIFIED-RUNTIME`, or one whose dependency source line neither side has
+   cited, supports neither a CONFIRM nor a severity change. Cite that source
+   line yourself, or leave it at low confidence and `fix-later`.
 3. A finding the other reviewer raised that you missed is not automatically
    wrong. Missing something is the normal outcome of two independent passes;
    the whole point of this round is to catch it. Judge it on the code.

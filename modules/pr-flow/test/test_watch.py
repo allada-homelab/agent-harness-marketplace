@@ -371,6 +371,23 @@ def test_sync_hint_merges_the_base_in_when_the_merge_method_tolerates_it(repo, a
     assert "git merge origin/main" in r.stdout and "--force-with-lease" not in r.stdout
 
 
+def test_sync_hint_rebases_a_branch_other_prs_are_stacked_on(repo):
+    _, wt = opened(repo)
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], mergeable="CONFLICTING")],
+                                     "stacked": {"feat/w": ["https://github.com/o/r/pull/9"]}})
+    assert r.returncode == 11
+    assert "git rebase origin/main" in r.stdout and "--force-with-lease" in r.stdout
+    assert "pull/9" in r.stdout and "git merge origin/main" not in r.stdout
+
+
+def test_sync_hint_rebases_a_stack_layer_onto_its_parent_branch(repo):
+    root, wt = opened(repo)
+    git("config", "branch.feat/w.pr-flow-base", "feat/parent", cwd=root)
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], mergeable="CONFLICTING")]})
+    assert r.returncode == 11
+    assert "git rebase origin/feat/parent" in r.stdout and "git merge" not in r.stdout
+
+
 def test_attempts_exhausted_message_counts_rounds_correctly(repo):
     _, wt = opened(repo)
     for _ in range(5):

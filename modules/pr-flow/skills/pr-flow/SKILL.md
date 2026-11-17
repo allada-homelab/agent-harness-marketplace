@@ -49,7 +49,9 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    with no commits ahead of its base — usually a commit a hook rejected. It
    refuses when the branch's PR is already merged (exit 2 — run `pr-flow start`
    for new work instead) and opens a fresh PR when the old one was closed.
-5. **Watch** — `pr-flow watch`, after every push. It blocks up to an hour,
+5. **Watch** — `pr-flow watch`, after every push, before you report it: a push
+   alone is not a result, and watch is what confirms the PR head is the commit
+   you pushed (a GitHub error can drop one). It blocks up to an hour,
    polling (`next poll in Ns` and, right after a push, `PR head … is not the
    pushed … yet` on stderr are normal) and waiting out CI that starts late. It
    returns one verdict:
@@ -60,9 +62,12 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    - `conflict` (11): sync with the base the way the output says, resolve,
      commit, push, watch again. That is `git fetch origin && git merge
      origin/<base>` and a plain push, unless the repo merges by rebase (no merge
-     commits allowed): a rebase merge cannot replay a merge commit, so there it
-     is `git rebase origin/<base>` and `git push --force-with-lease`, run only
-     with the user's OK. Never force-push in any other case.
+     commits allowed: a rebase merge cannot replay a merge commit) or the branch
+     is in a stack (its base is not a protected branch, or open PRs are based on
+     it — the output lists them). There it is `git rebase origin/<base>` and
+     `git push --force-with-lease`, run only with the user's OK, and then each
+     PR stacked on it rebased the same way, layer by layer. Never force-push in
+     any other case.
    - `review` (12): unresolved review threads, changes requested, a draft PR, or
      one blocked by branch protection. Address each thread (bot reviewers
      included) or the blocking condition, push, reply on the thread, watch again.
