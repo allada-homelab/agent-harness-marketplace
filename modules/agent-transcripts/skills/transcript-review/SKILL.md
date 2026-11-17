@@ -185,7 +185,8 @@ out the same candidates twice.
 3. Each child runs the whole loop above — `view` → answer the rubric → `record` — for every
    id in its slice, one after another, **in a single turn**, then reports back once with how
    many it reviewed. It never asks the parent whether to continue partway through its slice.
-4. The parent dispatches every child in parallel in one message, then waits on their
+4. The parent dispatches every child in parallel in one message (Sonnet on Claude Code,
+   `large-default` on any other harness), then waits on their
    completion notices. It does not poll `findings.db` for progress, and it does not send a
    follow-up nudge telling a child to keep going — a child that has not returned yet is still
    working, not stalled. Run `rollup` once, after every child has reported.

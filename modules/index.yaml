@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: agent-transcripts
-  version: 0.18.0
+  version: 0.18.1
   kinds:
   - skills
   - dsh-plugin
@@ -107,8 +107,9 @@ modules:
     - observability
     command: true
     summary: One-step fan-out review of the last N days of agent sessions (default 7) — refresh the index,
-      pick and batch sessions, read them with parallel cheap readers, cluster what they found with one
-      strong synthesizer, verify, and report the recurring problems with fixes.
+      pick and batch sessions, read them with parallel Sonnet readers, cluster what they found with one
+      Opus synthesizer (large-default for both off Claude), verify, and report the recurring problems
+      with fixes.
   - name: transcript-query
     path: modules/agent-transcripts/skills/transcript-query/SKILL.md
     harness:

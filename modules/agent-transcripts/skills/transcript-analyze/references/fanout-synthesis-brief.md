@@ -1,6 +1,7 @@
 # Fan-out synthesis brief
 
-The parent fills every `<…>` and dispatches this to **one** agent on a strong model after
+The parent fills every `<…>` and dispatches this to **one** agent — Opus on Claude Code, `large-default` on any other
+harness — after
 every reader has returned. It reads findings, not transcripts.
 
 ---

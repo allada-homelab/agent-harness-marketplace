@@ -12,6 +12,22 @@ pages the session, shows hidden content when you ask, refuses an analysis whose 
 not in the session or whose pages were not all read, and rolls analyses up. Every command
 below is `../transcript-review/review.py`.
 
+## Which model runs what
+
+**Not Claude? Use `large-default` for every agent you dispatch.** On pi, dsh or any harness running
+local models, the Claude names below do not exist: readers, the synthesizer and every
+other child agent run on `large-default`.
+
+On Claude Code:
+
+| Role | Model | Why |
+|---|---|---|
+| Fan-out readers, page readers of a long session | Sonnet | reading and quoting a bounded file |
+| Synthesizer, a whole-session analysis, `transcript-learn` apply agents | Opus | judgment across evidence and decisions about what to change |
+| `transcript-review` children | Sonnet | a fixed rubric; the script rejects an invented quote |
+
+`transcript-mine`'s `--model` overrides the reader row only.
+
 ## Before you start
 
 The index must exist (the `transcript-ingest` skill builds it). Start one run and keep its
@@ -166,8 +182,8 @@ Then go back to step 1 with the next session.
 
 ## A session longer than four pages
 
-Do not read it alone. Split its pages across child agents, a few pages each, in one
-message. Each child gets: the `native_id`, its page numbers, the run id, the path to this
+Do not read it alone. Split its pages across child agents (Sonnet on Claude, otherwise
+`large-default`), a few pages each, in one message. Each child gets: the `native_id`, its page numbers, the run id, the path to this
 skill, and this instruction: read each of its pages with `read --page N --run-id <run id>`,
 expand only what a judgment needs, and return notes in the step 2 form (ords and verbatim
 quotes included). A child sees none of your conversation, so put all of that in its
@@ -190,8 +206,9 @@ narrow it.
 ## Many sessions: a fan-out read
 
 The loop above is for a few sessions read by you. To find what goes wrong *across* weeks of
-sessions, split the reading across cheap parallel readers, then have one strong agent
-cluster what they found. Two scripts beside this file do the mechanical parts:
+sessions, split the reading across parallel readers (Sonnet), then have one Opus agent cluster what
+they found ("Which model runs what" above; `large-default` for both when you are not
+Claude). Two scripts beside this file do the mechanical parts:
 `./corpus.py` sizes and selects sessions, and writes each one as the single file
 `../transcript-review/review.py read <session> --all --mode auto` prints: the same view as
 the page loop above, whole, with long lines wrapped so a file reader loses nothing. This mode records JSON findings in a work dir instead of
@@ -211,7 +228,7 @@ what a reader needs, which is why `read` hides the rest.
 ### 2. Plan the read
 
 ```bash
-uv run --script ./corpus.py plan --run <name> --since 2026-11-02 --top 16 --random 12 --scripted 12
+uv run --script ./corpus.py plan --run <name> --since 2026-11-02 --top 16 --random 12 --scripted 6
 ```
 
 It picks three strata: interactive sessions where the human typed most (where corrections
@@ -228,8 +245,8 @@ only after the pilot's findings look real.
 ### 3. Dispatch one reader per batch
 
 Fill in `./references/fanout-reader-brief.md` for each batch and dispatch the readers in
-parallel, **at most 6 at a time**: start the next as one returns. Readers run on a mid-tier
-model: Sonnet on Claude, `large-default` on a harness that runs local models. A batch is at
+parallel, **at most 6 at a time**: start the next as one returns. Readers run on Sonnet on
+Claude Code, and on `large-default` on any other harness. A batch is at
 most 350,000 characters, about 90,000 tokens, which keeps every reader under 150,000 tokens
 with its brief and the instructions file. Give each reader the batch's file paths, the path to the
 user's standing agent instructions, its output path (`<work dir>/findings/batch-N.json`) and
@@ -240,7 +257,7 @@ the expand command: `uv run --script ../transcript-review/review.py expand <sess
 
 ### 4. Synthesize, then verify
 
-When every reader has returned, dispatch one strong-model agent with
+When every reader has returned, dispatch one agent (Opus on Claude Code, `large-default` on any other harness) with
 `./references/fanout-synthesis-brief.md`. It clusters findings by underlying behavior,
 checks each cluster against the user's standing instructions, and critiques the run. Before
 reporting a cluster, check its best evidence yourself with `review.py expand`. In the pilot

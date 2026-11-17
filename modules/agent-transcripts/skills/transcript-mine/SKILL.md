@@ -1,6 +1,6 @@
 ---
 name: transcript-mine
-description: One-step fan-out review of the last N days of agent sessions (default 7) — refresh the index, pick and batch sessions, read them with parallel cheap readers, cluster what they found with one strong synthesizer, verify, and report the recurring problems with fixes. Use when the user asks to "mine", "find learnings in" or "review" their recent sessions, or runs /transcript-mine.
+description: One-step fan-out review of the last N days of agent sessions (default 7) — refresh the index, pick and batch sessions, read them with parallel Sonnet readers, cluster what they found with one Opus synthesizer (large-default for both off Claude), verify, and report the recurring problems with fixes. Use when the user asks to "mine", "find learnings in" or "review" their recent sessions, or runs /transcript-mine.
 user-invocable: true
 argument-hint: "[days] [--concurrency N] [--model NAME] [--chars N]"
 tags: [observability]
@@ -15,8 +15,13 @@ Arguments: $ARGUMENTS
 |---|---|---|
 | days (a bare number) | 7 | how far back to look |
 | `--concurrency N` | 6 | readers running at once; the rest wait in a queue |
-| `--model NAME` | `sonnet` on Claude, `large-default` on local models | the readers' model |
+| `--model NAME` | `sonnet` on Claude Code; `large-default` on any other harness | the readers' model |
 | `--chars N` | 350000 | the most a reader is given, in characters (about 90,000 tokens) |
+
+**Not Claude? Use `large-default` for every agent you dispatch.** If you are not Claude Code (pi, dsh, a
+local model), the readers and the synthesizer both run on `large-default`, whatever
+this file says about Sonnet or Opus. The full table is in `../transcript-analyze/SKILL.md`,
+"Which model runs what".
 
 A `k` suffix means thousands (`--chars 500k`). Echo the settings you resolved before step 1.
 
@@ -62,7 +67,8 @@ Treat the manifest's batches as a queue. Start `--concurrency` readers on `--mod
 the background on its own batch; whenever one returns, start the next batch, until the queue
 is empty and every reader has returned. Report progress as `readers done/total`. A reader
 that fails is retried once on the same batch; a second failure is reported and the run goes
-on without that batch. Then run the synthesizer, on a strong model. Check the
+on without that batch. Then run the synthesizer: Opus on Claude Code, `large-default` on any other
+harness, never `--model`. Check the
 best evidence of every cluster you report with `review.py expand` before reporting it.
 
 ## 4. Report
