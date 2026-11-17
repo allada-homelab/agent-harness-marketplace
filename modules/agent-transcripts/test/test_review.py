@@ -1842,3 +1842,20 @@ def test_thread_lists_sessions_mentioning_a_term_in_time_order(index, tmp_path, 
     assert out.index("th1") < out.index("th2") and "th3" not in out
     assert "open a PR for the cache fix" in out
     assert "merge PR 4242 now that it is green" in out  # a bare /clear is not the request
+
+
+def test_corpus_plan_splits_an_oversize_session_into_parts_that_fit(index):
+    sid = index.session("huge")
+    for i in range(40):
+        index.user(sid, f"step {i}: " + "do the next thing " * 30)
+        index.assistant(sid, f"done {i} " + "z" * 2000)
+    index.close()
+
+    assert cp.main(["--dest", str(index.root), "plan", "--run", "t", "--top", "1", "--random", "0",
+                    "--scripted", "0", "--budget", "30000"]) == 0
+    manifest = json.loads((index.root / "work/t/manifest.json").read_text())
+    parts = [s for b in manifest["batches"] for s in b]
+    assert len(parts) > 1 and not manifest["oversize"]
+    assert all(s["chars"] <= 30000 and s["session_id"] == "huge" for s in parts)
+    second = next(s for s in parts if s["part"] == f"2/{len(parts)}")
+    assert Path(second["path"]).read_text().startswith(f"PART 2/{len(parts)} of session huge")

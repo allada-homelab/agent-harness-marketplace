@@ -220,14 +220,18 @@ several times higher in the first stratum, so do not report it alone), and whole
 runs (templated sessions such as review rounds, found by a shared long opening, never by
 the `injected` flag). It renders each into `<cache>/work/<name>/sessions/`, packs them into
 batches of at most `--budget` characters (default 350,000, about 90,000 tokens) without
-splitting a scripted run, and writes `manifest.json`. Sessions that do not fit one batch are
-listed as oversize: read those alone. Start with a pilot of about 40 sessions; scale up
+splitting a scripted run, and writes `manifest.json`. A session too large for one reader
+even as an outline is split into parts at human-turn boundaries (`<id>.partK.txt`, each with
+the session header and a `PART k/n` line); each part is a file of its own in the batches. Start with a pilot of about 40 sessions; scale up
 only after the pilot's findings look real.
 
 ### 3. Dispatch one reader per batch
 
-Fill in `./references/fanout-reader-brief.md` for each batch and dispatch every reader in
-one message, on a mid-tier model. Give each reader the batch's file paths, the path to the
+Fill in `./references/fanout-reader-brief.md` for each batch and dispatch the readers in
+parallel, **at most 6 at a time**: start the next as one returns. Readers run on a mid-tier
+model: Sonnet on Claude, `large-default` on a harness that runs local models. A batch is at
+most 350,000 characters, about 90,000 tokens, which keeps every reader under 150,000 tokens
+with its brief and the instructions file. Give each reader the batch's file paths, the path to the
 user's standing agent instructions, its output path (`<work dir>/findings/batch-N.json`) and
 the expand command: `uv run --script ../transcript-review/review.py expand <session> <ord>`
 (as an absolute path for the reader). A reader of about

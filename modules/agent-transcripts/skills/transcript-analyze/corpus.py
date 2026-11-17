@@ -31,8 +31,10 @@ Selection, and why:
 - **Interactive sessions are ranked by what the human typed**, boilerplate stripped by
   structure. The top of that ranking is where corrections live. A seeded random sample of
   the rest is the control, because issue yield is far higher in heavy-typing sessions.
-- A session whose render does not fit one batch is listed as oversize, not dropped
-  silently. Read it alone (see transcript-analyze, "A session longer than four pages").
+- A session whose render does not fit one batch, even as an outline, is split into parts at
+  human-turn boundaries; each part carries the session header and a `PART k/n` line, and
+  readers judge only their part. A single message too large for any part is listed as
+  oversize, never dropped silently.
 """
 
 from __future__ import annotations
@@ -49,8 +51,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "transcript-review"))
 from review import (  # noqa: E402  review.py also puts transcript-ingest on sys.path
-    GIT_ACTION, arg_field, capped, connect, git_actions, normalize, render_table, render_whole,
-    resolve_dest, resolve_session)
+    GIT_ACTION, arg_field, capped, connect, git_actions, normalize, paginate, read_units,
+    render_table, resolve_dest, resolve_session, whole_text)
 from signals import SIGNAL_TEXT_MAX, correction_text, human_text  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "transcript-query"))
@@ -185,6 +187,25 @@ def pack(units, budget):
     return [sessions for sessions, _ in bins]
 
 
+HEADER_ROOM = 10_000  # a part's header and line wrapping, so the part file stays under budget
+
+
+def render_parts(conn, native_id: str, budget: int) -> tuple[str, list[str]]:
+    """(mode, texts): the whole session, or numbered parts of it when it will not fit one
+    reader even as an outline. Each part carries the session header."""
+    session = resolve_session(conn, native_id)
+    mode, shown, units = read_units(conn, session, mode="auto", budget=budget)
+    parts = paginate(shown, budget - HEADER_ROOM) or [shown]
+    if len(parts) == 1:
+        return mode, [whole_text(conn, session, mode, shown, units)]
+    texts = []
+    for k, part in enumerate(parts, 1):
+        banner = (f"PART {k}/{len(parts)} of session {native_id}, ords {part[0].ord}–"
+                  f"{part[-1].ord}. Other readers have the other parts: judge only this one.\n")
+        texts.append(banner + whole_text(conn, session, mode, part, units))
+    return mode, texts
+
+
 def cmd_plan(conn, args) -> int:
     dest = resolve_dest(args.dest)
     work = dest / "work" / args.run
@@ -197,15 +218,20 @@ def cmd_plan(conn, args) -> int:
     oversize = []
     for r in chosen:
         native_id = r["session_id"]
-        mode, text = render_whole(conn, resolve_session(conn, native_id), budget=args.budget)
-        path = work / "sessions" / f"{native_id}.txt"
-        write_private(path, text)
-        entry = {"session_id": native_id, "path": str(path), "chars": len(text), "mode": mode,
-                 "stratum": r["stratum"], "group": r["group"], "typed_chars": r["typed"]}
-        if len(text) > args.budget:
-            oversize.append(entry)
-        else:
-            units[r["group"]].append(entry)
+        mode, texts = render_parts(conn, native_id, args.budget)
+        multi = len(texts) > 1
+        for k, text in enumerate(texts, 1):
+            name = f"{native_id}.part{k}" if multi else native_id
+            path = work / "sessions" / f"{name}.txt"
+            write_private(path, text)
+            entry = {"session_id": native_id, "path": str(path), "chars": len(text), "mode": mode,
+                     "stratum": r["stratum"], "group": r["group"], "typed_chars": r["typed"]}
+            if multi:
+                entry["part"] = f"{k}/{len(texts)}"
+            if len(text) > args.budget:  # one message larger than a reader
+                oversize.append(entry)
+            else:  # a part goes to a reader of its own; a scripted run stays together
+                units[name if multi else r["group"]].append(entry)
     batches = pack(list(units.values()), args.budget)
     manifest = {"run": args.run, "since": args.since, "until": args.until, "budget": args.budget, "seed": args.seed,
                 "strata": dict(collections.Counter(r["stratum"] for r in chosen)),
@@ -215,7 +241,7 @@ def cmd_plan(conn, args) -> int:
     print(f"plan: {len(rows)} main sessions since {args.since or 'the start'}, "
           f"{n_scripted_all} scripted; picked {len(chosen)} {manifest['strata']}")
     for i, b in enumerate(batches):
-        print(f"  batch {i}: {len(b)} sessions, {sum(s['chars'] for s in b):,} chars")
+        print(f"  batch {i}: {len(b)} files, {sum(s['chars'] for s in b):,} chars")
     for o in oversize:
         print(f"  oversize (read alone): {o['session_id']} {o['chars']:,} chars")
     print(f"manifest: {work / 'manifest.json'}")

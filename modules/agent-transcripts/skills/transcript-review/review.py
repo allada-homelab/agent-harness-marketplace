@@ -1502,12 +1502,6 @@ def whole_text(conn, session, mode, shown: list[Unit], units: list[Unit]) -> str
     return wrap("\n".join(header + [u.text for u in shown])) + "\n"
 
 
-def render_whole(conn, session, mode="auto", budget=FULL_BUDGET) -> tuple[str, str]:
-    """(mode used, whole text) for a session `corpus.py` writes for a reader."""
-    mode, shown, units = read_units(conn, session, mode=mode, budget=budget)
-    return mode, whole_text(conn, session, mode, shown, units)
-
-
 def cmd_read(args) -> int:
     dest = resolve_dest(args.dest)
     conn = connect(dest)
