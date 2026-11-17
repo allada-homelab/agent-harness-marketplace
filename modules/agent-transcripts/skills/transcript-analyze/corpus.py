@@ -41,7 +41,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "transcript-review"))
 from review import (  # noqa: E402  review.py also puts transcript-ingest on sys.path
-    connect, normalize, render_whole, resolve_dest, resolve_session, user_text)
+    connect, normalize, render_whole, resolve_dest, resolve_session)
+from signals import human_text  # noqa: E402
 from transcripts import assert_outside_worktree  # noqa: E402
 
 
@@ -109,7 +110,7 @@ def cmd_sizes(conn, args) -> int:
 
 
 def first_and_typed(conn, db_id, harness) -> tuple[str, int]:
-    texts = [user_text(t or "", harness) for (t,) in conn.execute(
+    texts = [human_text(t or "", harness) for (t,) in conn.execute(
         "SELECT text FROM messages WHERE session_id = ? AND role = 'user' ORDER BY ord", (db_id,))]
     texts = [t for t in texts if t]
     return (texts[0] if texts else ""), sum(len(t) for t in texts)
