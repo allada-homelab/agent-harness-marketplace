@@ -84,7 +84,10 @@ tool call, results hidden behind short hints, system rows by kind (a skill body 
 line, a compaction as a marked boundary with what the agent was doing, a background
 subagent's report shown and linked to its session), and, for sessions too large to read
 whole, an outline that folds scripted loops. `review.py expand` shows the full text behind
-any line, including a tool call's arguments. The skill ships the reader and synthesis
+any line, including a tool call's arguments. `corpus.py anchors` lists the moments to start
+a deep read from (corrections, interrupts, "tests pass" claims, and each push or merge with
+the human turn before it), `corpus.py thread <PR|ticket|branch>` follows one piece of work
+across sessions, and `review.py read --around <ord>` opens one moment in context. The skill ships the reader and synthesis
 briefs the fan-out uses, and a table of which setup answers which question.
 
 ## The learning pass

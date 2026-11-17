@@ -25,6 +25,8 @@ class Index:
     def __init__(self, root: Path):
         self.conn = sqlite3.connect(root / "transcripts.db")
         self.conn.executescript(tr.SCHEMA)
+        # SCHEMA is the migrated shape; say so, or open_db (build_fts) replays the migrations.
+        self.conn.execute(f"PRAGMA user_version = {len(tr.MIGRATIONS)}")
         self.conn.execute(
             "INSERT INTO files (id, harness, relpath, size, mtime, parser_version,"
             " status, parsed_at) VALUES (1, 'claude', 'a.jsonl', 1, 1, ?, 'ok', 'now')",
@@ -1779,3 +1781,64 @@ def test_corpus_refuses_to_write_inside_a_git_worktree(tmp_path):
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     with pytest.raises(SystemExit):
         cp.write_private(repo / "out" / "s.txt", "private")
+
+
+# ------------------------------------------------------------- anchors and threads
+
+
+@pytest.fixture
+def anchored(index, tmp_path, capsys):
+    s = index.session("an1")
+    index.user(s, "fix the flaky test")
+    index.assistant(s, "Fixed it. All 12 tests pass now.")
+    index.user(s, "no, don't touch the fixture")
+    index.user(s, "[Request interrupted by user]")
+    index.user(s, "commit and push")
+    index.call(s, "Bash", json.dumps({"command": "git commit -m x && git push origin b"}))
+    index.close()
+    assert cp.main(["--dest", str(tmp_path), "anchors"]) == 0
+    return capsys.readouterr().out
+
+
+def test_anchors_lists_a_correction(anchored):
+    assert "correction  no, don't touch the fixture" in anchored
+
+
+def test_anchors_lists_an_interrupt(anchored):
+    assert "interrupt" in anchored
+
+
+def test_anchors_lists_a_claim(anchored):
+    assert "claim" in anchored and "All 12 tests pass" in anchored
+
+
+def test_anchors_pairs_a_push_with_the_human_turn_before_it(anchored):
+    assert "push        after [5] commit and push" in anchored
+
+
+def test_read_around_shows_only_the_window(index, tmp_path, capsys):
+    s = index.session("ar1")
+    for i in range(30):
+        index.user(s, f"turn {i}")
+    index.close()
+
+    out = read(tmp_path, capsys, "ar1", "--around", "15", "--window", "2")
+    assert "[13] USER turn 12" in out and "[17] USER turn 16" in out
+    assert "[12] USER" not in out and "[18] USER" not in out
+
+
+def test_thread_lists_sessions_mentioning_a_term_in_time_order(index, tmp_path, capsys):
+    later = index.session("th2", started_at="2026-06-03T00:00:00Z")
+    index.user(later, "/clear"); index.user(later, "merge PR 4242 now that it is green")
+    earlier = index.session("th1", started_at="2026-06-01T00:00:00Z")
+    index.user(earlier, "open a PR for the cache fix")
+    index.assistant(earlier, "Opened PR 4242.")
+    index.session("th3")
+    index.close()
+    tr.build_fts(tmp_path)
+
+    assert cp.main(["--dest", str(tmp_path), "thread", "4242"]) == 0
+    out = capsys.readouterr().out
+    assert out.index("th1") < out.index("th2") and "th3" not in out
+    assert "open a PR for the cache fix" in out
+    assert "merge PR 4242 now that it is green" in out  # a bare /clear is not the request
