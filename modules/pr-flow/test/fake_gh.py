@@ -89,6 +89,8 @@ elif argv[:2] == ["pr", "merge"]:
         # merge_lag: how many post-merge `pr view` reads still say OPEN (GitHub read-after-write lag).
         replay["pr_view"] = [dict(views[-1], state="OPEN")] * int(replay.get("merge_lag", 0)) + [merged]
         save()
+elif argv[:2] == ["pr", "list"] and "--base" in argv:
+    print("\n".join(replay.get("stacked", {}).get(argv[argv.index("--base") + 1], [])))
 elif argv[:2] == ["pr", "list"]:
     head = argv[argv.index("--head") + 1]
     print("1" if head in replay.get("merged_branches", []) else "0")

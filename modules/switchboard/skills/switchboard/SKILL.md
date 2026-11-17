@@ -40,7 +40,9 @@ that lease. The rest are yours to keep. Another skill may add rules for a specif
    about writes you never described and about observed facts (such as a migration revision) that
    changed during your lease. Restore them before releasing, or say in `--result` why they stay.
 5. **Talk to sessions instead of making the user relay.** Before asking the user about another
-   session's work, ask that session.
+   session's work, ask that session. Before you work in an existing PR's worktree or branch,
+   run `switchboard find <PR url or branch>`: another live session on it can change files under
+   you, so agree with it first.
    - `switchboard post "<question or heads-up>" --to <name>`: it reaches a busy session after its
      current tool call (or before it goes idle) and stays on record. The output says when it will
      land; an idle session gets it at its next prompt. On Claude Code, also wake it with the

@@ -577,8 +577,24 @@ def merge_method(cwd):
     raise Fail("the repo allows no merge method")
 
 
-def sync_hint(cwd, base):
+def stacked_on(cwd, branch):
+    """URLs of open PRs whose base is `branch`; [] when gh cannot say."""
+    try:
+        return gh("pr", "list", "--base", branch, "--state", "open", "--json", "url", "--jq", ".[].url",
+                  cwd=cwd).split()
+    except Fail as e:
+        warn(f"could not list PRs based on {branch} ({e}); not checking for a stack")
+        return []
+
+
+def sync_hint(ctx, cwd, base):
     """How to bring the branch up to date with `base` so the repo's merge method still accepts it."""
+    above = stacked_on(cwd, ctx.branch)
+    if above or base not in PROTECTED:
+        # A stack is updated layer by layer by rebase; a merged-in base tangles every layer above it.
+        return (f"git fetch origin && git rebase origin/{base}, git push --force-with-lease once the user "
+                f"says go; then rebase each PR stacked on {ctx.branch} ({', '.join(above) or 'none open'}) "
+                f"onto it the same way — never merge {base} into a stack branch")
     try:
         method = merge_method(cwd)
     except Fail as e:
@@ -596,7 +612,7 @@ def do_merge(ctx, cwd, pr):
         gh("pr", "merge", str(pr["number"]), f"--{method}", "--match-head-commit", pr["headRefOid"], cwd=cwd)
     except Fail as e:
         rebase_cause = (", a merge commit on the branch (a rebase merge cannot replay one; "
-                        f"{sync_hint(cwd, branch_base(ctx.main_root, ctx.branch))})") if method == "rebase" else ""
+                        f"{sync_hint(ctx, cwd, branch_base(ctx.main_root, ctx.branch))})") if method == "rebase" else ""
         raise Fail(f"gh pr merge --{method} refused: {e}\nlikely causes: the head moved since watch saw it green "
                    f"(run watch again){rebase_cause}, or a branch-protection rule is unmet (approval, up-to-date "
                    "branch, required check)")
@@ -832,7 +848,7 @@ def cmd_watch(a):
                 print(f"{threads['n']} unresolved review thread(s) ({threads['outdated']} outdated, not counted); "
                       f"reviewDecision={pr.get('reviewDecision') or '-'}")
         elif verdict == "conflict":
-            print(f"conflicts with base; in the worktree: {sync_hint(cwd, branch_base(ctx.main_root, ctx.branch))}, "
+            print(f"conflicts with base; in the worktree: {sync_hint(ctx, cwd, branch_base(ctx.main_root, ctx.branch))}, "
                   "watch again")
         if st["attempts"] > MAX_ATTEMPTS:
             print(f"{st['attempts'] - 1} fix rounds used on this PR and this sixth verdict is still {verdict}")
@@ -843,7 +859,7 @@ def cmd_watch(a):
         if verdict == "green" and pr.get("mergeStateStatus") == "BEHIND":
             base = branch_base(ctx.main_root, ctx.branch)
             print(f"head is behind origin/{base}; a repo that requires up-to-date branches will refuse the merge "
-                  f"— in the worktree: {sync_hint(cwd, base)}, watch again")
+                  f"— in the worktree: {sync_hint(ctx, cwd, base)}, watch again")
     if verdict == "green" and (a.merge or a.merge_if_only):
         if grace_expired:
             print("this head's checks are unverified (none reported, or the PR head lagged the push); "
