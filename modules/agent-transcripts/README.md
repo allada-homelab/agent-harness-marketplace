@@ -9,6 +9,7 @@ the derived sqlite index over everything exported, `transcript-query` reads it t
 questions about tool use, sessions and activity across harnesses, `transcript-sweep`
 scans it for sessions worth a closer look, `transcript-review` judges those sessions one
 at a time, `transcript-analyze` reads one whole session and writes an analysis of it,
+`transcript-mine` runs analyze's fan-out read over the last N days in one command,
 `transcript-learn` turns what sessions taught into changes to each repo's agent knowledge,
 and the optional `transcript-decide` labels turns and sessions with a decision model.
 The raw files are
@@ -89,6 +90,9 @@ a deep read from (corrections, interrupts, "tests pass" claims, and each push or
 the human turn before it), `corpus.py thread <PR|ticket|branch>` follows one piece of work
 across sessions, and `review.py read --around <ord>` opens one moment in context. The skill ships the reader and synthesis
 briefs the fan-out uses, and a table of which setup answers which question.
+`/transcript-mine 7` runs the whole fan-out over the last seven days with these defaults:
+refresh the index, plan, read, synthesize, verify, and report, asking before
+`transcript-learn` lands anything.
 
 ## The learning pass
 
