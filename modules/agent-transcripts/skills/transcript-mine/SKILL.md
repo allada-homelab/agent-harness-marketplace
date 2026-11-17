@@ -44,9 +44,12 @@ that exits 75 means another ingest is running: wait for it, then go on.
 uv run --script ../transcript-analyze/corpus.py plan --run RUN --since SINCE --budget CHARS
 ```
 
-The defaults pick about 40 sessions: the 16 where the human typed most, 12 random
-interactive sessions as a control, and about 12 scripted sessions in whole runs. Report the
-plan's summary line and its batch count before dispatching. A session too large for one
+The defaults pick the 16 interactive sessions where the human typed most, 12 random
+interactive sessions as a control, and 6 scripted runs, each with all its rounds. Interactive
+sessions that work on the same PR or ticket count as one: only the one with the most typing
+is picked. The running session is skipped on Claude Code; on another harness, add
+`--exclude <your session id>` when you know it. Report the plan's summary line and its batch
+count before dispatching. A session too large for one
 reader arrives as `PART k/n` files spread over the batches.
 
 ## 3. Read and synthesize

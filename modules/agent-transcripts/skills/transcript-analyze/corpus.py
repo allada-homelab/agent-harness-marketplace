@@ -26,8 +26,13 @@ Selection, and why:
   whose first human message is a long template shared with at least two other sessions (a
   headless review round, a scheduled job) is scripted. Such a template counts as "user
   text", so it would otherwise top any ranking by how much the user typed. Scripted
-  sessions sharing a project are one run; a run is never split across batches, so one
-  reader sees the whole arc.
+  sessions sharing a project and an arc are one run; a run is never split across batches,
+  so one reader sees all its rounds. `--scripted` counts runs, not sessions.
+- **A session's arc is the PR or ticket its human turns name most.** Interactive sessions
+  on the same arc are not independent samples, so only the one with the most typing is
+  picked.
+- **The running session is never picked** (on Claude Code, from `CLAUDE_CODE_SESSION_ID`):
+  it is half written, and the reader would study the study.
 - **Interactive sessions are ranked by what the human typed**, boilerplate stripped by
   structure. The top of that ranking is where corrections live. A seeded random sample of
   the rest is the control, because issue yield is far higher in heavy-typing sessions.
@@ -44,6 +49,7 @@ import collections
 import csv
 import io
 import json
+import os
 import random
 import re
 import sys
@@ -70,6 +76,7 @@ def write_private(path: Path, text: str) -> None:
 BARE_COMMAND = re.compile(r"/\S+$")  # /clear, /model
 TEMPLATE_MIN_CHARS = 500  # a first message this long, shared by 3+ sessions, is a template
 TEMPLATE_MIN_SESSIONS = 3
+ARC_REF = re.compile(r"github\.com/[\w.-]+/[\w.-]+/pull/\d+|\b[A-Z][A-Z0-9]{1,9}-\d{2,}\b")
 
 SIZE_SQL = """
 SELECT s.id, s.native_id, s.kind, s.project_key, s.started_at,
@@ -124,13 +131,22 @@ def cmd_sizes(conn, args) -> int:
     return 0
 
 
-def first_and_typed(conn, db_id, harness) -> tuple[str, int]:
-    """(opening request, chars the human typed). A bare `/clear` is not what a session was for."""
+def human_texts(conn, db_id, harness) -> list[str]:
     texts = [human_text(t or "", harness) for (t,) in conn.execute(
         "SELECT text FROM messages WHERE session_id = ? AND role = 'user' ORDER BY ord", (db_id,))]
-    texts = [t for t in texts if t]
+    return [t for t in texts if t]
+
+
+def first_and_typed(texts: list[str]) -> tuple[str, int]:
+    """(opening request, chars the human typed). A bare `/clear` is not what a session was for."""
     first = next((t for t in texts if not BARE_COMMAND.match(t)), "")
     return first, sum(len(t) for t in texts)
+
+
+def arc(texts: list[str]) -> str | None:
+    """The PR URL or ticket id the human named most; the first named wins a tie."""
+    refs = collections.Counter(ref for t in texts for ref in ARC_REF.findall(t))
+    return refs.most_common(1)[0][0] if refs else None
 
 
 def opening(first: str) -> str | None:
@@ -142,19 +158,24 @@ def opening(first: str) -> str | None:
 
 def classify(conn, rows):
     for r in rows:
-        first, r["typed"] = first_and_typed(conn, r["db_id"], r["harness"])
-        r["opening"] = opening(first)
+        texts = human_texts(conn, r["db_id"], r["harness"])
+        first, r["typed"] = first_and_typed(texts)
+        r["opening"], r["arc"] = opening(first), arc(texts)
     shared = collections.Counter(r["opening"] for r in rows if r["opening"])
     for r in rows:
         r["scripted"] = bool(r["opening"]) and shared[r["opening"]] >= TEMPLATE_MIN_SESSIONS
-        r["group"] = f"run:{r['project']}" if r["scripted"] else r["session_id"]
+        run = f"run:{r['project']}" + (f":{r['arc']}" if r["arc"] else "")
+        r["group"] = run if r["scripted"] else r["session_id"]
     return rows
 
 
 def pick(rows, top, n_random, n_scripted, min_chars, seed):
     rng = random.Random(seed)
     live = [r for r in rows if r["user_chars"] + r["assistant_chars"] >= min_chars]
-    inter = sorted((r for r in live if not r["scripted"]), key=lambda r: -r["typed"])
+    by_arc = {}  # most typing first, so an arc keeps its heaviest session
+    for r in sorted((r for r in live if not r["scripted"]), key=lambda r: -r["typed"]):
+        by_arc.setdefault(r["arc"] or r["session_id"], r)
+    inter = list(by_arc.values())
     chosen = [dict(r, stratum="top_typing") for r in inter[:top]]
     rest = inter[top:]
     chosen += [dict(r, stratum="random") for r in rng.sample(rest, min(n_random, len(rest)))]
@@ -164,12 +185,8 @@ def pick(rows, top, n_random, n_scripted, min_chars, seed):
             runs[r["group"]].append(r)
     names = sorted(runs)
     rng.shuffle(names)
-    taken = 0
-    for name in names:
-        if taken >= n_scripted:
-            break
+    for name in names[:n_scripted]:
         chosen += [dict(r, stratum="scripted") for r in runs[name]]
-        taken += len(runs[name])
     return chosen
 
 
@@ -210,7 +227,9 @@ def cmd_plan(conn, args) -> int:
     dest = resolve_dest(args.dest)
     work = dest / "work" / args.run
     rows = classify(conn, sized(conn, args.since, args.until, "main", args.harness))
-    rows = [r for r in rows if not any(r["session_id"].startswith(x) for x in args.exclude)]
+    running = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    exclude = args.exclude + ([running] if running else [])
+    rows = [r for r in rows if not any(r["session_id"].startswith(x) for x in exclude)]
     n_scripted_all = sum(r["scripted"] for r in rows)
     chosen = pick(rows, args.top, args.random, args.scripted, args.min_chars, args.seed)
 
@@ -321,7 +340,7 @@ def cmd_thread(conn, args) -> int:
     for db_id, native_id, harness, started_at, n, first in hits:
         shipped = sum(len(found) for _, found in git_actions(conn, db_id))
         rows.append([(started_at or "")[:16], native_id, n, first, shipped,
-                     capped(first_and_typed(conn, db_id, harness)[0], 100)])
+                     capped(first_and_typed(human_texts(conn, db_id, harness))[0], 100)])
     if not rows:
         print(f"no session mentions {args.term!r}")
         return 0
@@ -347,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--harness")
     p.add_argument("--top", type=int, default=16, help="interactive sessions with the most typing")
     p.add_argument("--random", type=int, default=12, help="random interactive control sessions")
-    p.add_argument("--scripted", type=int, default=12, help="scripted sessions, in whole runs")
+    p.add_argument("--scripted", type=int, default=6, help="scripted runs, each read whole")
     p.add_argument("--min-chars", type=int, default=3000, help="skip sessions with less chat")
     p.add_argument("--budget", type=int, default=350_000, help="max chars per batch (one reader)")
     p.add_argument("--seed", type=int, default=0)

@@ -30,7 +30,11 @@ agent's standing instructions, skills, hooks and tools.
    cause; whether a standing instruction already covers it (quote it) or not; and one
    concrete fix with its home. When a rule exists and is being broken, more text will not
    help. Say why it is not working, and propose enforcement (a hook, a script that makes
-   the step hard to skip, shorter wording placed where it is read) instead.
+   the step hard to skip, shorter wording placed where it is read) instead. Report how many
+   of a cluster's issues are `self_reported`: when most are, the agent notices the problem
+   late, and the fix moves the check earlier; when few are, it needs a check outside the
+   agent. An issue resting on `cross_session_evidence` does not count toward a cluster
+   until you have checked it against its own session.
 4. Give a separate section for scripted runs: what they show about the prompts that drive
    them, with prompt-level fixes.
 5. Rank clusters by sessions affected × severity × how cheaply they can be fixed.
