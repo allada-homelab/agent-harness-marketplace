@@ -226,6 +226,8 @@ def render_parts(conn, native_id: str, budget: int) -> tuple[str, list[str]]:
 def cmd_plan(conn, args) -> int:
     dest = resolve_dest(args.dest)
     work = dest / "work" / args.run
+    if work.exists():  # another run's manifest and findings live there; never mix two runs
+        raise SystemExit(f"{work} already exists; pick a new --run")
     rows = classify(conn, sized(conn, args.since, args.until, "main", args.harness))
     running = os.environ.get("CLAUDE_CODE_SESSION_ID")
     exclude = args.exclude + ([running] if running else [])

@@ -43,7 +43,8 @@ that exits 75 means another ingest is running: wait for it, then go on.
 ## 2. Plan
 
 `SINCE` is today's date minus the days to cover, as `YYYY-MM-DD`. `RUN` is
-`mine-<today>-<days>d`.
+`mine-<today>-<HHMM>-<days>d`, so a second run on the same day gets a work dir of its
+own; `plan` refuses a run name whose work dir exists.
 
 ```bash
 uv run --script ../transcript-analyze/corpus.py plan --run RUN --since SINCE --budget CHARS
