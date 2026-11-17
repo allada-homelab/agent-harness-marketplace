@@ -1171,6 +1171,9 @@ def system_row(ord_: int, text: str, fallback_chars: int) -> tuple[str, str]:
         return "peer", f"[{ord_}] PEER MESSAGE {capped(text, PEER_CHARS)}"
     if text.startswith("<task-notification>"):
         return "notify", f"[{ord_}] TASK NOTIFICATION {capped(text, HINT_CHARS)}"
+    if text.startswith("Output style: "):
+        name = text.split("\n", 1)[0].removeprefix("Output style: ")
+        return "style", f"[{ord_}] OUTPUT STYLE {name} in effect ({len(text):,} chars; expand to read it)"
     if text.startswith("switchboard:") or "SessionStart" in text[:200]:
         return "context", f"[{ord_}] HARNESS CONTEXT ({len(text):,} chars)"
     return "other", f"[{ord_}] SYSTEM {capped(text, fallback_chars)}"
@@ -1399,12 +1402,16 @@ def session_facts(conn, session, units: list[Unit]) -> list[str]:
     commands = Counter(u.prose[:60] for u in units if u.kind == "user" and u.prose.startswith("/"))
     looped = [f"{k} ×{v}" for k, v in commands.most_common() if v >= LOOP_MIN]
     compactions = [str(u.ord) for u in units if u.kind == "compaction"]
+    styles = [re.sub(r"^\[\d+\] OUTPUT STYLE (.*) in effect \(.*", rf"\1 [{u.ord}]", u.lines[0])
+              for u in units if u.kind == "style"]
     n_subagents = conn.execute("SELECT count(*) FROM sessions WHERE parent_native_id = ?",
                                (native_id,)).fetchone()[0]
     facts = [f"last activity={last}  subagents={n_subagents}",
              "compactions at ords: " + (", ".join(compactions) or "none"),
              "commits / pushes / PR actions: " + ("; ".join(git[:25]) or "none")
              + (f"; … {len(git) - 25} more" if len(git) > 25 else "")]
+    if styles:
+        facts.append("output style (expand its ord for the text): " + "; ".join(styles))
     if looped:
         facts.append("repeated slash commands: " + "; ".join(looped))
     return facts

@@ -40,7 +40,9 @@ problems in the agent's *approach*; you fix nothing.
 - `════ COMPACTION ════` marks where the agent's memory was replaced by a summary. Judge
   what the agent did after it knowing it only had that summary.
 - `SUBAGENT REPORT` is what a background subagent sent back. `SKILL loaded` is a skill's
-  instructions entering the context.
+  instructions entering the context. `OUTPUT STYLE <name>` is the reply format the
+  agent was told to follow (the header names it too); when an issue may come from that
+  text, expand it and quote the line in `existing_rule`, with `fix_home` the style.
 - In an outline (`mode=outline` in the header), the work between two human turns is one
   `WORK` line of tool counts plus its errors, reports, dispatches and the agent's last
   message.

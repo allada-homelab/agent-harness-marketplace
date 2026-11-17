@@ -1640,6 +1640,16 @@ def test_read_marks_a_compaction_with_its_current_work(index, tmp_path, capsys):
     assert "compactions at ords: 1" in out
 
 
+def test_read_names_the_output_style_in_the_header_and_hides_its_text(index, tmp_path, capsys):
+    s = index.session("w5")
+    index.system(s, "Output style: Terse Mode\n\n" + "Answer in one line. " * 10)
+    index.close()
+
+    out = read(tmp_path, capsys, "w5")
+    assert "output style (expand its ord for the text): Terse Mode [1]" in out
+    assert "OUTPUT STYLE Terse Mode in effect" in out and "Answer in one line" not in out
+
+
 @pytest.fixture
 def delegated(index, tmp_path, capsys):
     s = index.session("w4")
@@ -1821,6 +1831,14 @@ def test_corpus_plan_skips_the_running_session(index, monkeypatch):
     manifest = plan_manifest(index, "--top", "5", "--random", "0", "--scripted", "0")
 
     assert picked(manifest) == ["done"]
+
+
+def test_corpus_plan_refuses_a_run_name_already_used(index):
+    index.user(index.session("done"), "fix the bug " * 300)
+    plan_manifest(index, "--top", "1", "--random", "0", "--scripted", "0")
+
+    with pytest.raises(SystemExit, match="already exists"):
+        cp.main(["--dest", str(index.root), "plan", "--run", "t"])
 
 
 def test_corpus_refuses_to_write_inside_a_git_worktree(tmp_path):
