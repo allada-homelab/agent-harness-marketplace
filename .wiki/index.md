@@ -4,6 +4,7 @@ okf_version: "0.2"
 
 # Gotcha
 
+* [A SIGNALS_VERSION bump makes an older installed review refuse the shared index](./signals-version-bump-breaks-shared-index.md) - 'no session signals at version' from review.py after a SIGNALS_VERSION bump: ingest rewrites the shared transcripts.db, so ingest only after the fleet pin carries the bump.
 * [annotate() resets parser-set injected flags on non-system rows](./annotate-wipes-parser-injected.md) - annotate() in transcripts.py clears injected on every non-system row outside its target set; keep harness-injected turns as role=system or the flag is wiped.
 * [Artifacts live beside dsh sessions, not inside them](./artifacts-live-beside-dsh-sessions.md) - Artifacts go in $DSH_HOME/artifacts/<key>/, a sibling of sessions/ (never inside sessions/<key>/), keyed like dsh's projectKey; dsh's chatfile viewer must allowlist that root.
 * [bin/check.sh fails on macOS without timeout binary](./check-sh-fails-on-macos-without-timeout.md) - bin/check.sh test suite fails on macOS hosts lacking timeout/gtimeout, though the fallback path passes; check assumes timeout exists to assert the fallback is reachable.
@@ -28,6 +29,7 @@ okf_version: "0.2"
 * [skill-creator trigger harness is unreliable for measuring descriptions](./skill-creator-trigger-harness-unreliable.md) - skill-creator's run_eval.py pollutes ~/.claude/commands and under-detects triggering (0-33% vs 12/12 independently), so run it from a scratch dir and measure with claude -p stream-json.
 * [SKILL.md body ~/ path: lint-skills.py fails it, tools/lint.sh passes it](./skill-body-home-path-lint.md) - lint-skills.py: absolute path '~/x' in body fails CI, though tools/lint.sh passes locally; run bin/lint-skills.py after editing a SKILL.md, because the body check is skill-only.
 * [SKILL.md description with ': ' breaks render-index.py YAML parse](./skill-description-colon-breaks-render-index.md) - render-index.py dies 'mapping values are not allowed here' on a SKILL.md description with an unquoted ': '; Claude loads it, PyYAML rejects it, so write `>-` or quote it.
+* [Test index built from SCHEMA fails migration with duplicate column](./test-index-user-version-zero-replays-migrations.md) - sqlite3 'duplicate column name: norm_key' in a test calling tr.build_fts or annotate: a SCHEMA-built index has user_version 0, so open_db replays MIGRATIONS; set the pragma.
 * [Transcript ingest FTS triggers dominate insert cost](./transcripts-fts-triggers-dominate-ingest.md) - transcripts.py ingest slowed to hours: per-row FTS5 triggers on messages cost ~100x the insert; v6 drops them and builds FTS in one pass — never reintroduce triggers, run `fts` when dirty.
 * [Untrusted worktree agent CLIs need more than a permission mode](./untrusted-worktree-agent-cli-isolation.md) - A permission mode alone does not isolate an agent CLI run on untrusted PR content; claude -p and codex exec each need extra isolation flags.
 

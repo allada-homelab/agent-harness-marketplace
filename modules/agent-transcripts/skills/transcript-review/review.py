@@ -1378,18 +1378,24 @@ def work_block(work: list[Unit]) -> list[Unit]:
     return [unit]
 
 
-def session_facts(conn, session, units: list[Unit]) -> list[str]:
-    """Header lines a reader orients by: span, compactions, commits and pushes, loops."""
-    session_id, native_id = session[0], session[2]
-    last = conn.execute("SELECT max(ts) FROM messages WHERE session_id = ?",
-                        (session_id,)).fetchone()[0]
-    git = []
+def git_actions(conn, session_id: int) -> list[tuple[int, list[str]]]:
+    """(ord, actions) for each shell call that commits, pushes or opens or merges a PR."""
+    out = []
     for ord_, args in conn.execute(
             "SELECT m.ord, t.arguments FROM tool_calls t JOIN messages m ON m.id = t.message_id"
             " WHERE m.session_id = ? AND lower(t.name) = 'bash' ORDER BY m.ord", (session_id,)):
         found = GIT_ACTION.findall(arg_field(args, "command"))
         if found:
-            git.append(f"[{ord_}] " + " + ".join(dict.fromkeys(f.strip() for f in found)))
+            out.append((ord_, list(dict.fromkeys(f.strip() for f in found))))
+    return out
+
+
+def session_facts(conn, session, units: list[Unit]) -> list[str]:
+    """Header lines a reader orients by: span, compactions, commits and pushes, loops."""
+    session_id, native_id = session[0], session[2]
+    last = conn.execute("SELECT max(ts) FROM messages WHERE session_id = ?",
+                        (session_id,)).fetchone()[0]
+    git = [f"[{ord_}] " + " + ".join(found) for ord_, found in git_actions(conn, session_id)]
     commands = Counter(u.prose[:60] for u in units if u.kind == "user" and u.prose.startswith("/"))
     looped = [f"{k} ×{v}" for k, v in commands.most_common() if v >= LOOP_MIN]
     compactions = [str(u.ord) for u in units if u.kind == "compaction"]
@@ -1516,6 +1522,11 @@ def cmd_read(args) -> int:
             log_access(dest, args.run_id, harness, native_id, kind="page", page=n,
                        page_count=len(pages), page_chars=args.page_chars)
         print(whole_text(conn, session, mode, [u for p in pages for u in p], units), end="")
+        return 0
+    if args.around is not None:
+        lo, hi = args.around - args.window, args.around + args.window
+        near = [u for page in pages for u in page if lo <= u.ord <= hi]
+        print(whole_text(conn, session, mode, near, units), end="")
         return 0
     if args.page == 1 or args.index:
         header += session_facts(conn, session, units)
@@ -2187,12 +2198,15 @@ def main(argv: list[str] | None = None) -> int:
     pick = rd.add_mutually_exclusive_group()
     pick.add_argument("--page", type=int, default=1, help="page to print (default 1)")
     pick.add_argument("--index", action="store_true", help="print the page table only")
+    pick.add_argument("--around", type=int, metavar="ORD",
+                      help="only the messages within --window ords of this one")
     pick.add_argument("--all", action="store_true",
                       help="the whole session at once, long lines wrapped (for a fan-out reader)")
     rd.add_argument("--mode", choices=("full", "outline", "auto"), default="full",
                     help="outline: one block per human turn, scripted loops folded; auto: "
                          "outline only when the full render exceeds --budget")
     rd.add_argument("--budget", type=int, default=FULL_BUDGET)
+    rd.add_argument("--window", type=int, default=12, help="ords either side, for --around")
     rd.add_argument("--page-chars", type=int, default=PAGE_CHARS,
                     help=f"page size in characters (default {PAGE_CHARS})")
     rd.add_argument("--user-chars", type=int, default=8000)

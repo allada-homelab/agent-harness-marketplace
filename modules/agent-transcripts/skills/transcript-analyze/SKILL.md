@@ -271,18 +271,39 @@ renders (seen 2026-11-16). What mattered:
 - **Loops are folded only for scripted turns.** A loop that also folded repeated short
   human replies hid the user's approvals.
 
+## Start from the moments that matter
+
+A deep read does not have to start at ord 1. Two commands find where to look, across every
+session in a window, without reading any of them:
+
+```bash
+uv run --script ./corpus.py anchors --since 2026-11-02            # --kind correction|interrupt|claim|push|merge
+uv run --script ./corpus.py thread 44203                          # a PR number, ticket id or branch
+uv run --script ../transcript-review/review.py read <session> --around <ord> --window 12
+```
+
+`anchors` lists each human correction and interrupt, each claim that tests pass, a fix works
+or CI is green, and each push or merge with the last thing the human said before it
+(`after [87] go`), so an unapproved push stands out. Claims are found by wording, so a
+question ("merge once CI is green?") is listed too; the reader judges. `thread` lists every
+main session that mentions the term, oldest first, with its opening request, hit count, first
+mention and number of commits and pushes, so one piece of work can be followed across
+compactions, restarts and review rounds. `--around` prints only the messages within
+`--window` ords of one anchor, and does not count as reading a page.
+
 ## Which question, which setup
 
 | You want to know | Select | View and brief |
 |---|---|---|
 | Where the agent goes wrong in general | `plan` with the default strata | The reader brief as written |
-| Why you keep having to correct it | `plan --top 30 --random 10 --scripted 0` | Tell readers to anchor on each correction and judge the agent's action just before it |
+| Why you keep having to correct it | `anchors --kind correction --kind interrupt`, or `plan --top 30 --random 10 --scripted 0` | Open each with `read --around`; judge the agent's action just before it |
 | Whether a prompt-driven skill works (a review skill, a scheduled monitor) | `plan --top 0 --random 0 --scripted 20`, or `--exclude` everything else | Give readers the skill's prompt files; the brief's scripted-run section asks for prompt-level fixes |
 | Whether a change you made helped | Two `plan` runs with the same seed and strata, one window each side of the change (`--until` / `--since`) | Same brief for both; compare the two `synthesis.json` cluster counts per session |
 | What happened in one long session | `review.py read <id> --mode auto`, paged as above | Split an outline over 350,000 characters across children by its `LOOP` and user-turn boundaries |
-| Whether it acted on approvals it really had | Any plan | Readers check the `USER` lines before each push, merge or external write |
+| Whether it acted on approvals it really had | `anchors --kind push --kind merge` | Each row names the human turn before the push; open the ones where that turn is not an approval |
 | What the agent lost at a compaction | Sessions with compactions (header `compactions at ords:`) | Compare the human's constraints before each boundary with the agent's actions after it |
-| Whether its "done" and "tested" claims hold | Any plan | Readers expand the result behind each claim; `../transcript-review/review.py grep` searches a whole session for the evidence |
+| Whether its "done" and "tested" claims hold | `anchors --kind claim` | `read --around` the claim, then expand the result behind it; `../transcript-review/review.py grep` searches a whole session for the evidence |
+| Everything that happened to one PR or ticket | `thread <PR, ticket or branch>` | Read the sessions in order, `--around` each first mention |
 | How well it delegates | Sessions with subagents (header count) | Briefs are shown up to 1,500 characters with the subagent's call counts; `review.py read <subagent id>` shows the subagent itself |
 | What a monitoring loop did over days | `review.py read <id> --mode auto` (picks the outline) | Each `LOOP` block lists each distinct outcome once and keeps every error |
 

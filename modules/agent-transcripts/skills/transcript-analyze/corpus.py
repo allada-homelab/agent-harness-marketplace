@@ -9,6 +9,14 @@ matter for reading them: human turns, assistant prose, system rows, and tool tra
 arguments plus results). Percentiles first, so you can size a reading budget before
 reading anything.
 
+`corpus.py anchors` lists the moments a deep read should start from, across sessions: each
+human correction and interrupt, each claim that tests pass or a fix works, and each push or
+merge paired with the last thing the human said before it. `review.py read <session>
+--around <ord>` opens one.
+
+`corpus.py thread <term>` follows one PR, ticket or branch across sessions: every main
+session that mentions it, oldest first, with its opening request and its commit and push count.
+
 `corpus.py plan --run <name>` picks sessions to read, renders each with `review.py read --all --mode auto` into
 `<cache>/work/<run>/sessions/`, and packs them into batches of at most `--budget`
 characters, one batch per reader. It writes `<cache>/work/<run>/manifest.json`.
@@ -41,8 +49,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "transcript-review"))
 from review import (  # noqa: E402  review.py also puts transcript-ingest on sys.path
-    connect, normalize, render_whole, resolve_dest, resolve_session)
-from signals import human_text  # noqa: E402
+    GIT_ACTION, arg_field, capped, connect, git_actions, normalize, render_table, render_whole,
+    resolve_dest, resolve_session)
+from signals import SIGNAL_TEXT_MAX, correction_text, human_text  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "transcript-query"))
+from search import quote_term, require_fresh_fts  # noqa: E402
 from transcripts import assert_outside_worktree  # noqa: E402
 
 
@@ -53,6 +65,7 @@ def write_private(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+BARE_COMMAND = re.compile(r"/\S+$")  # /clear, /model
 TEMPLATE_MIN_CHARS = 500  # a first message this long, shared by 3+ sessions, is a template
 TEMPLATE_MIN_SESSIONS = 3
 
@@ -110,10 +123,12 @@ def cmd_sizes(conn, args) -> int:
 
 
 def first_and_typed(conn, db_id, harness) -> tuple[str, int]:
+    """(opening request, chars the human typed). A bare `/clear` is not what a session was for."""
     texts = [human_text(t or "", harness) for (t,) in conn.execute(
         "SELECT text FROM messages WHERE session_id = ? AND role = 'user' ORDER BY ord", (db_id,))]
     texts = [t for t in texts if t]
-    return (texts[0] if texts else ""), sum(len(t) for t in texts)
+    first = next((t for t in texts if not BARE_COMMAND.match(t)), "")
+    return first, sum(len(t) for t in texts)
 
 
 def opening(first: str) -> str | None:
@@ -207,6 +222,88 @@ def cmd_plan(conn, args) -> int:
     return 0
 
 
+INTERRUPT = "[Request interrupted by user"
+CLAIM = re.compile(r"\b(?:(?:all )?(?:\d+ )?tests? (?:all )?pass(?:ed|es)?|verified|works now|is fixed"
+                   r"|(?:CI|checks?) (?:is |are )?green)\b", re.I)
+ANCHOR_WIDTH = 120
+PUSH = re.compile(r"git (?:-C \S+ )?push\b")  # a verb, not a word inside a commit message
+ANCHOR_SQL = """
+SELECT s.native_id, s.harness, m.ord, m.role,
+  CASE WHEN m.role = 'assistant' THEN substr(m.text, -2000)
+       WHEN length(m.text) <= :max THEN m.text END,
+  CASE WHEN lower(t.name) = 'bash' THEN t.arguments END
+FROM sessions s JOIN messages m ON m.session_id = s.id
+LEFT JOIN tool_calls t ON t.message_id = m.id
+WHERE s.kind = 'main' AND m.role IN ('user', 'assistant')
+  AND (:since IS NULL OR s.started_at >= :since) AND (:until IS NULL OR s.started_at < :until)
+ORDER BY s.started_at, s.id, m.ord, m.id
+"""
+
+
+def find_anchors(conn, since, until) -> list[tuple[str, int, str, str]]:
+    """(session, ord, kind, what) for every correction, interrupt, claim and push or merge."""
+    out, last_human, prev = [], {}, None
+    for native_id, harness, ord_, role, text, bash in conn.execute(
+            ANCHOR_SQL, {"max": SIGNAL_TEXT_MAX, "since": since, "until": until}):
+        if role == "user" and text:
+            if text.startswith(INTERRUPT):
+                out.append((native_id, ord_, "interrupt", ""))
+                continue
+            said = human_text(text, harness)
+            if correction_text(text, harness):
+                out.append((native_id, ord_, "correction", said))
+            if said:
+                last_human[native_id] = (ord_, said)
+        elif role == "assistant":
+            claim = CLAIM.search(text or "") if (native_id, ord_) != prev else None
+            prev = (native_id, ord_)  # one row per tool call: claim once per message
+            if claim:
+                out.append((native_id, ord_, "claim", text[max(0, claim.start() - 80):claim.end() + 40]))
+            actions = GIT_ACTION.findall(arg_field(bash, "command")) if bash else []
+            kinds = {"push" if PUSH.match(a) else "merge" for a in actions
+                     if PUSH.match(a) or a.endswith("merge") or a.startswith("gh pr merge")}
+            kind = "merge" if "merge" in kinds else "push" if kinds else None
+            if kind:  # a commit or a PR opened is not the moment that needs an approval
+                before = last_human.get(native_id)
+                said = f"after [{before[0]}] {before[1]}" if before else "no human turn before it"
+                out.append((native_id, ord_, kind, said))
+    return out
+
+
+def cmd_anchors(conn, args) -> int:
+    found = [a for a in find_anchors(conn, args.since, args.until)
+             if not args.kind or a[2] in args.kind]
+    print(", ".join(f"{k} {n}" for k, n in collections.Counter(
+        a[2] for a in found).most_common()) or "no anchors")
+    rows = [[sid, ord_, kind, capped(what, ANCHOR_WIDTH)] for sid, ord_, kind, what in found[:args.limit]]
+    if rows:
+        print(render_table(["session", "ord", "kind", "what"], rows))
+        print(f"\n{len(found)} anchors; `review.py read <session> --around <ord>` shows one in context")
+    return 0
+
+
+def cmd_thread(conn, args) -> int:
+    require_fresh_fts(conn)
+    hits = conn.execute(
+        "SELECT s.id, s.native_id, s.harness, s.started_at, count(*), min(m.ord)"
+        " FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid"
+        " JOIN sessions s ON s.id = m.session_id"
+        " WHERE messages_fts MATCH ? AND s.kind = 'main'"
+        " GROUP BY s.id ORDER BY s.started_at, s.id LIMIT ?",
+        (quote_term(args.term), args.limit)).fetchall()
+    rows = []
+    for db_id, native_id, harness, started_at, n, first in hits:
+        shipped = sum(len(found) for _, found in git_actions(conn, db_id))
+        rows.append([(started_at or "")[:16], native_id, n, first, shipped,
+                     capped(first_and_typed(conn, db_id, harness)[0], 100)])
+    if not rows:
+        print(f"no session mentions {args.term!r}")
+        return 0
+    print(render_table(["started", "session", "hits", "first", "git", "request"], rows))
+    print("\n`review.py read <session> --around <first>` opens the first mention")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -229,9 +326,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--budget", type=int, default=350_000, help="max chars per batch (one reader)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--exclude", action="append", default=[], help="session id prefix to skip")
+    a = sub.add_parser("anchors", help="corrections, interrupts, claims, pushes and merges")
+    a.add_argument("--since")
+    a.add_argument("--until")
+    a.add_argument("--kind", action="append",
+                   choices=("correction", "interrupt", "claim", "push", "merge"),
+                   help="only these kinds (repeatable)")
+    a.add_argument("--limit", type=int, default=200)
+    t = sub.add_parser("thread", help="every session that mentions a PR, ticket or branch")
+    t.add_argument("term", help="a PR number, ticket id, branch name or other phrase")
+    t.add_argument("--limit", type=int, default=60)
     args = ap.parse_args(argv)
     conn = connect(resolve_dest(args.dest))
-    return cmd_sizes(conn, args) if args.cmd == "sizes" else cmd_plan(conn, args)
+    return {"sizes": cmd_sizes, "plan": cmd_plan, "anchors": cmd_anchors,
+            "thread": cmd_thread}[args.cmd](conn, args)
 
 
 if __name__ == "__main__":
