@@ -1,6 +1,6 @@
 ---
 name: transcript-query
-description: Query the agent-transcripts sqlite index to measure tool use, sessions, projects and activity across Claude Code, pi and dsh without loading transcript prose into context. Use when the user wants to "query transcripts", "how often did I use X", "find sessions where …", or any question answered from chat history. Aggregates first, bounded excerpts only where judgment is required.
+description: Query the agent-transcripts sqlite index to measure tool use, sessions, projects and activity across Claude Code, pi and dsh without loading transcript prose into context. Use when the user wants to "query transcripts", "how often did I use X", "find sessions where …", "which sessions or tools cost the most tokens", or any question answered from chat history. Aggregates first, bounded excerpts only where judgment is required.
 tags: [observability]
 ---
 
@@ -124,6 +124,126 @@ GROUP BY 1 ORDER BY chat DESC
 ```
 
 `../transcript-analyze/corpus.py sizes` prints the same split as percentiles.
+
+### Where the tokens go: cost by session, model and tool
+
+Token kinds are not priced alike, so a raw sum ranks the wrong things first. Weigh them in
+**input-equivalent units**: `input + 5 × output + 0.1 × cache_read + 2 × cache_write`. These
+are the published price ratios between token kinds. Claude Code writes the one-hour cache
+(2×; the five-minute cache is 1.25×), and the index does not split the two. The units rank
+and compare; they are not dollars, because the input price differs per model and per mode.
+
+The index does not hold every token Claude Code spends. Background calls (titles,
+classifiers, compaction) write no message row. In one index, the message rows held 87% of
+the cost that Claude Code's own `cost-state` records report, and 43% of Haiku's (seen
+2026-11-18).
+
+Each recipe takes a start date (`2026-10-01`).
+
+The costliest sessions, with each subagent rolled into the session that started it:
+
+```sql
+WITH u AS (
+  SELECT s.harness, coalesce(s.parent_native_id, s.native_id) AS root, s.kind = 'subagent' AS sub,
+         coalesce(m.input_tokens, 0) + 5 * coalesce(m.output_tokens, 0)
+         + 0.1 * coalesce(m.cache_read_tokens, 0) + 2 * coalesce(m.cache_write_tokens, 0) AS units
+  FROM messages m JOIN sessions s ON s.id = m.session_id
+  WHERE m.output_tokens IS NOT NULL AND m.ts >= ?
+)
+SELECT u.root, p.project_key, p.started_at, round(sum(units) / 1e6, 1) AS m_units,
+       round(100.0 * sum(CASE WHEN sub THEN units END) / sum(units)) AS pct_subagent
+FROM u LEFT JOIN sessions p ON p.native_id = u.root AND p.harness = u.harness AND p.kind = 'main'
+GROUP BY u.harness, u.root ORDER BY m_units DESC
+```
+
+A session's cost by model, main thread against subagents (the place to see whether
+subagents run on a cheaper model):
+
+```sql
+SELECT s.kind, m.model, count(*) AS api_calls,
+       round(sum(coalesce(m.input_tokens, 0) + 5 * coalesce(m.output_tokens, 0)
+           + 0.1 * coalesce(m.cache_read_tokens, 0) + 2 * coalesce(m.cache_write_tokens, 0)) / 1e6, 1)
+         AS m_units
+FROM messages m JOIN sessions s ON s.id = m.session_id
+WHERE m.output_tokens IS NOT NULL AND m.ts >= ?
+GROUP BY 1, 2 ORDER BY m_units DESC
+```
+
+**What a tool costs is not its output size.** A tool result enters the context once, as a
+cache write. After that, every API call in the session reads it from the cache again,
+until a compaction removes it. So a 4,000-token result read again by 200 later calls
+costs about 80,000 more units, on top of the 8,000-unit write. The next recipe charges each
+result as `tokens × (2 + 0.1 × later calls)`. The token count is an estimate of
+characters ÷ 4, and the result's context ends at the next compaction summary (Claude only;
+other harnesses mark compaction differently). Each result row belongs to exactly one call
+(seen 2026-11-18), so no result is counted twice:
+
+```sql
+-- recipe: tool-residency
+WITH seq AS (
+  SELECT m.id, m.session_id, length(m.text) AS chars,
+         sum(m.output_tokens IS NOT NULL) OVER w AS calls_before,
+         sum(m.role = 'system' AND m.text LIKE 'This session is being continued from a previous%')
+           OVER w AS epoch
+  FROM messages m
+  WHERE m.harness = 'claude'
+    AND m.session_id IN (SELECT session_id FROM messages WHERE ts >= ?)
+  WINDOW w AS (PARTITION BY m.session_id ORDER BY m.ord)
+),
+span AS (SELECT session_id, epoch, max(calls_before) AS calls_end FROM seq GROUP BY 1, 2)
+SELECT t.name, count(*) AS calls, round(avg(r.chars) / 4) AS avg_tokens,
+       round(avg(sp.calls_end - r.calls_before)) AS avg_later_calls,
+       round(sum(r.chars / 4.0 * (2 + 0.1 * (sp.calls_end - r.calls_before))) / 1e6, 2) AS m_units
+FROM tool_calls t
+JOIN seq r ON r.id = t.result_message_id
+JOIN span sp ON sp.session_id = r.session_id AND sp.epoch = r.epoch
+GROUP BY 1 ORDER BY m_units DESC
+```
+
+To see which targets of one tool cost the most (the files `Read` loads, the commands
+`Bash` runs, the URLs `WebFetch` gets), keep the `seq` and `span` steps above. Then
+replace the final `SELECT` with this one, and pass the tool name as a second parameter:
+
+```sql
+SELECT coalesce(json_extract(t.arguments, '$.file_path'), json_extract(t.arguments, '$.url'),
+                substr(json_extract(t.arguments, '$.command'), 1, 40),
+                substr(t.arguments, 1, 60)) AS target,
+       count(*) AS calls, round(avg(r.chars) / 4) AS avg_tokens,
+       round(sum(r.chars / 4.0 * (2 + 0.1 * (sp.calls_end - r.calls_before))) / 1e6, 2) AS m_units
+FROM tool_calls t
+JOIN seq r ON r.id = t.result_message_id
+JOIN span sp ON sp.session_id = r.session_id AND sp.epoch = r.epoch
+WHERE t.name = ? GROUP BY 1 ORDER BY m_units DESC
+```
+
+Cost by Claude subagent type (`Explore`, `implementer`, …) and model. The type is in the
+`Agent` call's arguments (no type means `general-purpose`). The call's result text names
+the agent as `agentId: <17 hex chars>`, and the subagent's session is `agent-<that id>`
+(seen 2026-11-18). Workflow agents are not started by an `Agent` call, so they do not
+appear here:
+
+```sql
+WITH spawn AS (
+  SELECT DISTINCT coalesce(json_extract(t.arguments, '$.subagent_type'), 'general-purpose')
+           AS agent_type,
+         'agent-' || substr(r.text, instr(r.text, 'agentId: ') + 9, 17) AS native_id
+  FROM tool_calls t JOIN messages r ON r.id = t.result_message_id
+  WHERE t.harness = 'claude' AND t.name = 'Agent' AND r.text LIKE '%agentId: %'
+),
+cost AS (
+  SELECT s.native_id, m.model,
+         coalesce(m.input_tokens, 0) + 5 * coalesce(m.output_tokens, 0)
+         + 0.1 * coalesce(m.cache_read_tokens, 0) + 2 * coalesce(m.cache_write_tokens, 0) AS units
+  FROM messages m JOIN sessions s ON s.id = m.session_id
+  WHERE s.harness = 'claude' AND s.kind = 'subagent' AND m.output_tokens IS NOT NULL
+    AND m.ts >= ?
+)
+SELECT sp.agent_type, c.model, count(DISTINCT c.native_id) AS agents,
+       round(sum(c.units) / 1e6, 1) AS m_units,
+       round(sum(c.units) / count(DISTINCT c.native_id) / 1e3) AS k_units_per_agent
+FROM cost c JOIN spawn sp ON sp.native_id = c.native_id
+GROUP BY 1, 2 ORDER BY m_units DESC
+```
 
 ## Schema facts that change answers
 
