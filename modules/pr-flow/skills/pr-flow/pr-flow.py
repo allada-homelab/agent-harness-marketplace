@@ -657,6 +657,19 @@ def pr_merged_on_github(root, branch):
     return p.stdout.strip() not in ("0", "")
 
 
+def host_path(wt, root):
+    """The host path of `wt` when pr-flow runs inside the dev container of the checkout at `root`.
+
+    devc labels a container with its host folder, so a container path matches nothing. The
+    container learns its host folder only from LOCAL_WORKSPACE_FOLDER (set from
+    ${localWorkspaceFolder} in devcontainer.json); the basename check keeps a container whose
+    checkout is somewhere else (a worktree's, whose main root is not mounted) from mapping."""
+    local = os.environ.get("LOCAL_WORKSPACE_FOLDER")
+    if not local or Path(local).name != root.name or not wt.is_relative_to(root):
+        return wt
+    return Path(local) / wt.relative_to(root)
+
+
 def devc_down(wt):
     # Nothing else removes a worktree's dev container, image and volumes once the worktree is
     # gone, so reclaim them here when devc is installed. Best effort: never blocks teardown.
@@ -716,7 +729,7 @@ def teardown(ctx, branch, dry_run=False):
         print(f"would remove {wt}, delete {branch} locally and delete origin/{branch}")
         return
     if wt is not None:
-        devc_down(wt)
+        devc_down(host_path(wt, root))
         git("worktree", "remove", "--force", wt, cwd=root)
     git("branch", "-D", branch, cwd=root)
     if subprocess.run([GIT, "push", "-q", "origin", "--delete", branch], cwd=root, capture_output=True).returncode:

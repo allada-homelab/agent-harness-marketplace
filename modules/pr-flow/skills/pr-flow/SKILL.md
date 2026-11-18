@@ -105,6 +105,9 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    leave no ancestor). When a `devc` executable is on PATH it first runs
    `devc down <worktree>` to remove the worktree's dev container, image and
    per-worktree volumes; a failure there is a warning, never a blocked teardown.
+   Inside a dev container that exports `LOCAL_WORKSPACE_FOLDER` (the host folder
+   of its checkout), it passes devc the worktree's host path, which is what
+   devc labels containers with.
    `pr-flow gc` tears down every worktree whose PR has
    merged; run it when you notice stale worktrees.
    Same cwd rule as `watch`: run `teardown` from outside the worktree, or the
