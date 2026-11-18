@@ -338,8 +338,8 @@ write_prior() {
 # Builds the shared snapshot both reviewers see: PR metadata, the full diff, and
 # a detached worktree at the PR head so file reads land on the right revision.
 cmd_prepare() {
-  local pr="" task="" claude_model="opus" claude_effort="high"
-  local codex_model="gpt-6.1-sol" codex_effort="high" timeout_s=2400
+  local pr="" task="" claude_model="claude-opus-5-5" claude_effort="medium"
+  local codex_model="gpt-6.2-sol" codex_effort="medium" timeout_s=2400
   local since="" context_repos=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -775,8 +775,8 @@ case "${1:-}" in
 usage: dual_review.sh <command>
   preflight
   prepare --pr <url|number> --task <text>
-          [--claude-model opus] [--claude-effort high]
-          [--codex-model gpt-6.1-sol] [--codex-effort high] [--timeout 2400]
+          [--claude-model claude-opus-5-5] [--claude-effort medium]
+          [--codex-model gpt-6.2-sol] [--codex-effort medium] [--timeout 2400]
           [--since <prior run_dir>] [--context-repo <path>]...
   run     [--only claude|codex] <run_dir> <round> <findings|verdicts|comment-verdicts>
   status  <run_dir> <round>

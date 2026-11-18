@@ -57,10 +57,10 @@ Model and reasoning effort are per-agent and independently settable:
 
 | Flag | Default | Accepts |
 |---|---|---|
-| `--claude-model` | `opus` | `opus`, `sonnet`, `fable`, or a full model id |
-| `--claude-effort` | `high` | `low`, `medium`, `high`, `xhigh`, `max` |
-| `--codex-model` | `gpt-6.1-sol` | any model your codex auth allows |
-| `--codex-effort` | `high` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
+| `--claude-model` | `claude-opus-5-5` | `opus`, `sonnet`, `fable`, or a full model id |
+| `--claude-effort` | `medium` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `--codex-model` | `gpt-6.2-sol` | any model your codex auth allows |
+| `--codex-effort` | `medium` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
 | `--timeout` | `2400` | seconds, per agent per round |
 
 If the user names models or effort ("run codex at xhigh", "use sonnet for the
