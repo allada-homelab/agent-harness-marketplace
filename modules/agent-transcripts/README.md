@@ -19,6 +19,8 @@ one script that ships beside the ingest skill.
 Because the index holds the user's whole chat history, `transcript-query` is built around
 aggregates: its helper caps every cell and every result set, so answering a question does not
 empty transcript prose into the context asking it.
+Its cost recipes rank sessions, models, subagent types and tools by cache-weighted token
+units, and charge each tool result for every later API call that reads it again.
 
 The query skill ships four scripts. `query.py` runs one arbitrary capped SELECT. `search.py`
 answers "which sessions talk about X" and adds two knobs for a real hunt: `--exclude-injected`
