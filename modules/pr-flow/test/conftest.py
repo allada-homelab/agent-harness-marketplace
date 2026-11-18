@@ -35,7 +35,9 @@ def repo(tmp_path):
 
 def _base_env():
     # PR_FLOW_DEVC names no executable by default, so teardown never reaches a real devc/docker.
-    return dict(os.environ, PR_FLOW_GH=str(FAKE_GH), PR_FLOW_SLEEP="0", PR_FLOW_DEVC="pr-flow-test-no-devc")
+    # LOCAL_WORKSPACE_FOLDER is dropped so a run inside a dev container tests the host behavior.
+    env = {k: v for k, v in os.environ.items() if k != "LOCAL_WORKSPACE_FOLDER"}
+    return dict(env, PR_FLOW_GH=str(FAKE_GH), PR_FLOW_SLEEP="0", PR_FLOW_DEVC="pr-flow-test-no-devc")
 
 
 def popen(*args, cwd):
