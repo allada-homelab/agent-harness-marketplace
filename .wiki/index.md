@@ -37,6 +37,7 @@ okf_version: "0.2"
 
 * [Dual-review posts only worth-raising findings](./dual-review-posts-only-worth-raising.md) - dual-agent-pr-review posts only blocking, non-blocking and unresolved findings as a pending draft; nits and not-worth-raising ones stay in final.md, since low tiers were noise.
 * [Fan-out arcs key each session on its most-mentioned PR or ticket](./fanout-arc-key-most-mentioned-ref.md) - corpus.py arc() dedupes sessions by their most-mentioned PR or ticket; linking every shared reference merged 28 of 75 sessions into one arc.
+* [Repo-sweep ledger lives outside the checkout; sync clears the unit queue](./repo-sweep-ledger-outside-checkout.md) - repo-sweep ledger is a sqlite file under $XDG_STATE_HOME, not the repo, so parallel fix PRs never conflict; never run sync between a fixer finishing and repo-sweep pr, it drops the unit.
 
 # Runbook
 
