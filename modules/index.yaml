@@ -627,6 +627,43 @@ modules:
     - reverse-engineering
     command: true
     summary: Reverse-engineer a compiled target with REA (Reverse Engineer Anything).
+- name: repo-sweep
+  version: 0.1.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  - pi
+  - dsh
+  description: 'Whole-repository review sweep on any harness: split the repo into parts, fan out finders
+    over five lenses, prove every finding, track each one in a ledger across runs, and (on request) open
+    fix pull requests.'
+  skills:
+  - name: repo-sweep
+    path: modules/repo-sweep/skills/repo-sweep/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - quality
+    - review
+    command: true
+    summary: Read-only review sweep of a whole repository, with a ledger that tracks every finding across
+      runs.
+  - name: repo-sweep-fix
+    path: modules/repo-sweep/skills/repo-sweep-fix/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - github
+    - quality
+    - review
+    command: true
+    summary: Fix the confirmed findings in the repo-sweep ledger.
 - name: simplify
   version: 0.3.0
   kinds:
