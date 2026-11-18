@@ -40,6 +40,8 @@ importers:
 
   modules/rea: {}
 
+  modules/repo-sweep: {}
+
   modules/simplify: {}
 
   modules/sleep-guard: {}

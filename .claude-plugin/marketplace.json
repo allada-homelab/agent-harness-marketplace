@@ -118,6 +118,13 @@
       "category": "development",
       "version": "0.7.2",
       "source": "./modules/switchboard"
+    },
+    {
+      "name": "repo-sweep",
+      "description": "Whole-repository review sweep on any harness: split the repo into parts, fan out finders over five lenses, prove every finding, track each one in a ledger across runs, and (on request) open fix pull requests.",
+      "category": "development",
+      "version": "0.1.0",
+      "source": "./modules/repo-sweep"
     }
   ]
 }
