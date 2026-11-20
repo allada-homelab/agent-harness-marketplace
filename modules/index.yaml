@@ -482,7 +482,7 @@ modules:
       out the commit before a fix, re-implement it with pi-run from the issue alone, and grade the result
       against the merged change as ground truth (MATCH / PARTIAL / MISS).
 - name: okf-wiki
-  version: 0.1.19
+  version: 0.1.20
   kinds:
   - skills
   - dsh-plugin
@@ -628,7 +628,7 @@ modules:
     command: true
     summary: Reverse-engineer a compiled target with REA (Reverse Engineer Anything).
 - name: repo-sweep
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - skills
   - dsh-plugin
@@ -665,7 +665,7 @@ modules:
     command: true
     summary: Fix the confirmed findings in the repo-sweep ledger.
 - name: simplify
-  version: 0.3.0
+  version: 0.3.1
   kinds:
   - skills
   - dsh-plugin

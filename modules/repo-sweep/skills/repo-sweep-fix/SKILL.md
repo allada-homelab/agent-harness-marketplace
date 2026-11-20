@@ -33,7 +33,9 @@ that works for them.
 One type: `repo-sweep:fixer`. Dispatch it with the Agent tool on Claude Code
 (`subagent_type`, `model` set to `opus`, in the background), or with
 `delegate_agent` on pi and dsh (`agent_type`; on pi run `/agents` once if the
-tool is missing). With no delegation tool, do each unit yourself, one at a
+tool is missing). On Hermes use `delegate_task`, one `tasks` entry per unit:
+`goal` is the prompt, `context` is the body of `./../../agents/fixer.md`. With
+no delegation tool, do each unit yourself, one at a
 time, using `./../../agents/fixer.md` as your instructions.
 
 **Not Claude? Use `large-default` for every agent you dispatch.**
