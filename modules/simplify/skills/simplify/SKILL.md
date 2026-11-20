@@ -25,6 +25,9 @@ per lens: `reuse`, `simplification`, `efficiency`, `altitude`.
 - **pi and dsh**: the `delegate_agent` tool with `agent_type` set to the type
   above. On pi the tool is inactive until this skill is invoked; if it is
   missing, run `/agents` once.
+- **Hermes**: `delegate_task` has no agent types. Put one entry per lens in its
+  `tasks` array: `goal` is the brief, `context` is the body of
+  `./../../agents/reviewer.md` beside this skill.
 - **No delegation tool at all**: run each lens yourself, sequentially, using
   the agent's body as your brief. The definition is in
   `./../../agents/reviewer.md` beside this skill.

@@ -132,7 +132,9 @@ The agents are `okf-wiki:scribe`, `okf-wiki:explorer`, `okf-wiki:auditor` and
 `okf-wiki:lander`. On Claude Code use the Agent tool with that
 `subagent_type`, in the background for the scribe and the lander. On pi and dsh use
 `delegate_agent` with that `agent_type`; on dsh also pass `run_in_background: true` for the
-scribe and the lander. Every brief but the lander's must include the absolute path of
+scribe and the lander. On Hermes, `delegate_task` has no agent types: one `tasks` entry per
+agent, `goal` is the brief, `context` is the body of `../../agents/<name>.md` (scribe and
+lander in the background). Every brief but the lander's must include the absolute path of
 `okf.py`. If no agent tool exists, follow the agent's steps yourself from
 `../../agents/<name>.md`.
 

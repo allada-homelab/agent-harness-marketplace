@@ -88,7 +88,7 @@
       "name": "okf-wiki",
       "description": "A per-repo, self-healing agent wiki in Open Knowledge Format: a session-start digest, background capture and re-verification on cheap models, and a reflect loop that measures whether it helps.",
       "category": "development",
-      "version": "0.1.19",
+      "version": "0.1.20",
       "source": "./modules/okf-wiki"
     },
     {
@@ -123,7 +123,7 @@
       "name": "repo-sweep",
       "description": "Whole-repository review sweep on any harness: split the repo into parts, fan out finders over five lenses, prove every finding, track each one in a ledger across runs, and (on request) open fix pull requests.",
       "category": "development",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "source": "./modules/repo-sweep"
     }
   ]

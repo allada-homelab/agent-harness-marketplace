@@ -48,6 +48,9 @@ skill, and only when the user asks for them.
 - **pi and dsh**: the `delegate_agent` tool with `agent_type` set to the type
   above. On pi the tool is inactive until this skill is invoked; if it is
   missing, run `/agents` once.
+- **Hermes**: `delegate_task` has no agent types. Put one entry per unit in its
+  `tasks` array: `goal` is the prompt below, `context` is the body of the
+  agent's file in `./../../agents/` beside this skill.
 - **No delegation tool at all**: do each unit yourself, one at a time, using
   the agent's body as your instructions. The definitions are in
   `./../../agents/` beside this skill.
