@@ -8,7 +8,11 @@
 - DEVC-003 — Use official `features` for common tooling
 - DEVC-004 — Pick the right lifecycle hook
 - DEVC-028 — Pick the lifecycle command form deliberately: string = shell, array = argv, object = parallel
-- DEVC-005 — Mount cache volumes for package managers
+- DEVC-005 — Share package-manager caches across dev containers: one named volume per tool
+- DEVC-029 — Set `UV_LINK_MODE=copy` when the cache is its own mount; hardlinks never cross Docker mounts
+- DEVC-030 — Don't share uv's managed-Python install directory across dev containers by default
+- DEVC-031 — Share one pre-commit store at a constant path; never run `pre-commit gc` or `clean` on it
+- DEVC-032 — Keep Playwright browsers, VS Code server extensions, Claude Code's native installs and Terraform's plugin cache per container
 - DEVC-006 — Be deliberate about `mounts` and `workspaceFolder`
 - DEVC-007 — Choose `remoteUser` vs `containerUser` consciously
 - DEVC-008 — Don't commit secrets in `devcontainer.json`
@@ -373,35 +377,270 @@ either the string or the array form is fine.
 
 ---
 
-## DEVC-005 — Mount cache volumes for package managers
+## DEVC-005 — Share package-manager caches across dev containers: one named volume per tool
 
-**What.** Mount named volumes at the package manager's cache location so
-that cache state persists across container rebuilds.
+**What.** Persist package-manager caches in named volumes so a rebuild
+does not re-download everything. For a cache whose upstream documents
+concurrent access as safe, mount **one** volume per tool (`uv-cache`,
+not `<repo>-uv-cache`), shared by every dev container on the host, at
+the same absolute path in each. The volume must be local to the host,
+and every container runs as the same uid. Never run a cache's clean or
+force command while another container may be using it.
 
-**Why.** Without this, every "rebuild dev container" wipes the package
-manager cache and the next `uv sync` / `npm ci` / `cargo build` re-downloads
-the world. Named volumes are independent of the container's filesystem and
-survive rebuilds.
+| Cache | Variable | Upstream guarantee | Conditions |
+|---|---|---|---|
+| uv | `UV_CACHE_DIR` | "uv's cache supports multiple concurrent readers and writers"; "multiple versions of uv can safely read and write to the same cache directory" (buckets are versioned, so mixed versions duplicate some entries) | `UV_LINK_MODE=copy` (DEVC-029). No automatic GC: schedule `uv cache prune` when containers are idle. Never `--force` |
+| Go build cache | `GOCACHE` | "The cache is safe for concurrent invocations of the go command." | Absolute path. Share only across images with the same base OS and C libraries, because "the build cache does not detect changes to C libraries imported with cgo". Toolchain versions get distinct cache keys |
+| Go module cache | `GOMODCACHE` | "Multiple instances of the go command may safely access the same module cache at the same time." | Absolute path; `GOFLAGS=-modcacherw` so the cache can be removed later |
+| npm | `npm_config_cache` | cacache: "Lockless, high-concurrency cache access"; npm: "All data that passes through the cache is fully verified for integrity on both insertion and extraction." | Only the cache is shared; `node_modules` stays per project |
+| bun | `BUN_INSTALL_CACHE_DIR` | Packages extract to a temporary directory and are renamed into place (`src/install/extract_tarball` in oven-sh/bun) | Hardlinks fall back to copy across mounts (DEVC-029). Don't enable `globalStore` on a shared cache |
+| pre-commit | `PRE_COMMIT_HOME` | Locked clone and env install | See DEVC-031 |
+
+**Why.** Without a cache volume, every "rebuild dev container" wipes
+the cache and the next `uv sync` / `npm ci` / `go build` re-downloads
+the world. A per-project or per-worktree cache volume fixes rebuilds but
+stores the same wheels and modules once per repo, so disk use grows
+with every project for no correctness gain. These caches are built for
+concurrent readers and writers.
+
+Their guarantees rest on OS file locks (uv's are `flock`,
+`crates/uv-fs/src/locked_file.rs`), which hold for containers on one
+host sharing a local volume and not across machines. Go's cache source
+says it is safe for multiple processes "on a single machine ... in a
+local file system" and "NOT safe for multiple processes on different
+machines to share a cache directory (for example, if the directory were
+stored in a network file system)". Live (2026-11-21, two concurrent
+containers sharing a local named volume, same uid): uv 0.5.31 and 0.9.0
+installing into one cache, and Go 1.24 and 1.25 building against one
+`GOCACHE`, all passed.
+
+The clean commands are the unsafe part. uv blocks cache-modifying
+commands while other uv commands run, with a 5-minute default timeout
+(`UV_LOCK_TIMEOUT`); `--force` skips that lock. Don't run `go clean
+-cache` / `-modcache`, `npm cache clean` / `verify`, or `bun pm cache
+rm` while other containers install or build.
+
+Sources: [uv cache](https://docs.astral.sh/uv/concepts/cache/),
+[cmd/go build cache](https://pkg.go.dev/cmd/go#hdr-Build_and_test_caching),
+[cmd/go cache.go](https://github.com/golang/go/blob/master/src/cmd/go/internal/cache/cache.go),
+[Go module cache](https://go.dev/ref/mod#module-cache),
+[cacache](https://github.com/npm/cacache),
+[npm cache](https://docs.npmjs.com/cli/commands/npm-cache),
+[bun install](https://bun.sh/docs/pm/cli/install).
+
+**How.** Pin each tool to the same absolute path in every repo's
+config (python-template does this for uv in
+[PR 117](https://github.com/allada-homelab/python-template/pull/117)
+and for pre-commit in
+[PR 118](https://github.com/allada-homelab/python-template/pull/118)):
+
+```jsonc
+{
+  "mounts": [
+    // one volume per tool, shared by every dev container on this host
+    "source=uv-cache,target=/home/vscode/.cache/uv,type=volume",
+    "source=go-build-cache,target=/home/vscode/.cache/go-build,type=volume",
+    "source=go-mod-cache,target=/home/vscode/go/pkg/mod,type=volume",
+    "source=npm-cache,target=/home/vscode/.npm,type=volume"
+  ],
+  "containerEnv": {
+    "UV_CACHE_DIR": "/home/vscode/.cache/uv",
+    "UV_LINK_MODE": "copy",
+    "GOCACHE": "/home/vscode/.cache/go-build",
+    "GOMODCACHE": "/home/vscode/go/pkg/mod",
+    "GOFLAGS": "-modcacherw",
+    "npm_config_cache": "/home/vscode/.npm"
+  },
+  // fresh volumes and the parent dirs Docker creates for them are root-owned (DEVC-013)
+  "onCreateCommand": "sudo chown vscode:vscode /home/vscode/.cache /home/vscode/.cache/uv /home/vscode/.cache/go-build /home/vscode/go /home/vscode/go/pkg /home/vscode/go/pkg/mod /home/vscode/.npm"
+}
+```
+
+Prune uv's cache from any one container on a schedule, when the
+containers are idle. `uv cache prune` waits for running uv commands
+instead of racing them:
+
+```bash
+uv cache prune
+```
+
+**When NOT to apply.** Caches on network storage (NFS), or containers
+on different hosts: keep one cache per machine. Workloads that isolate
+`GOCACHE` per worker on purpose, such as builds whose inputs the cache
+key can't see, keep per-worker caches. Caches not in the table (pnpm,
+cargo, pip, Maven, Gradle) are not covered by this rule; keep them on
+`<repo>-<tool>` volumes (DEVC-013) unless their upstream documents
+concurrent sharing. Air-gapped repos whose cache is already a vendored
+on-disk mirror.
+
+---
+
+## DEVC-029 — Set `UV_LINK_MODE=copy` when the cache is its own mount; hardlinks never cross Docker mounts
+
+**What.** A cache volume (DEVC-005) and the project's `.venv` (in the
+workspace bind mount or its own volume, DEVC-014) are on different
+mounts, and hardlinks never cross mounts. Set `UV_LINK_MODE=copy` in
+`containerEnv`. Keep the venv per container. Don't move it into the
+cache mount just to get hardlinks back.
+
+**Why.** Live (2026-11-21): `ln` between two different volumes, and
+between two mounts of the **same** volume, failed with "Cross-device
+link". It worked only within one mount. uv docs: with the cache on
+another file system, uv "cannot link files from the cache into the
+environment and must fall back to slower copy operations", and without
+an explicit link mode it warns on every install (UVP-033 quotes the
+warning). bun and pnpm hardlink modes hit the same limit; bun falls
+back to copy silently. The venv is per-container state, not cache.
+Putting it inside the shared cache mount means relocating it out of the
+workspace (`UV_PROJECT_ENVIRONMENT`), where editors and tools no longer
+find it as `.venv`.
+
+**How.**
+
+```jsonc
+{
+  "containerEnv": {
+    "UV_CACHE_DIR": "/home/vscode/.cache/uv",
+    "UV_LINK_MODE": "copy"
+  }
+}
+```
+
+**When NOT to apply.** A venv you deliberately keep inside the cache's
+own mount, accepting a `.venv` outside the workspace. A container with
+no separate cache mount, where cache and venv share one filesystem.
+
+---
+
+## DEVC-030 — Don't share uv's managed-Python install directory across dev containers by default
+
+**What.** Keep `UV_PYTHON_INSTALL_DIR` per container. If you share it
+anyway: give it its own volume (never inside the uv cache directory),
+mount it at the identical path in every container, never run `uv python
+uninstall` or `uv python install --reinstall` in any of them, and keep
+`UV_PYTHON_BIN_DIR` per container. Sharing only `UV_PYTHON_CACHE_DIR`
+(the download archives) is safe but saves no disk.
+
+**Why.** Concurrent installs are safe: an install takes a lock
+(`crates/uv-python-managed/src/managed.rs`), and concurrent installs
+from two containers passed live (2026-11-21). The danger is removal. A
+venv's `pyvenv.cfg` `home =` is an absolute path into the install
+directory, so an uninstall or reinstall in one container deletes or
+replaces the patch directory every other container's venv points at.
+Live, the other container's venv python then reported "not found".
+Inside the uv cache directory, `uv cache clean` removes the
+interpreters along with everything else.
+
+**How.** By default, mount nothing: the interpreters stay in the
+image or the container's filesystem. If you share:
+
+```jsonc
+{
+  "mounts": [
+    "source=uv-python,target=/opt/uv-python,type=volume"   // not under the uv cache dir
+  ],
+  "containerEnv": {
+    "UV_PYTHON_INSTALL_DIR": "/opt/uv-python"
+  }
+}
+```
+
+**When NOT to apply.** Images that use the base image's Python
+(`UV_PYTHON_DOWNLOADS=0`, UV-007) have no managed installs to share.
+
+---
+
+## DEVC-031 — Share one pre-commit store at a constant path; never run `pre-commit gc` or `clean` on it
+
+**What.** Mount one `pre-commit` volume at the same absolute path in
+every dev container (`PRE_COMMIT_HOME`, or the default
+`~/.cache/pre-commit` when that resolves to the same path everywhere).
+Never run `pre-commit gc` or `pre-commit clean` against the shared
+store. Mixed pre-commit 4.x versions share it fine; pinning one version
+is the conservative choice, not a requirement.
+
+**Why.** Sharing is safe for normal use. `store.py` takes an
+`exclusive_lock` (`flock`) on `<store>/.lock` for clones and env
+installs; hook runs take no lock. Python hook envs are keyed per
+interpreter (`py_env-python3.13` and `py_env-python3.14` coexist), and
+the health check rebuilds an env whose interpreter changed. Live
+(2026-11-21): 3.14 then 3.13 on one store passed, and so did a
+concurrent run. pre-commit's own CI guidance: "pre-commit's cache
+requires to be served from a constant location between the different
+builds" ([Managing CI Caches](https://pre-commit.com/#managing-ci-caches)).
+
+The maintenance commands are not safe. `pre-commit gc` deletes every
+repo whose recorded config path it can't see, and a container can't see
+the other containers' configs. Live, `gc` in one container removed the
+other container's repos. `pre-commit clean` deletes the store without
+taking the lock.
+
+Mixed versions worked live: pre-commit 4.7.0, then 4.0.1, then 4.7.0
+again took turns on one store (python:3.13, pre-commit-hooks v5.0.0),
+all exit 0, and 4.0.1 reused the `py_env-python3.13` env 4.7.0 had
+built. The store's database schema isn't versioned, though, so nothing
+guards a future format change; that is why pinning stays the
+conservative choice.
+
+**How.**
+
+```jsonc
+{
+  "mounts": ["source=pre-commit-cache,target=/home/vscode/.cache/pre-commit,type=volume"],
+  "containerEnv": { "PRE_COMMIT_HOME": "/home/vscode/.cache/pre-commit" },
+  "onCreateCommand": "sudo chown vscode:vscode /home/vscode/.cache /home/vscode/.cache/pre-commit"
+}
+```
+
+To reclaim space, remove the whole volume (`docker volume rm
+pre-commit-cache`) while no container uses it. The next hook run
+rebuilds what it needs.
+
+**When NOT to apply.** A store only one container ever uses (a
+per-worktree volume) can run `gc` and `clean` freely.
+
+---
+
+## DEVC-032 — Keep Playwright browsers, VS Code server extensions, Claude Code's native installs and Terraform's plugin cache per container
+
+**What.** These directories look like caches but are not safe to share
+across containers. Give each container its own copy (a per-worktree
+volume, DEVC-013, or the container filesystem).
+
+| Directory | Why sharing breaks | If you must share |
+|---|---|---|
+| Playwright browsers (`PLAYWRIGHT_BROWSERS_PATH`) | Installs remove browsers they consider stale ([Stale browser removal](https://playwright.dev/docs/browsers)). Live (2026-11-21): installing Playwright 1.56 deleted 1.49's browser in a shared path, because the per-install link file is keyed by a hash of the package path, which was the same in both containers | `PLAYWRIGHT_SKIP_BROWSER_GC=1` (or `--no-remove`) in every container; same-distro images only (Firefox and WebKit builds are distro-specific, their directory names are not); `install-deps` per image |
+| VS Code server extensions (`~/.vscode-server/extensions`) | VS Code maintainer: "We need to be careful not to mislead the user towards sharing the same extension location between containers because that invalidates assumptions about exclusive access in the extension management." ([vscode-remote-release#421](https://github.com/microsoft/vscode-remote-release/issues/421)) | Don't |
+| Claude Code native installs (`~/.local/share/claude/versions`) | "The native installer deletes old versions … it keeps the two newest versions and deletes the rest. A session on another machine that is running a deleted version loses its binary." ([setup — Install on network storage](https://code.claude.com/docs/en/setup)) | Disable Claude Code's own updates (`DISABLE_UPDATES`) and install versions with your own tooling |
+| Terraform / OpenTofu plugin cache (`plugin_cache_dir`, `TF_PLUGIN_CACHE_DIR`) | "The plugin cache directory is not guaranteed to be concurrency safe." ([CLI config](https://developer.hashicorp.com/terraform/cli/config/config-file)) | Don't run two `init`s against it at once |
+
+**Why.** Each tool assumes exclusive access to its directory.
+Playwright and Claude Code delete what they believe is unused, and in a
+shared directory that includes the version another container is
+running, so that container loses its browser or binary mid-session.
+VS Code's extension management and Terraform's plugin cache make no
+promise for concurrent users at all.
+
+A per-container extensions volume has its own leak: old extension
+versions are never pruned inside a long-lived dev container. One
+container held 6 Claude Code and 3 ChatGPT extension versions, about
+7 GB. Recreate the container or prune old versions periodically.
 
 **How.**
 
 ```jsonc
 {
   "mounts": [
-    "source=devcontainer-uv-cache,target=/home/vscode/.cache/uv,type=volume",
-    "source=devcontainer-pnpm-store,target=/home/vscode/.local/share/pnpm/store,type=volume",
-    "source=devcontainer-go-mod,target=/go/pkg/mod,type=volume",
-    "source=devcontainer-cargo,target=/usr/local/cargo/registry,type=volume"
+    // per worktree, never a shared name
+    "source=myrepo-vscode-ext-${devcontainerId},target=/home/vscode/.vscode-server/extensions,type=volume"
   ]
 }
 ```
 
-For npm: `~/.npm`. For pip: `~/.cache/pip`. For Maven: `~/.m2`. For Gradle:
-`~/.gradle/caches`.
-
-**When NOT to apply.** Single-developer repos where rebuild frequency is
-low and re-downloading is cheap. Repos in air-gapped environments where the
-cache is already a vendored on-disk mirror.
+**When NOT to apply.** Hosts that only ever run one dev container.
+Playwright with GC disabled in every container and only same-distro
+images. Claude Code installs managed by your own tooling with its
+updates disabled.
 
 ---
 
@@ -783,29 +1022,30 @@ Git Bash / MSYS — see caveat above.
 
 ## DEVC-013 — Two-tier named volume naming: shared caches vs per-worktree state
 
-**What.** When you maintain multiple worktrees / branches of the same
-repo, split your named volumes into two tiers:
+**What.** Split your named volumes into two tiers:
 
-- **Shared caches** — named with a fixed `<repo>-<tool>` prefix so every worktree of the repo reuses the same cache (uv cache, pnpm store, Cargo registry, pre-commit hooks).
+- **Shared caches** — named for the tool alone (`uv-cache`, `go-mod-cache`, `pre-commit-cache`) so every repo and worktree on the host reuses one cache. Only for the caches DEVC-005 lists as safe to share; any other cache (pnpm store, Cargo registry) keeps a `<repo>-<tool>` name.
 - **Per-worktree state** — named with `<repo>-<purpose>-${devcontainerId}` so each worktree has its own isolated copy (`.venv`, tool authentication, shell history).
 
-**Why.** Docker volume names are global per daemon. Without a `<repo>-`
-prefix, your `uv-cache` volume collides with every other project on the
-same machine. Without `${devcontainerId}` for per-worktree state,
-rebuilding the dev container in one worktree can clobber another's
-`.venv` (and `uv sync` writes absolute paths into console-script shebangs
-that point at the *current* workspace path, so venvs are *not* shareable
-across worktrees regardless).
+**Why.** Docker volume names are global per daemon. For a cache built
+for concurrent use, that is the point: a shared name stores each wheel
+or module once per host (DEVC-005). For state it is a collision.
+Without `<repo>-` and `${devcontainerId}`, rebuilding the dev container
+in one worktree can clobber another's `.venv` (and `uv sync` writes
+absolute paths into console-script shebangs that point at the
+*current* workspace path, so venvs are *not* shareable across
+worktrees regardless).
 
 **How.**
 
 ```jsonc
 {
   "mounts": [
-    // shared across all worktrees of this repo — cache reuse
-    "source=myrepo-uv-cache,target=/home/vscode/.cache/uv,type=volume",
+    // shared by every dev container on the host (DEVC-005, DEVC-031)
+    "source=uv-cache,target=/home/vscode/.cache/uv,type=volume",
+    "source=pre-commit-cache,target=/home/vscode/.cache/pre-commit,type=volume",
+    // shared across this repo's worktrees only — not on DEVC-005's list
     "source=myrepo-pnpm-store,target=/home/vscode/.local/share/pnpm/store,type=volume",
-    "source=myrepo-pre-commit,target=/home/vscode/.cache/pre-commit,type=volume",
 
     // per-worktree — isolated, won't contaminate siblings
     "source=myrepo-venv-${devcontainerId},target=/workspaces/${localWorkspaceFolderBasename}/.venv,type=volume",
@@ -819,12 +1059,32 @@ non-root container user. A new, empty named volume takes the content
 *and ownership* of the target directory if it already exists in the
 image. If the target path does not exist in the image (a `.venv` under
 the workspace, `/commandhistory`), Docker creates the mountpoint
-root-owned. See DEVC-007 / DEVC-010, and
+root-owned, **and any missing parent directories too**: mounting at
+`~/.cache/uv` leaves `~/.cache` root-owned, and a later tool that
+writes beside it fails (`PermissionError: /home/vscode/.cache/pre-commit`,
+seen live 2026-11-21). Chown each mount target and its parent dirs
+inside `$HOME`, non-recursively
+(`sudo chown vscode:vscode /home/vscode/.cache /home/vscode/.cache/uv`).
+See DEVC-007 / DEVC-010, and
 [Docker — populate a volume using a container](https://docs.docker.com/engine/storage/volumes/#populate-a-volume-using-a-container).
 
+**Per-worktree volumes outlive their worktree.** Removing a worktree
+and its container leaves every `${devcontainerId}` volume behind
+(venv, Claude, Codex, SSH, history). Prune them by name once no
+container references them:
+
+```bash
+docker volume ls -q --filter dangling=true --filter name=myrepo- | grep -- '-venv-\|-claude-\|-codex-' | xargs -r docker volume rm
+```
+
+Never `docker volume prune --all`: it removes every named volume no
+container references, and a shared cache whose containers are all
+stopped is one of them.
+
 **When NOT to apply.** Single-worktree workflows where you only ever
-develop on one branch at a time. Even there, the `<repo>-` prefix is
-worth keeping so volumes don't collide with other projects.
+develop on one branch at a time can drop `${devcontainerId}`. Keep the
+`<repo>-` prefix on state volumes even there, so they don't collide
+with other projects.
 
 ---
 

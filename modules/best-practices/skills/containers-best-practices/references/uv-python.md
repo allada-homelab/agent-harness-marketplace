@@ -217,9 +217,10 @@ Other valid values: `hardlink` (default, fast but same-filesystem only),
 `clone` (reflink — Btrfs/XFS only), `symlink` (rare). `copy` is the safe
 default for container builds.
 
-**When NOT to apply.** When the cache mount is on the *same* filesystem
-as the venv (rare in containers). When you've placed the venv in an
-explicit volume on the same filesystem as the cache (also rare).
+**When NOT to apply.** When the venv sits inside the same mount as the
+cache (rare in containers). A venv in a *separate* volume does not
+count, even on the same disk: hardlinks never cross Docker mounts
+(DEVC-029).
 
 ---
 
