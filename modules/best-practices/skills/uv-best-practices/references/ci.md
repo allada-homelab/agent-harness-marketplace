@@ -250,6 +250,7 @@ in CI it spams every install step. Two real cases where this comes up:
 
 1. **GitLab CI.** The cache directory and the build directory are on different volumes by default. Every `uv sync` produces a wall of warnings, drowning out real errors. ([uv GitLab guide](https://docs.astral.sh/uv/guides/integration/gitlab/))
 2. **Docker BuildKit cache mounts.** `RUN --mount=type=cache,target=/root/.cache/uv` puts the cache on a separate volume from the layer being written. Same issue — falls back to copy with warnings on every install.
+3. **Dev container cache volumes.** A shared `uv-cache` volume and the workspace `.venv` are different mounts, and hardlinks never cross Docker mounts, not even between two mounts of the same volume. See [DEVC-029](../../containers-best-practices/references/devcontainer.md#devc-029) for the dev container setup.
 
 Setting `UV_LINK_MODE=copy` makes the copy explicit, suppresses the
 warning, and matches what's actually happening anyway.

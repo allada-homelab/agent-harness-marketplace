@@ -133,7 +133,7 @@ See [`references/ci.md`](./references/ci.md).
 - **UVP-030** — Pin `astral-sh/setup-uv` to a commit SHA with the version tag in a comment. _(when: ci)_
 - **UVP-031** — Let `setup-uv` handle caching, never cache `.venv` across runs, and end any job that persists the cache with `uv cache prune --ci`. _(when: ci)_
 - **UVP-032** — `uv sync --locked` in CI; bare `uv sync` silently re-resolves. _(when: ci)_
-- **UVP-033** — Set `UV_LINK_MODE=copy` for cross-filesystem caches (GitLab CI, BuildKit cache mounts); never `symlink`. _(when: env-overrides)_
+- **UVP-033** — Set `UV_LINK_MODE=copy` for cross-filesystem caches (GitLab CI, BuildKit cache mounts, dev container cache volumes); never `symlink`. _(when: env-overrides)_
 - **UVP-065** — Run `uv audit` with SARIF output and centralize ignores in `[tool.uv.audit]`, preferring `ignore-until-fixed`. _(when: ci)_ _(requires uv>=0.11.22 (preview: audit-command))_
 - **UVP-069** — Enumerate workspace members with `uv workspace list` in monorepo CI. _(when: workspace)_ _(requires uv>=0.10.0)_
 - **UVP-080** — Pin the uv version CI installs (setup-uv `version:`, an exact `required-version`, or a versioned `ghcr.io/astral-sh/uv` image tag); never install latest. _(when: ci)_
