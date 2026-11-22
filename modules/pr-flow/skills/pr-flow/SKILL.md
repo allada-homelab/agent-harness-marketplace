@@ -144,9 +144,10 @@ that branch directly is opted out by the user, never by you:
   tooling pointed at the worktree.
 - Worktrees share the machine with main: ports, local databases, containers.
   Starting a service from a worktree takes them from whoever holds them.
-- Worktrees also share one git stash stack. `pop`, `drop`, `clear` and a bare
-  `apply` can take another session's entry and are blocked; set work aside
-  with a WIP commit, or `git stash create` and `git stash apply <sha>`.
+- Worktrees also share one git stash stack, so every `git stash` form is
+  blocked — `push`, `save` and a bare `git stash` included — except `list`,
+  `show`, `create` and `apply <sha>`. Set work aside with a WIP commit, or
+  `git stash create` and `git stash apply <sha>`.
 - Name a worktree by its literal absolute path (`pr-flow -C <path>`,
   `git -C <path>`), never through a shell variable: harnesses reset the shell's
   directory between calls, and guards cannot expand `$VAR` to see the target.
