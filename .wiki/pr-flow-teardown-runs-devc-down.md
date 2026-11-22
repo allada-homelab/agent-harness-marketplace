@@ -3,9 +3,10 @@ type: gotcha
 title: pr-flow teardown runs devc down before removing the worktree
 description: Agent worktree dev containers, images and per-worktree volumes leak after git worktree remove; pr-flow teardown now runs devc down first (PR_FLOW_DEVC overrides the binary).
 tags: [pr-flow, teardown, worktree]
-generated: {by: okf-wiki/deepseek, at: 2026-11-10T14:09:42Z}
+generated: {by: okf-wiki/deepseek, at: 2026-11-22T08:04:01Z}
 verified:
   - {by: okf-wiki/deepseek, at: 2026-11-10T14:09:42Z, commit: eab0f90a0c28}
+  - {by: okf-wiki/deepseek, at: 2026-11-22T08:04:01Z, commit: 2660987e2dbc}
 sources:
   - {id: s1, resource: https://github.com/allada-homelab/agent-harness-marketplace/pull/71, title: "pr-flow: run devc down during teardown (0.2.8)"}
 ---
@@ -22,7 +23,7 @@ Each agent worktree usually gets its own dev container with per-worktree volumes
 
 ## What works
 
-- `teardown` calls `devc_down(wt)` before `git worktree remove --force` when a `devc` executable is on PATH.[^s1]
+- `teardown` calls `devc_down(host_path(wt, root))` before `git worktree remove --force` when a `devc` executable is on PATH.[^s1] `host_path` maps the worktree to the checkout's host folder when pr-flow runs inside that checkout's dev container, because devc labels a container with its host folder and a container path matches nothing.
 - `devc_down` runs `devc down <worktree>` in its own session (so a timeout kills devc's docker children too), with `PR_FLOW_DEVC_TIMEOUT` (default 300s) bounding the wait.
 - Best effort: a missing devc, a timeout or a non-zero rc is a warning and teardown continues; it never blocks removing the worktree or deleting the branch.
 - `PR_FLOW_DEVC` overrides the binary name, like `PR_FLOW_GH`/`PR_FLOW_GIT`; tests set it to a missing name so they never reach a real docker daemon.
@@ -34,4 +35,4 @@ The devcontainer CLI has no working `down` in the chain after the worktree is go
 
 ## Verify
 
-- `modules/pr-flow/skills/pr-flow/pr-flow.py` :: /devc_down\(wt\)\s+git\("worktree", "remove"/ => 1
+- `modules/pr-flow/skills/pr-flow/pr-flow.py` :: /devc_down\(host_path\(wt, root\)\)\s+git\("worktree", "remove"/ => 1
