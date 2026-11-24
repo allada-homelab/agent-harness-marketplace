@@ -14,14 +14,18 @@ Arguments: $ARGUMENTS
 | Argument | Default | Meaning |
 |---|---|---|
 | days (a bare number) | 7 | how far back to look |
-| `--concurrency N` | 6 | readers running at once; the rest wait in a queue |
-| `--model NAME` | `sonnet` on Claude Code; `large-default` on any other harness | the readers' model |
+| `--concurrency N` | 4 | readers running at once; start the next as one returns (the harness refuses a dispatch past its active-child limit, 4 on dsh, instead of queueing) |
+| `--model NAME` | `sonnet` on Claude Code; `large-default` on any other harness | the readers' model: the bare name (`large-default`), never the route `list_subagent_models` prints (`litellm/large-default`) — the harness prepends its provider, so a full route as `model` is doubled and refused |
 | `--chars N` | 350000 | the most a reader is given, in characters (about 90,000 tokens) |
 
 **Not Claude? Use `large-default` for every agent you dispatch.** If you are not Claude Code (pi, dsh, a
 local model), the readers and the synthesizer both run on `large-default`, whatever
 this file says about Sonnet or Opus. The full table is in `../transcript-analyze/SKILL.md`,
-"Which model runs what".
+"Which model runs what". Dispatch each child with the bare name as `model` (never the
+route string `list_subagent_models` prints — the harness prepends its provider and a
+doubled prefix is refused), and at most the harness's active-child limit at once
+(4 on dsh): a dispatch past it is refused with `subagent limit
+reached`, never queued, so start the next reader only after one has returned.
 
 A `k` suffix means thousands (`--chars 500k`). Echo the settings you resolved before step 1.
 

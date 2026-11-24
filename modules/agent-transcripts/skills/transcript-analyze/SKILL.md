@@ -245,8 +245,12 @@ only after the pilot's findings look real.
 ### 3. Dispatch one reader per batch
 
 Fill in `./references/fanout-reader-brief.md` for each batch and dispatch the readers in
-parallel, **at most 6 at a time**: start the next as one returns. Readers run on Sonnet on
-Claude Code, and on `large-default` on any other harness. A batch is at
+parallel, **at most 4 at a time** — the harness's active-child limit, 4 on dsh;
+a dispatch past it is refused with `subagent limit reached`, never queued
+— so start the next only as one returns. Readers run on Sonnet on
+Claude Code, and on `large-default` on any other harness: pass the bare name as the child's
+`model`, never the route string `list_subagent_models` prints (the harness prepends its
+provider, so a full route as `model` is doubled and refused). A batch is at
 most 350,000 characters, about 90,000 tokens, which keeps every reader under 150,000 tokens
 with its brief and the instructions file. Give each reader the batch's file paths, the path to the
 user's standing agent instructions, its output path (`<work dir>/findings/batch-N.json`) and
