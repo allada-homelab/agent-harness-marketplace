@@ -53,6 +53,12 @@ def test_rejects_outside_the_subset(text, msg):
         okf.parse_frontmatter(text)
 
 
+def test_unquoted_comma_in_a_flow_mapping_names_the_token():
+    with pytest.raises(okf.FrontmatterError) as e:
+        okf.parse_frontmatter("sources: [{id: a, resource: x, y}]\n")
+    assert "'y'" in str(e.value) and "quote any value" in str(e.value)
+
+
 @pytest.mark.parametrize("text,expected", ACCEPT)
 def test_dump_round_trips(text, expected):
     assert okf.parse_frontmatter(okf.dump_frontmatter(expected)) == expected

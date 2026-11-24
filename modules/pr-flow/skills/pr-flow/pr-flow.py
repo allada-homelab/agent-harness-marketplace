@@ -344,7 +344,7 @@ BAD = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP
 OK = {"SUCCESS", "SKIPPED", "NEUTRAL"}
 SLEEP_SCALE = float(os.environ.get("PR_FLOW_SLEEP", "1"))
 THREADS_Q = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n)"
-             "{reviewThreads(first:100){nodes{isResolved}}}}}")
+             "{reviewThreads(first:100){nodes{isResolved,isOutdated}}}}}")
 
 
 def poll(cwd):
@@ -382,6 +382,41 @@ def workflow_runs_for(cwd, sha):
     except (Fail, subprocess.TimeoutExpired, ValueError) as e:
         warn(f"could not list workflow runs for {str(sha)[:7]} ({e}); falling back to the no-checks grace window")
         return None
+
+
+def unfiltered_pr_workflow(cwd):
+    """The first workflow file that runs on EVERY pull request, or None.
+
+    For such a repo zero runs on a head only means GitHub has not dispatched the run yet,
+    which can take minutes; it never means "no CI applies". Line-based on purpose (stdlib
+    only): a workflow counts when its top-level `on:` names `pull_request` or
+    `pull_request_target` and no `paths`/`paths-ignore` filter appears inside that block.
+    """
+    try:
+        root = Path(git("rev-parse", "--show-toplevel", cwd=cwd))
+    except (Fail, subprocess.TimeoutExpired):
+        return None
+    for f in sorted((root / ".github" / "workflows").glob("*.y*ml")):
+        try:
+            lines = f.read_text().splitlines()
+        except OSError:
+            continue
+        block = None
+        for line in lines:
+            if block is None:
+                m = re.match(r"""^['"]?(on|true)['"]?:(.*)$""", line)
+                if m:
+                    block = [m.group(2)]
+            elif line.strip() and not line.startswith((" ", "\t", "#")):
+                break
+            else:
+                block.append(line)
+        if block is None:
+            continue
+        text = "\n".join(block)
+        if re.search(r"\bpull_request(_target)?\b", text) and not re.search(r"^\s*paths(-ignore)?\s*:", text, re.M):
+            return f.name
+    return None
 
 
 RUN_ID = re.compile(r"/actions/runs/(\d+)")
@@ -442,7 +477,9 @@ def unresolved_threads(cwd, number):
     out = json.loads(gh("api", "graphql", "-f", f"query={THREADS_Q}", "-F", f"o={owner}", "-F", f"r={repo}",
                         "-F", f"n={number}", cwd=cwd))
     nodes = out["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
-    return sum(1 for t in nodes if not t.get("isResolved"))
+    open_threads = [t for t in nodes if not t.get("isResolved")]
+    outdated = sum(1 for t in open_threads if t.get("isOutdated"))
+    return len(open_threads) - outdated, outdated
 
 
 def classify(pr, unresolved, runs):
@@ -540,8 +577,24 @@ def merge_method(cwd):
     raise Fail("the repo allows no merge method")
 
 
-def sync_hint(cwd, base):
+def stacked_on(cwd, branch):
+    """URLs of open PRs whose base is `branch`; [] when gh cannot say."""
+    try:
+        return gh("pr", "list", "--base", branch, "--state", "open", "--json", "url", "--jq", ".[].url",
+                  cwd=cwd).split()
+    except Fail as e:
+        warn(f"could not list PRs based on {branch} ({e}); not checking for a stack")
+        return []
+
+
+def sync_hint(ctx, cwd, base):
     """How to bring the branch up to date with `base` so the repo's merge method still accepts it."""
+    above = stacked_on(cwd, ctx.branch)
+    if above or base not in PROTECTED:
+        # A stack is updated layer by layer by rebase; a merged-in base tangles every layer above it.
+        return (f"git fetch origin && git rebase origin/{base}, git push --force-with-lease once the user "
+                f"says go; then rebase each PR stacked on {ctx.branch} ({', '.join(above) or 'none open'}) "
+                f"onto it the same way — never merge {base} into a stack branch")
     try:
         method = merge_method(cwd)
     except Fail as e:
@@ -559,7 +612,7 @@ def do_merge(ctx, cwd, pr):
         gh("pr", "merge", str(pr["number"]), f"--{method}", "--match-head-commit", pr["headRefOid"], cwd=cwd)
     except Fail as e:
         rebase_cause = (", a merge commit on the branch (a rebase merge cannot replay one; "
-                        f"{sync_hint(cwd, branch_base(ctx.main_root, ctx.branch))})") if method == "rebase" else ""
+                        f"{sync_hint(ctx, cwd, branch_base(ctx.main_root, ctx.branch))})") if method == "rebase" else ""
         raise Fail(f"gh pr merge --{method} refused: {e}\nlikely causes: the head moved since watch saw it green "
                    f"(run watch again){rebase_cause}, or a branch-protection rule is unmet (approval, up-to-date "
                    "branch, required check)")
@@ -604,6 +657,19 @@ def pr_merged_on_github(root, branch):
     return p.stdout.strip() not in ("0", "")
 
 
+def host_path(wt, root):
+    """The host path of `wt` when pr-flow runs inside the dev container of the checkout at `root`.
+
+    devc labels a container with its host folder, so a container path matches nothing. The
+    container learns its host folder only from LOCAL_WORKSPACE_FOLDER (set from
+    ${localWorkspaceFolder} in devcontainer.json); the basename check keeps a container whose
+    checkout is somewhere else (a worktree's, whose main root is not mounted) from mapping."""
+    local = os.environ.get("LOCAL_WORKSPACE_FOLDER")
+    if not local or Path(local).name != root.name or not wt.is_relative_to(root):
+        return wt
+    return Path(local) / wt.relative_to(root)
+
+
 def devc_down(wt):
     # Nothing else removes a worktree's dev container, image and volumes once the worktree is
     # gone, so reclaim them here when devc is installed. Best effort: never blocks teardown.
@@ -642,7 +708,17 @@ def teardown(ctx, branch, dry_run=False):
         if dirty:
             raise Fail(f"worktree {wt} is dirty; commit or discard first:\n{dirty}")
     base = branch_base(root, branch)
-    fetch_tracking(base, root)
+    try:
+        fetch_tracking(base, root)
+    except Fail:
+        # A stacked base that merged has usually been deleted on origin; its commits are now on
+        # the default branch, so prove the merge there. A real fetch failure fails this too.
+        default = default_base(root)
+        if base == default:
+            raise
+        warn(f"base {base} is gone from origin (merged and deleted?); checking against {default}")
+        base = default
+        fetch_tracking(base, root)
     merged = subprocess.run([GIT, "merge-base", "--is-ancestor", branch, f"origin/{base}"], cwd=root).returncode == 0
     # A squash or rebase merge lands the change as new commits, so the branch head is never an
     # ancestor of the base; GitHub's own merged state is the proof then.
@@ -653,7 +729,7 @@ def teardown(ctx, branch, dry_run=False):
         print(f"would remove {wt}, delete {branch} locally and delete origin/{branch}")
         return
     if wt is not None:
-        devc_down(wt)
+        devc_down(host_path(wt, root))
         git("worktree", "remove", "--force", wt, cwd=root)
     git("branch", "-D", branch, cwd=root)
     if subprocess.run([GIT, "push", "-q", "origin", "--delete", branch], cwd=root, capture_output=True).returncode:
@@ -671,11 +747,12 @@ def cmd_watch(a):
     ctx = repo_ctx(cwd)
     deadline = time.time() + a.timeout
     interval, last_head, pr, verdict = a.interval, None, {}, None
-    threads = {"n": 0}
+    threads = {"n": 0, "outdated": 0}
     consecutive_fails = 0
     no_checks_since = None
     stale_since = None
     grace_expired = False
+    pr_workflow = unfiltered_pr_workflow(cwd)
     while True:
         try:
             pr = poll(cwd)
@@ -711,7 +788,7 @@ def cmd_watch(a):
 
             def unresolved():
                 try:
-                    threads["n"] = unresolved_threads(cwd, pr["number"])
+                    threads["n"], threads["outdated"] = unresolved_threads(cwd, pr["number"])
                 except (Fail, subprocess.TimeoutExpired) as e:
                     warn(f"could not check review threads: {e}")
                     raise _Retry from e
@@ -727,17 +804,18 @@ def cmd_watch(a):
                 # Empty statusCheckRollup: could be a repo with no CI (or no workflow whose
                 # paths filter matches this PR), or the gap between the push and GitHub Actions
                 # registering its check runs. The two are told apart by asking GitHub for
-                # workflow runs on this head: a matching workflow registers a run within
-                # seconds, so zero runs on a head GitHub already calls mergeable, held for
-                # --no-runs-confirm, is a verified "no CI applies" green that --merge may act
-                # on. Anything less certain polls through the grace window (reset whenever the
-                # head moves) and comes out unverified, as before.
+                # workflow runs on this head: zero runs on a head GitHub already calls
+                # mergeable, held for --no-runs-confirm, is a verified "no CI applies" green
+                # that --merge may act on — unless a workflow runs on every PR, where zero runs
+                # only means GitHub has not dispatched it yet (seen 10 min late). Anything less
+                # certain polls through the grace window (reset whenever the head moves) and
+                # comes out unverified, which --merge refuses.
                 now = time.time()
                 if no_checks_since is None:
                     no_checks_since = now
                 elapsed = now - no_checks_since
                 runs = None
-                if not grace_expired and pr.get("mergeStateStatus") == "CLEAN":
+                if not grace_expired and pr.get("mergeStateStatus") == "CLEAN" and pr_workflow is None:
                     runs = workflow_runs_for(cwd, pr.get("headRefOid") or "")
                 if runs == 0 and elapsed >= a.no_runs_confirm:
                     print(f"no workflow run exists for this head after {elapsed:.0f}s and GitHub reports it "
@@ -780,9 +858,10 @@ def cmd_watch(a):
             elif pr.get("mergeStateStatus") == "BLOCKED":
                 print("blocked by branch protection (approval or required check missing)")
             else:
-                print(f"{threads['n']} unresolved review thread(s); reviewDecision={pr.get('reviewDecision') or '-'}")
+                print(f"{threads['n']} unresolved review thread(s) ({threads['outdated']} outdated, not counted); "
+                      f"reviewDecision={pr.get('reviewDecision') or '-'}")
         elif verdict == "conflict":
-            print(f"conflicts with base; in the worktree: {sync_hint(cwd, branch_base(ctx.main_root, ctx.branch))}, "
+            print(f"conflicts with base; in the worktree: {sync_hint(ctx, cwd, branch_base(ctx.main_root, ctx.branch))}, "
                   "watch again")
         if st["attempts"] > MAX_ATTEMPTS:
             print(f"{st['attempts'] - 1} fix rounds used on this PR and this sixth verdict is still {verdict}")
@@ -793,7 +872,7 @@ def cmd_watch(a):
         if verdict == "green" and pr.get("mergeStateStatus") == "BEHIND":
             base = branch_base(ctx.main_root, ctx.branch)
             print(f"head is behind origin/{base}; a repo that requires up-to-date branches will refuse the merge "
-                  f"— in the worktree: {sync_hint(cwd, base)}, watch again")
+                  f"— in the worktree: {sync_hint(ctx, cwd, base)}, watch again")
     if verdict == "green" and (a.merge or a.merge_if_only):
         if grace_expired:
             print("this head's checks are unverified (none reported, or the PR head lagged the push); "

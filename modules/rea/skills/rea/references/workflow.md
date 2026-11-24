@@ -69,6 +69,30 @@ notes and the tooling in the repo.
   across interpreter versions and is the right way to test whether a module
   matches upstream source or a previous reconstruction. Bytecode equality is
   only meaningful when both sides were produced by the same interpreter.
+- **Recompile and diff where the compiler can be reproduced.** The acceptance
+  test is recompile-and-diff against the original: byte-identical, or a
+  difference proven inert. "Parses" is `verified`, never `MATCH`.
+- **Line placement is mechanical.** Line tables, first-line numbers and
+  debug-info declaration lines depend on padding: use or write an aligner that
+  inserts or removes it, run it once, re-verify. Never adjust blank lines by
+  hand; edit tools cannot reliably count runs of blank lines.
+- **Match the original toolchain and dependency versions exactly** before
+  trusting any diff.
+- **Keep an explicit accepted-residuals list.** Each entry names the function
+  or code object, the exact difference, and the evidence (a note or a minimal
+  repro) that no source produces the original bytes. Any difference not on that
+  list is `NOT MATCH`, never "close enough".
+- **Some compiler output is unreachable from any accepted source**, for example
+  an artifact of one optimizer pass. When three structurally different attempts
+  produce the same wrong shape, try to prove the artifact with a minimal repro,
+  record it as a residual, and stop looping on it.
+- **A recompile-and-diff match proves the machine code, not the behavior** that
+  compilation erases or keeps only as data: string literals, struct tags or
+  serialization field names, and generic instantiation shapes. When the
+  reconstruction must run, add a second check: run it next to the original on an
+  identical setup and diff the observable behavior.
+- **Report per function or code object** as `k/N matched` with the failing
+  names, never one pass/fail per module.
 - **Re-verify after every pass** — baseline, reconstruction, fixes. The final
   state is the only state that counts.
 
@@ -98,3 +122,30 @@ Verification scope: <which modules parse, which are MATCH, which are broken>
 Report the honest limitations next to the findings: state what was verified and
 what was inferred, and never claim a root cause that only runtime data could
 confirm.
+
+## Running a campaign with many workers
+
+- **Keep an attempts ledger:** one row per target per worker run (worker,
+  target, verdict, sizes). A target with three attempts and no match is residue:
+  re-assign it only with a hypothesis no earlier attempt tried, or once the
+  target it was blocked on matches. Do not fill idle worker seats with residue.
+- **Give each worker a card per target:** the unique key the verifier accepts,
+  source file and line, expected size, current verdict, prior attempts, and the
+  literal commands to run. Otherwise workers spend their first dozens of steps
+  rediscovering this.
+- **Scope each worker's finishing gate to its own targets** and print only its
+  verdict block (full output to a log file). Workers learn to ignore a gate
+  that fails for reasons outside their control.
+- **One unit of work per brief.** The worker appends each finished item to a
+  results file named in the brief, so an interrupted worker still leaves its
+  results. Each worker uses its own scratch directory (`mktemp -d`), never
+  shared temp paths.
+- **Keep a symptom catalogue:** each recurring mismatch shape (what the diff
+  shows) mapped to the source idiom that causes it. Workers check it before they
+  form a hypothesis and add a row when they find a new one.
+- **Per-worker build caches grow without bound** and nothing deletes them. Give
+  each worker its own cache directory under one parent, and delete them when the
+  campaign ends or before a large fan-out.
+- **Concurrency:** measure model latency as workers are added and stop where
+  latency climbs faster than total throughput (a few workers on one local model
+  server).

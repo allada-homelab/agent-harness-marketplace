@@ -1,0 +1,4 @@
+#!/bin/sh
+# Claude Code, pi and dsh all put an enabled module's bin/ on the bash tool's PATH (pi and dsh
+# via the dotfiles harness layer), so the skills and the child agents all call `repo-sweep`.
+exec python3 "$(dirname "$(readlink -f "$0")")/../skills/repo-sweep/repo_sweep.py" "$@"

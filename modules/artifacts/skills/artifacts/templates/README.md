@@ -9,7 +9,7 @@ content, not structure. When no page fits whole, lift blocks from `components.ht
 ## How to use one
 
 Pick the closest template below, copy it to the output dir from `artifactctl.py prepare` as
-`<slug-of-title>.html`, and edit the copy, never the template. Replace the text of every element
+`<slug-of-title>.artifact.html`, and edit the copy, never the template. Replace the text of every element
 that carries `data-slot="<name>"`, including the `<title>` and `<meta name="description">` (the
 `title` and `description` slots), then replace the `DATA` object at the top of the script with the
 user's content in the same shape. Keep the `:root` token block, the theme switch and the
@@ -273,8 +273,9 @@ checklist, an onboarding list, a packing list with notes.
 check mark state (`aria-pressed`), optional steps marked; a progress header (done / total, "N
 required left", a block-level progress bar in `--accent`, per-group counts; groups are not
 categories, so no `--c` tokens); a per-step notes field (a `<textarea>` revealed by a
-*Note* button, its text kept with the step); *Reset* with two-click confirm; *Copy as text*
-producing a Markdown task list with notes (clipboard inside the click handler, selected fallback);
+*Note* button, its text kept with the step); *Reset* with two-click confirm; a primary button that hands a Markdown task
+list with notes to the chat, the only way the ticks reach the agent: *Send to chat* through
+`artifact.submit` when the dsh bridge is present, else *Copy for chat* (clipboard inside the click handler, selected fallback);
 a filter segmented control All / Open / Done with an empty state when it hides everything; state
 (checks, notes and the filter choice) kept through the try/catch store keyed by the page title,
 with the page fully working without it. The DOM is built once and updated in place, so focus and

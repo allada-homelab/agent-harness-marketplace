@@ -25,4 +25,5 @@ dotfiles `docs/superpowers/plans/2026-10-07-local-artifacts-module.md`, Task 3).
 
 ## Phase 2
 
-`references/runtime-seam.md` specifies `window.artifact`; nothing here implements it.
+`references/runtime-seam.md` specifies `window.artifact`. dsh provides it through the dotfiles
+`artifact-bridge` plugin; pi and plain browsers do not.

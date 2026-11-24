@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "sleep-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Block a Bash call that opens with a foreground sleep of 5s or more and point the agent at a condition wait or a background job instead.",
   "author": {
     "name": "David Allada",

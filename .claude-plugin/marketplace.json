@@ -25,28 +25,35 @@
       "name": "dual-agent-pr-review",
       "description": "Review a GitHub PR with Claude Code and Codex in parallel, then reconcile their findings into one consensus set.",
       "category": "development",
-      "version": "0.1.17",
+      "version": "0.1.20",
       "source": "./modules/dual-agent-pr-review"
     },
     {
       "name": "agent-transcripts",
       "description": "Export Claude Code, pi and dsh transcripts into one on-device cache and index them in a derived sqlite database.",
       "category": "development",
-      "version": "0.13.0",
+      "version": "0.20.1",
       "source": "./modules/agent-transcripts"
     },
     {
       "name": "pr-flow",
       "description": "Work off main on every harness: branch + worktree, PR, watch CI until green, merge only when told, tear down after merge.",
       "category": "development",
-      "version": "0.2.21",
+      "version": "0.2.27",
       "source": "./modules/pr-flow"
+    },
+    {
+      "name": "local-workers",
+      "description": "Explicitly requested delegation to self-hosted models: the pi agent through the pi-run script (resumable, forkable sessions), the d3-ultra decision model for batched yes/no, choice and score questions, a mixed local+cloud fleet skill, and a replay benchmark against merged fixes",
+      "category": "development",
+      "version": "0.2.0",
+      "source": "./modules/local-workers"
     },
     {
       "name": "browser",
       "description": "Drive a browser from any harness: headless auto mode, headed hybrid mode where a human logs in and the agent takes over, or attach to a browser the user opened via its debug port — through agent-browser on a persistent per-identity profile.",
       "category": "development",
-      "version": "0.1.3",
+      "version": "0.1.5",
       "source": "./modules/browser"
     },
     {
@@ -67,7 +74,7 @@
       "name": "best-practices",
       "description": "Library of domain best-practices skills with stable, citable rule IDs (containers, uv, Python, FastAPI, databases, repo hygiene, Go, gRPC, QNAP QPKG packaging, Claude Code configuration and prompts) plus the containers-audit interactive scan-and-fix workflow and the authoring tools for adding rules.",
       "category": "development",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "source": "./modules/best-practices"
     },
     {
@@ -81,7 +88,7 @@
       "name": "okf-wiki",
       "description": "A per-repo, self-healing agent wiki in Open Knowledge Format: a session-start digest, background capture and re-verification on cheap models, and a reflect loop that measures whether it helps.",
       "category": "development",
-      "version": "0.1.17",
+      "version": "0.1.20",
       "source": "./modules/okf-wiki"
     },
     {
@@ -95,22 +102,29 @@
       "name": "sleep-guard",
       "description": "Block a Bash call that opens with a foreground sleep of 5s or more and point the agent at a condition wait or a background job instead.",
       "category": "development",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "source": "./modules/sleep-guard"
     },
     {
       "name": "artifacts",
       "description": "Local HTML artifacts for pi and dsh: Claude's artifact design, dataviz and diagramming craft plus a stdlib check-and-deliver helper; one self-contained file, no hosting.",
       "category": "development",
-      "version": "0.1.8",
+      "version": "0.2.0",
       "source": "./modules/artifacts"
     },
     {
       "name": "switchboard",
-      "description": "Coordination for concurrent Claude Code sessions on one machine: who is doing what, threaded messages between sessions, a todo board, a ledger of shared-state changes, and enforced leases on shared resources.",
+      "description": "Coordination for concurrent agent sessions (Claude Code, pi, dsh) on one machine: who is doing what, threaded messages between sessions, a todo board, a ledger of shared-state changes, and enforced leases on shared resources.",
       "category": "development",
-      "version": "0.6.1",
+      "version": "0.7.2",
       "source": "./modules/switchboard"
+    },
+    {
+      "name": "repo-sweep",
+      "description": "Whole-repository review sweep on any harness: split the repo into parts, fan out finders over five lenses, prove every finding, track each one in a ledger across runs, and (on request) open fix pull requests.",
+      "category": "development",
+      "version": "0.1.1",
+      "source": "./modules/repo-sweep"
     }
   ]
 }

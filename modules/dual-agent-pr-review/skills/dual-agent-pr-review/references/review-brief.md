@@ -114,7 +114,10 @@ drop it rather than file it as a nit:
 - **No trigger today.** "No current caller hits this", a precondition that does
   not hold, data that does not occur (every live date is quoted, zero dangling
   entries). If nothing that exists now reaches it and this PR does not make it
-  likely, it is not a defect yet.
+  likely, it is not a defect yet. A finding that the code mishandles an input
+  shape must quote, in `evidence`, one production caller that produces that
+  shape — not a story, test or fixture, and not a later edit that might loosen
+  a type.
 - **Unmeasured performance.** "This now runs serially" or "each call reloads"
   with no size, count or latency that makes it matter. Name the number or drop it.
 - **Unverifiable behavior.** A failure that rests on what an upstream echoes or a
@@ -149,6 +152,11 @@ when re-read against the code. Two failure modes cost you:
 - **A claim about code you cannot read is not evidence.** If the failure depends
   on another repository or a deployed service you have no checkout of, say so
   and set `confidence: low`.
+- **Third-party and browser runtime behavior is code you cannot read unless you
+  read it.** Cite the dependency's source `file:line` in the worktree (its
+  `node_modules/`, virtualenv or vendored copy), or start `evidence` with
+  `UNVERIFIED-RUNTIME:`. Such a finding is `confidence: low` and at most
+  `fix-later`, whatever it would cost if true.
 
 Set `posting_line` to a line of the same `file` inside a changed hunk of
 `diff.patch` — that is where an inline review comment can attach. When the defect

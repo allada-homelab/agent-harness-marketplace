@@ -57,10 +57,10 @@ Model and reasoning effort are per-agent and independently settable:
 
 | Flag | Default | Accepts |
 |---|---|---|
-| `--claude-model` | `opus` | `opus`, `sonnet`, `fable`, or a full model id |
-| `--claude-effort` | `high` | `low`, `medium`, `high`, `xhigh`, `max` |
-| `--codex-model` | `gpt-6.1-sol` | any model your codex auth allows |
-| `--codex-effort` | `high` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
+| `--claude-model` | `claude-opus-5-5` | `opus`, `sonnet`, `fable`, or a full model id |
+| `--claude-effort` | `medium` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `--codex-model` | `gpt-6.2-sol` | any model your codex auth allows |
+| `--codex-effort` | `medium` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
 | `--timeout` | `2400` | seconds, per agent per round |
 
 If the user names models or effort ("run codex at xhigh", "use sonnet for the
@@ -369,16 +369,17 @@ fixes made by the judge introduce defects of their own.
 **Anyone else's PR** — draft one review:
 
 - **Every Blocking, Non-blocking and Unresolved finding is its own inline
-  comment**, never folded into the review body. Prefix each comment body with its
-  label — severity, then the finding's `category`: `**[Blocking · correctness]**`,
-  `**[Non-blocking · documentation]**`. Never put the action in the label —
+  comment**, never folded into the review body. Start each comment body with
+  `[AI-Review]`, then its label — severity, then the finding's `category`:
+  `[AI-Review] **[Blocking · correctness]**`,
+  `[AI-Review] **[Non-blocking · documentation]**`. Never put the action in the label —
   "Non-blocking · fix-before-merge" reads as a contradiction; when a non-blocking
   fix can wait, say so in the comment text.
 - **Not posted, each recorded in `final.md` with its reason:** nits (an action of
   `nit` — in past runs none was significant, and authors fixed them anyway at a
   round's cost); not-worth-raising and author-deferred findings; and findings an
   existing thread already covers (below). The user sees all of them in Step 7.
-- **Unresolved findings are inline questions**, labelled `**[Open question]**`,
+- **Unresolved findings are inline questions**, labelled `[AI-Review] **[Open question]**`,
   stating both positions in one or two sentences.
 - **Anchor every comment inside a changed hunk.** Use the finding's `file` and
   `posting_line`, and check each one before posting:
@@ -414,7 +415,8 @@ fixes made by the judge introduce defects of their own.
   > independent AI reviewers whose findings were cross-checked against each other
   > and the code. Once each comment has been addressed, I'll do a once-over myself.
 
-Only with `no-post`: show the user the draft here and stop; post later only what they
+Only with `no-post`: show the user the draft here, run the cleanup at the end of
+this step, and stop; post later only what they
 then pick. If their answer does not map to exactly one of post all / pick ids /
 don't post, ask again rather than guessing — "post the fix" is not "post only that
 one".
@@ -450,8 +452,10 @@ ask you to, with the event they name: `gh api
 repos/<owner>/<repo>/pulls/<n>/reviews/<id>/events --method POST -f
 event=<REQUEST_CHANGES|COMMENT>`.
 
-Offer `dual_review.sh cleanup <RUN_DIR>` to remove the worktree. Run artifacts
-stay under `~/.claude/dual-review/runs/` for audit and for the next `--since`.
+**Every run ends with cleanup**, whichever path it took (posted, `no-post`, or the
+user's own PR): run `dual_review.sh cleanup <RUN_DIR>` to remove the review
+worktree — do not ask first. Run artifacts stay under `~/.claude/dual-review/runs/` for audit and
+for the next `--since`.
 
 ## When codex cannot run
 

@@ -39,12 +39,18 @@ The caller gives you, explicitly (you see none of its conversation):
    `.py` files you were given. If an output file already exists, **read it
    before overwriting it** — the harness refuses a blind overwrite and you
    would lose the attempt.
-5. **Verify at the end.** For each output file:
-   `python3 -c "import ast; ast.parse(open('<path>').read())"`. A file that does
-   not parse is not done — fix it or state it is the known-hard tail.
+5. **Line placement.** If the project has a line-aligning tool, run it once
+   instead of adjusting blank lines by hand.
+6. **Verify at the end.** If the project provides a verifier (a reconstruct
+   skill or a recompile-and-diff tool), use it per module and report its result.
+   Otherwise fall back to
+   `python3 -c "import ast; ast.parse(open('<path>').read())"` and mark the
+   module `UNVERIFIED`. A file that does not parse is not done — fix it or state
+   it is the known-hard tail.
 
 ## Report
 
-Return a short summary: per module — output path, parse OK or broken (with the
-error line), function count, and the count of `TODO(verify)` markers. Name any
+Return a short summary, one line per module: `MATCH`, `NOT MATCH <code objects>`
+or `UNVERIFIED`, with output path, function count, and the count of
+`TODO(verify)` markers (for a file that does not parse, the error line). Name any
 module you could not complete and what you need to finish it.

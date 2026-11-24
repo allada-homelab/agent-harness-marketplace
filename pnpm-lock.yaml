@@ -30,6 +30,8 @@ importers:
 
   modules/feature-dev: {}
 
+  modules/local-workers: {}
+
   modules/okf-wiki: {}
 
   modules/plan-for-dummies: {}
@@ -37,6 +39,8 @@ importers:
   modules/pr-flow: {}
 
   modules/rea: {}
+
+  modules/repo-sweep: {}
 
   modules/simplify: {}
 

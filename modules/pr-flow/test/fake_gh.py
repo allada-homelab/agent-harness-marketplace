@@ -67,7 +67,9 @@ elif argv[0] == "api" and "/actions/runs" in argv[1]:
         print(json.dumps(replay.get("runs", [])))
 elif argv[:2] == ["api", "graphql"]:
     n = int(replay.get("threads_unresolved", 0))
-    nodes = [{"isResolved": False}] * n + [{"isResolved": True}]
+    k = int(replay.get("threads_outdated", 0))
+    nodes = ([{"isResolved": False, "isOutdated": False}] * (n - k) + [{"isResolved": False, "isOutdated": True}] * k
+             + [{"isResolved": True, "isOutdated": False}])
     print(json.dumps({"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": nodes}}}}}))
 elif argv[:2] == ["run", "view"]:
     print("\n".join(f"LOG-FOR-{argv[2]} line {i}" for i in range(300)))
@@ -87,6 +89,8 @@ elif argv[:2] == ["pr", "merge"]:
         # merge_lag: how many post-merge `pr view` reads still say OPEN (GitHub read-after-write lag).
         replay["pr_view"] = [dict(views[-1], state="OPEN")] * int(replay.get("merge_lag", 0)) + [merged]
         save()
+elif argv[:2] == ["pr", "list"] and "--base" in argv:
+    print("\n".join(replay.get("stacked", {}).get(argv[argv.index("--base") + 1], [])))
 elif argv[:2] == ["pr", "list"]:
     head = argv[argv.index("--head") + 1]
     print("1" if head in replay.get("merged_branches", []) else "0")

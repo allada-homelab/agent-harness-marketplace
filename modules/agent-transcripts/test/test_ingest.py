@@ -1374,6 +1374,29 @@ def test_duplicate_native_id_across_aliased_project_dirs_keeps_one_session(tmp_p
     conn.close()
 
 
+@pytest.mark.parametrize("longer_dir", ["proj-a", "proj-b"])  # either one is parsed first
+def test_a_resumed_sessions_shorter_prefix_copy_is_dropped(tmp_path, longer_dir):
+    """Resuming a session from a renamed checkout leaves the log up to the resume in
+    the old project dir and all of it in the new one: only the longer copy is indexed."""
+    root = tmp_path / "cache"
+    records = [
+        _claude_rec("u1", None, content="start"),
+        _claude_rec("a1", "u1", rtype="assistant", content=[{"type": "text", "text": "ok"}]),
+        _claude_rec("u2", "a1", content="resumed here"),
+    ]
+    shorter_dir = "proj-b" if longer_dir == "proj-a" else "proj-a"
+    _write_lines(root / f"raw/claude/host/projects/{longer_dir}/resumed.jsonl", records)
+    _write_lines(root / f"raw/claude/host/projects/{shorter_dir}/resumed.jsonl", records[:2])
+
+    errors, conn = _ingested(root)
+    assert errors == 0
+    assert _rows(conn, "SELECT project_key FROM sessions WHERE native_id = 'resumed'") == [
+        (longer_dir,),
+    ]
+    assert _rows(conn, "SELECT count(*) FROM messages") == [(3,)]
+    conn.close()
+
+
 def test_an_already_duplicated_database_heals_on_the_next_ingest(tmp_path):
     """Simulates the pre-fix state: two files already indexed as separate sessions
     under the same native_id, at a stale parser_version. Re-running `ingest` with
@@ -2136,6 +2159,24 @@ def test_a_claude_mid_turn_prompt_is_one_row_in_its_place(tmp_path):
     assert [m.ord for m in parsed.messages] == list(range(7))
 
 
+def test_a_claude_output_style_is_one_system_row_per_change(tmp_path):
+    def style(uuid, parent, prompt):
+        return _queued(uuid, parent, "") | {"attachment": {
+            "type": "output_style_instructions", "style": {"name": "terse", "prompt": prompt}}}
+
+    parsed = _parse_lines(tmp_path, [
+        style("s1", None, "Answer in one line."),
+        _claude_rec("u1", "s1", content="hi"),
+        style("s2", "u1", "Answer in one line."),
+        style("s3", "s2", "Answer in two lines."),
+    ])
+    assert [(m.native_id, m.role, m.text) for m in parsed.messages] == [
+        ("s1", "system", "Output style: terse\n\nAnswer in one line."),
+        ("u1", "user", "hi"),
+        ("s3", "system", "Output style: terse\n\nAnswer in two lines."),
+    ]
+
+
 def test_claude_main_path_runs_through_records_that_are_not_indexed(tmp_path):
     parsed = _parse_lines(tmp_path, [
         _claude_rec("u1", None, content="go"),
@@ -2221,3 +2262,34 @@ def test_coverage_exits_0_on_known_shapes_and_1_on_an_unknown_one(cache, capsys)
     ])
     assert tr.main(["coverage", "--dest", str(cache)]) == 1
     assert "claude\trec:surprise\t1\tUNKNOWN" in capsys.readouterr().out
+
+
+def _annotated_user_rows(tmp_path, texts_per_session):
+    """Index one user row per text in each of three sessions, annotate, return (text, injected)."""
+    conn = tr.open_db(tmp_path)
+    conn.execute("INSERT INTO files (id, harness, relpath, size, mtime, parser_version, status,"
+                 " parsed_at) VALUES (1, 'claude', 'a.jsonl', 1, 1, ?, 'ok', 'now')",
+                 (tr.PARSER_VERSION,))
+    for n in range(3):
+        sid = conn.execute("INSERT INTO sessions (harness, native_id, file_id, kind)"
+                           " VALUES ('claude', ?, 1, 'main')", (f"s{n}",)).lastrowid
+        for ord_, text in enumerate(texts_per_session):
+            conn.execute("INSERT INTO messages (session_id, ord, on_main_path, role, text,"
+                         " norm_key) VALUES (?, ?, 1, 'user', ?, ?)",
+                         (sid, ord_, text, tr._norm_key(text)))
+    conn.commit()
+    conn.close()
+    tr.annotate(tmp_path)
+    conn = sqlite3.connect(tmp_path / "transcripts.db")
+    rows = dict(conn.execute("SELECT DISTINCT text, injected FROM messages"))
+    conn.close()
+    return rows
+
+
+def test_annotate_never_flags_a_short_reply_the_human_typed_in_many_sessions(tmp_path):
+    assert _annotated_user_rows(tmp_path, ["yes"]) == {"yes": 0}
+
+
+def test_annotate_flags_long_text_repeated_across_sessions(tmp_path):
+    standing = "Always check for a dev container first. " * 10
+    assert _annotated_user_rows(tmp_path, [standing]) == {standing: 1}

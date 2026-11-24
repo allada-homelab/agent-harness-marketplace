@@ -192,3 +192,22 @@ def test_guard_blocks_bare_worktree_add_anywhere(repo, tmp_path, cwd_is_main):
     rc, err = guard(root if cwd_is_main else wt, f"git worktree add -b feat/q {tmp_path / 'q'}")
     assert rc == 2 and "pr-flow start" in err
     assert guard(root, "git worktree list")[0] == 0
+
+
+def after_bash(cwd, command):
+    ev = {"session_id": "s1", "cwd": str(cwd), "hook_event_name": "PostToolUse", "tool_name": "Bash",
+          "tool_input": {"command": command}, "tool_response": ""}
+    p = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(ev), text=True, capture_output=True)
+    assert p.returncode == 0, p.stderr
+    return json.loads(p.stdout)["hookSpecificOutput"]["additionalContext"] if p.stdout.strip() else None
+
+
+@pytest.mark.parametrize("command", ["git push", "git -C /w push -u origin feat/x", "git commit -qm x && git push"])
+def test_every_push_is_told_to_watch_before_reporting(tmp_path, command):
+    hint = after_bash(tmp_path, command)
+    assert hint and "pr-flow -C <worktree> watch" in hint and "PR head" in hint
+
+
+@pytest.mark.parametrize("command", ["git status", "pr-flow -C /w watch", "echo push"])
+def test_no_push_hint_for_other_commands(tmp_path, command):
+    assert after_bash(tmp_path, command) is None

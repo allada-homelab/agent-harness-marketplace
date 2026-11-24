@@ -49,7 +49,9 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    with no commits ahead of its base — usually a commit a hook rejected. It
    refuses when the branch's PR is already merged (exit 2 — run `pr-flow start`
    for new work instead) and opens a fresh PR when the old one was closed.
-5. **Watch** — `pr-flow watch`, after every push. It blocks up to an hour,
+5. **Watch** — `pr-flow watch`, after every push, before you report it: a push
+   alone is not a result, and watch is what confirms the PR head is the commit
+   you pushed (a GitHub error can drop one). It blocks up to an hour,
    polling (`next poll in Ns` and, right after a push, `PR head … is not the
    pushed … yet` on stderr are normal) and waiting out CI that starts late. It
    returns one verdict:
@@ -60,9 +62,12 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    - `conflict` (11): sync with the base the way the output says, resolve,
      commit, push, watch again. That is `git fetch origin && git merge
      origin/<base>` and a plain push, unless the repo merges by rebase (no merge
-     commits allowed): a rebase merge cannot replay a merge commit, so there it
-     is `git rebase origin/<base>` and `git push --force-with-lease`, run only
-     with the user's OK. Never force-push in any other case.
+     commits allowed: a rebase merge cannot replay a merge commit) or the branch
+     is in a stack (its base is not a protected branch, or open PRs are based on
+     it — the output lists them). There it is `git rebase origin/<base>` and
+     `git push --force-with-lease`, run only with the user's OK, and then each
+     PR stacked on it rebased the same way, layer by layer. Never force-push in
+     any other case.
    - `review` (12): unresolved review threads, changes requested, a draft PR, or
      one blocked by branch protection. Address each thread (bot reviewers
      included) or the blocking condition, push, reply on the thread, watch again.
@@ -79,6 +84,10 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    because a wait timed out (no check ever reported) exits 0 but `--merge`
    refuses and says so: merge by hand once you have evidence CI ran. A refused
    merge prints gh's message and the likely cause.
+   Run `watch` from a directory outside the worktree (the main checkout or
+   `$HOME`), not from inside it: a merge tears the worktree down, and a shell
+   whose cwd was that directory ends the call with a `getcwd` error — the
+   merge succeeded but the tool call is recorded as failed.
 6. **Merge only when told.** `pr-flow watch --merge` is allowed only when the
    user said, ahead of time and for this task, that the PR may be merged when
    green. Silence means no. A green PR without that permission ends the turn
@@ -91,14 +100,20 @@ with a `pr-flow: <reason>` line on stderr instead. Act on the verdict.
    file (`--merge-if-only agents/modules.tsv --merge-if-only dsh/profiles/`).
 7. **Teardown** — `pr-flow teardown` after the PR is merged (`--merge` does it
    itself). With no argument it uses the current branch, so from the main
-   checkout run `pr-flow teardown <branch>`. It removes the worktree, deletes the local branch **and deletes the
-   branch on origin**; a branch counts as merged when it is an ancestor of
-   `origin/<base>` or GitHub has a merged PR for it (squash and rebase merges
+   checkout run `pr-flow teardown <branch>`. It removes the worktree, deletes the
+   local branch **and deletes the branch on origin**; a branch counts as merged
+   when it is an ancestor of `origin/<base>` or GitHub has a merged PR for it (squash and rebase merges
    leave no ancestor). When a `devc` executable is on PATH it first runs
    `devc down <worktree>` to remove the worktree's dev container, image and
    per-worktree volumes; a failure there is a warning, never a blocked teardown.
+   Inside a dev container that exports `LOCAL_WORKSPACE_FOLDER` (the host folder
+   of its checkout), it passes devc the worktree's host path, which is what
+   devc labels containers with.
    `pr-flow gc` tears down every worktree whose PR has
    merged; run it when you notice stale worktrees.
+   Same cwd rule as `watch`: run `teardown` from outside the worktree, or the
+   call's own shell loses its working directory the moment the worktree is
+   removed.
 
 ## Editing on main anyway
 
@@ -130,9 +145,10 @@ that branch directly is opted out by the user, never by you:
   tooling pointed at the worktree.
 - Worktrees share the machine with main: ports, local databases, containers.
   Starting a service from a worktree takes them from whoever holds them.
-- Worktrees also share one git stash stack. `pop`, `drop`, `clear` and a bare
-  `apply` can take another session's entry and are blocked; set work aside
-  with a WIP commit, or `git stash create` and `git stash apply <sha>`.
+- Worktrees also share one git stash stack, so every `git stash` form is
+  blocked — `push`, `save` and a bare `git stash` included — except `list`,
+  `show`, `create` and `apply <sha>`. Set work aside with a WIP commit, or
+  `git stash create` and `git stash apply <sha>`.
 - Name a worktree by its literal absolute path (`pr-flow -C <path>`,
   `git -C <path>`), never through a shell variable: harnesses reset the shell's
   directory between calls, and guards cannot expand `$VAR` to see the target.

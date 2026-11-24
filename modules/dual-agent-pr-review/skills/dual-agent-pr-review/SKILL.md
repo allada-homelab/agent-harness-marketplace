@@ -36,8 +36,8 @@ authority on the run, and its brief templates and schemas sit beside it under
 - Everything after an em/en dash or `--` is the user's review instruction. Pass it
   through **verbatim** as `--task`; it shapes both reviews identically.
 - `claude:<model>/<effort>` and `codex:<model>/<effort>` set each reviewer
-  independently, e.g. `claude:opus/high codex:gpt-6.1-sol/xhigh`. Either half may be
-  omitted (`codex:/xhigh`). Defaults: `opus`/`high` and `gpt-6.1-sol`/`high`.
+  independently, e.g. `claude:opus/high codex:gpt-6.2-sol/xhigh`. Either half may be
+  omitted (`codex:/xhigh`). Defaults: `claude-opus-5-5`/`medium` and `gpt-6.2-sol`/`medium`.
 - If no models or effort are named, use the defaults and say which you used — do not
   ask.
 - "Re-review" (or a PR with an earlier run under `~/.claude/dual-review/runs/`) means
@@ -73,8 +73,8 @@ authority on the run, and its brief templates and schemas sit beside it under
 - **Someone else's PR always gets a pending (draft) review** (Step 8), published
   only when the user submits it; nothing is posted with `no-post`. The user's own PR
   gets a fix list. Every Blocking, Non-blocking and Unresolved finding is its own
-  inline comment with a severity · category label (e.g. `[Non-blocking ·
-  documentation]`). Nits, not-worth-raising and author-deferred findings, and ones
+  inline comment starting `[AI-Review]`, then a severity · category label (e.g.
+  `[AI-Review] **[Non-blocking · documentation]**`). Nits, not-worth-raising and author-deferred findings, and ones
   an existing thread already covers are not posted — the user sees them, and
   `final.md` records why.
 - **True is not enough.** A finding must also be worth the author's time: nothing

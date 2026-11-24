@@ -326,6 +326,9 @@ class Unit:
         self.repeats = 1
         self.final = False  # part of the final report: fit_budget always keeps it
         self.user = False  # a user turn: where `read` prefers to break a page
+        self.kind = ""  # read units: user, assistant, result, error, or a system row's kind
+        self.prose = ""  # read units: a user turn's text, or the ASSISTANT line without calls
+        self.tools: list[tuple[str, str]] = []  # read units: (tool name, rendered CALL line)
 
     @property
     def text(self) -> str:
@@ -347,19 +350,20 @@ def user_lines(ord_: int, text: str, cap: int) -> list[str]:
     return [f"[{ord_}] USER {lines[0]}"] + ["    " + line for line in lines[1:]]
 
 
-def final_report(conn, session_id: int):
+def final_report(conn, session_id: int, limit: int = FINAL_REPORT_CHARS):
     """(message id, text) of the last assistant text and (call id, arguments) of the last
-    final-report call — the report, uncapped by the per-unit limits. Either may be None."""
+    final-report call — the report, uncapped by the per-unit limits. Either may be None.
+    `limit` is the view's cap; `read` shows the whole report."""
     final_text = conn.execute(
         "SELECT id, substr(text, 1, ?) FROM messages WHERE session_id = ? AND role = 'assistant'"
         " AND trim(coalesce(text, '')) != '' ORDER BY ord DESC, id DESC LIMIT 1",
-        (FINAL_REPORT_CHARS + 1, session_id),
+        (limit + 1, session_id),
     ).fetchone()
     final_call = conn.execute(
         "SELECT t.id, substr(t.arguments, 1, ?) FROM tool_calls t"
         " JOIN messages m ON m.id = t.message_id WHERE m.session_id = ? AND t.name IN (%s)"
         " ORDER BY m.ord DESC, t.id DESC LIMIT 1" % ",".join("?" for _ in FINAL_REPORT_TOOLS),
-        (FINAL_REPORT_CHARS + 1, session_id, *FINAL_REPORT_TOOLS),
+        (limit + 1, session_id, *FINAL_REPORT_TOOLS),
     ).fetchone()
     return final_text, final_call
 
@@ -1106,6 +1110,19 @@ DISPATCH_TOOLS = ("Agent", "Task", "subagent", "delegate_agent")
 DISPATCH_RESULT_CHARS = 2000
 ERROR_RESULT_CHARS = 160
 SMALL_RESULT_CHARS = 200  # a result this short costs less to show than to expand
+BRIEF_CHARS = 1500  # a dispatch call's brief: what the subagent was told
+REPORT_CHARS = 3000  # a background subagent's report, which arrives as a system row
+PEER_CHARS = 1000
+HINT_CHARS = 160
+GIST_CHARS = 700
+WRAP_CHARS = 1500  # file readers can cut longer lines; `--all` wraps, losing nothing
+FULL_BUDGET = 350_000  # --mode auto renders in full up to this many chars, else an outline
+LOOP_MIN = 3  # a scripted prompt seen this many times is a loop
+SCRIPTED_MIN_CHARS = 200  # a non-command user turn this long and repeated is a template
+GIT_ACTION = re.compile(
+    r"(git (?:-C \S+ )?(?:commit|push)[^&;|\n]{0,90}|pr-flow (?:-C \S+ )?(?:open|watch --merge)"
+    r"|gh pr (?:create|merge)[^&;|\n]{0,40})")
+WHOLE = 10**12  # a cap no text reaches: `read` never cuts the final report
 PAGE_CHARS = 30000
 EXPAND_CHARS = 4000
 OUTCOMES = ("completed", "partial", "abandoned", "failed", "unclear")
@@ -1124,14 +1141,96 @@ def capped(text: str, limit: int, total: int | None = None) -> str:
     return f"{flat[:limit]} …[of {total if total is not None else len(text):,} chars]"
 
 
+def head_tail(text: str, limit: int) -> str:
+    """One line keeping the first and last halves of `limit`: a decision menu sits at the end."""
+    flat = normalize(text)
+    if len(flat) <= limit:
+        return flat
+    half = limit // 2
+    return f"{flat[:half]} …[{len(flat) - limit:,} of {len(flat):,} chars omitted]… {flat[-half:]}"
+
+
+def system_row(ord_: int, text: str, fallback_chars: int) -> tuple[str, str]:
+    """(kind, line) for a system row, told apart by its opening (Claude's wording)."""
+    if text.startswith("Base directory for this skill:"):
+        # A skill body reloaded on every pass can be most of a session.
+        m = re.search(r"skills/([^/\s]+)", text.split("\n", 1)[0])
+        return "skill", f"[{ord_}] SKILL loaded {m.group(1) if m else '?'} ({len(text):,} chars)"
+    if text.startswith("This session is being continued from a previous"):
+        work = re.search(r"Current Work:?(.*?)(?:\n\s*\d+\.\s+\w[^\n]*:|\Z)", text, re.S)
+        gist = capped(work.group(1) if work else text[-GIST_CHARS:], GIST_CHARS)
+        return "compaction", (f"[{ord_}] ════ COMPACTION ════ everything above was replaced by a "
+                              f"{len(text):,}-char summary; the agent knows only what it kept. "
+                              f"Its current work: {gist}")
+    if "[Subagent hand-back]" in text[:600] or text.startswith("<agent-message"):
+        who = re.search(r'agent-message from="([^"]+)"', text)
+        body = text.split("The report follows:", 1)[-1].split("</agent-message>", 1)[0]
+        return "report", (f"[{ord_}] SUBAGENT REPORT from agent-{who.group(1) if who else '?'} "
+                          f"{capped(body, REPORT_CHARS, len(text))}")
+    if text.startswith("Another Claude session sent a message"):
+        return "peer", f"[{ord_}] PEER MESSAGE {capped(text, PEER_CHARS)}"
+    if text.startswith("<task-notification>"):
+        return "notify", f"[{ord_}] TASK NOTIFICATION {capped(text, HINT_CHARS)}"
+    if text.startswith("Output style: "):
+        name = text.split("\n", 1)[0].removeprefix("Output style: ")
+        return "style", f"[{ord_}] OUTPUT STYLE {name} in effect ({len(text):,} chars; expand to read it)"
+    if text.startswith("switchboard:") or "SessionStart" in text[:200]:
+        return "context", f"[{ord_}] HARNESS CONTEXT ({len(text):,} chars)"
+    return "other", f"[{ord_}] SYSTEM {capped(text, fallback_chars)}"
+
+
+def arg_field(arguments: str | None, key: str) -> str:
+    """One field of a call's JSON arguments, or the raw arguments when they are not JSON."""
+    try:
+        return json.loads(arguments or "{}").get(key) or ""
+    except (ValueError, AttributeError):
+        return arguments or ""
+
+
+def subagent_links(conn, native_id: str) -> dict[str, tuple[str, str]]:
+    """brief → (subagent native id, call digest). A subagent's first user turn is its brief."""
+    rows = conn.execute(
+        "SELECT s.native_id, (SELECT text FROM messages WHERE session_id = s.id AND role = 'user'"
+        " ORDER BY ord LIMIT 1), (SELECT group_concat(name || ':' || coalesce(is_error, 0))"
+        " FROM tool_calls t JOIN messages m ON m.id = t.message_id WHERE m.session_id = s.id)"
+        " FROM sessions s WHERE s.parent_native_id = ?", (native_id,)).fetchall()
+    links = {}
+    for sub_id, brief, calls in rows:
+        names = Counter(c.rsplit(":", 1)[0] for c in (calls or "").split(",") if c)
+        errors = sum(c.endswith(":1") for c in (calls or "").split(","))
+        tools = ", ".join(f"{k} {v}" for k, v in names.most_common(4))
+        links[normalize(brief)[:200]] = (
+            sub_id, f"{sum(names.values())} calls ({tools}), {errors} errors")
+    return links
+
+
+def result_body(name, text: str, tail: str, length: int, is_error) -> str:
+    if is_error:
+        return f"ERR {capped(text, ERROR_RESULT_CHARS, length)}"
+    if name in DISPATCH_TOOLS and text.startswith("Async agent launched"):
+        return "launched in background; its report arrives later as a SUBAGENT REPORT"
+    if name in DISPATCH_TOOLS:
+        return capped(text, DISPATCH_RESULT_CHARS, length)
+    if (length or 0) <= SMALL_RESULT_CHARS:
+        return normalize(text) or "(empty)"
+    if name == "Bash":  # test counts and exit summaries are on the last line
+        last = next((ln for ln in reversed(tail.strip().splitlines()) if ln.strip()), "")
+        return f"ok {length:,} chars; last line: {capped(last, HINT_CHARS)}"
+    if name == "Grep":
+        return f"ok {length:,} chars; first: {capped(text.split(chr(10), 1)[0], HINT_CHARS)}"
+    return f"ok {length or 0:,} chars"
+
+
 def build_read_units(conn, session, *, user_chars, assistant_chars, args_chars) -> list[Unit]:
     """Every message in ord order, one Unit each, with ordinary tool results hidden."""
-    session_id, harness = session[0], session[1]
+    session_id, harness, native_id = session[0], session[1], session[2]
     messages = conn.execute(
         "SELECT id, ord, role, CASE WHEN role = 'tool_result' THEN substr(text, 1, ?)"
-        " ELSE text END, length(text) FROM messages WHERE session_id = ? ORDER BY ord, id",
+        " ELSE text END, length(text), CASE WHEN role = 'tool_result' THEN substr(text, -400)"
+        " END FROM messages WHERE session_id = ? ORDER BY ord, id",
         (DISPATCH_RESULT_CHARS + 1, session_id),
     ).fetchall()
+    links = subagent_links(conn, native_id)
     calls: dict[int, list] = {}
     results: dict[int, tuple] = {}
     for call_id, message_id, name, arguments, is_error, result_id in conn.execute(
@@ -1144,47 +1243,186 @@ def build_read_units(conn, session, *, user_chars, assistant_chars, args_chars) 
         if result_id is not None:
             results[result_id] = (name, is_error, message_id)
     ord_of = {row[0]: row[1] for row in messages}
-    final_text, final_call = final_report(conn, session_id)
+    final_text, final_call = final_report(conn, session_id, WHOLE)
 
     units: list[Unit] = []
-    for message_id, ord_, role, text, length in messages:
+    for message_id, ord_, role, text, length, tail in messages:
         text = text or ""
         if role == "user":
             clean = strip_boilerplate(text, harness)[0].strip() or "[empty]"
             unit = Unit(user_lines(ord_, clean, user_chars), ord_=ord_)
-            unit.user = True
+            unit.user, unit.kind, unit.prose = True, "user", clean
             units.append(unit)
         elif role == "assistant":
-            lines = []
+            prose = ""
             if final_text and final_text[0] == message_id:
-                lines.append(f"[{ord_}] ASSISTANT {one_line(final_text[1], FINAL_REPORT_CHARS)}")
+                prose = f"[{ord_}] ASSISTANT {normalize(final_text[1])}"
             elif text.strip():
-                lines.append(f"[{ord_}] ASSISTANT {capped(text, assistant_chars)}")
+                prose = f"[{ord_}] ASSISTANT {head_tail(text, assistant_chars)}"
+            tools = []
             for call_id, name, arguments, is_error in calls.get(message_id, []):
                 if final_call and final_call[0] == call_id:
-                    shown = one_line(final_call[1] or "", FINAL_REPORT_CHARS)
+                    shown = normalize(final_call[1] or "")
+                elif name in DISPATCH_TOOLS:
+                    brief = arg_field(arguments, "prompt") or arguments or ""
+                    shown = capped(brief, BRIEF_CHARS)
+                    if normalize(brief)[:200] in links:
+                        sub_id, digest = links[normalize(brief)[:200]]
+                        shown += f" ⤷ subagent {sub_id}: {digest}"
                 else:
                     shown = capped(arguments or "", args_chars)
-                lines.append(f"[{ord_}] CALL {name} {shown}{' ERR' if is_error else ''}")
-            if lines:
-                units.append(Unit(lines, ord_=ord_))
+                tools.append((name, f"[{ord_}] CALL {name} {shown}{' ERR' if is_error else ''}"))
+            if prose or tools:
+                unit = Unit(([prose] if prose else []) + [line for _, line in tools], ord_=ord_)
+                unit.kind, unit.prose, unit.tools = "assistant", prose, tools
+                unit.final = bool(final_call and any(c[0] == final_call[0]
+                                                     for c in calls.get(message_id, [])))
+                units.append(unit)
         elif role == "tool_result":
             name, is_error, call_message = results.get(message_id, (None, 0, None))
-            if is_error:
-                body = f"ERR {capped(text, ERROR_RESULT_CHARS, length)}"
-            elif name in DISPATCH_TOOLS:
-                body = capped(text, DISPATCH_RESULT_CHARS, length)
-            elif (length or 0) <= SMALL_RESULT_CHARS:
-                body = normalize(text) or "(empty)"
-            else:
-                body = f"ok {length or 0:,} chars"
+            body = result_body(name, text, tail or "", length or 0, is_error)
             # Parallel calls share an ord and their results follow later; name the call.
             source = f"of {name} [{ord_of[call_message]}] " if call_message in ord_of else ""
-            units.append(Unit([f"[{ord_}] RESULT {source}{body}"], ord_=ord_))
+            unit = Unit([f"[{ord_}] RESULT {source}{body}"], ord_=ord_)
+            unit.kind = "error" if is_error else "result"
+            units.append(unit)
         elif text.strip():
-            units.append(Unit([f"[{ord_}] {role.upper()} {capped(text, assistant_chars)}"],
-                              ord_=ord_))
+            kind, line = (system_row(ord_, text, assistant_chars) if role == "system" else
+                          ("other", f"[{ord_}] {role.upper()} {capped(text, assistant_chars)}"))
+            unit = Unit([line], ord_=ord_)
+            unit.kind = kind
+            units.append(unit)
     return units
+
+
+def is_scripted(body: str) -> bool:
+    """A slash command or a long template; never a short human reply."""
+    return body.startswith("/") or len(body) >= SCRIPTED_MIN_CHARS
+
+
+def outline(units: list[Unit]) -> list[Unit]:
+    """One block per human turn: the turn in full, the work after it as tool counts plus its
+    errors, reports and dispatches, and the agent's last message. Runs of scripted turns
+    (repeated three or more times) fold into one block listing each distinct outcome once."""
+    groups: list[tuple[Unit | None, list[Unit]]] = [(None, [])]
+    for unit in units:
+        if unit.kind == "user":
+            groups.append((unit, []))
+        else:
+            groups[-1][1].append(unit)
+    keys = [normalize(u.prose)[:300] if u and is_scripted(u.prose) else None for u, _ in groups]
+    seen = Counter(k for k in keys if k)
+    looped = [bool(k) and seen[k] >= LOOP_MIN for k in keys]
+
+    out: list[Unit] = []
+    i = 0
+    while i < len(groups):
+        if looped[i]:
+            j = i
+            while j < len(groups) and looped[j]:
+                j += 1
+            out.append(fold_loop(groups[i:j]))
+            i = j
+            continue
+        user, work = groups[i]
+        if user:
+            out.append(user)
+        out += work_block(work)
+        i += 1
+    return out
+
+
+def fold_loop(groups) -> Unit:
+    prompts, outcomes, errors, n_calls = Counter(), {}, [], 0
+    for user, work in groups:
+        prompts[capped(user.prose, 60)] += 1
+        n_calls += sum(len(u.tools) for u in work)
+        errors += [u.lines[0][:200] for u in work if u.kind == "error"]
+        prose = [u.prose for u in work if u.prose]
+        last = prose[-1].split(" ASSISTANT ", 1)[-1] if prose else "(no text)"
+        outcomes.setdefault(re.sub(r"\d+", "#", last[:120]), (user.ord, last))
+    kinds = ", ".join(f"{p} ×{k}" for p, k in prompts.most_common())
+    lines = [f"[{groups[0][0].ord}] LOOP {len(groups)} scripted turns ({kinds}): {n_calls} calls,"
+             f" {len(errors)} errors. Distinct outcomes:"]
+    lines += [f"    first at [{o}] {capped(last, 300)}" for o, last in list(outcomes.values())[:10]]
+    if len(outcomes) > 10:
+        lines.append(f"    … {len(outcomes) - 10} more distinct outcomes")
+    lines += ["    " + e for e in errors]
+    unit = Unit(lines, messages=sum(1 + len(w) for _, w in groups), ord_=groups[0][0].ord)
+    unit.kind = "loop"
+    return unit
+
+
+def work_block(work: list[Unit]) -> list[Unit]:
+    if not work:
+        return []
+    tools = Counter(name for u in work for name, _ in u.tools)
+    lines = []
+    if tools:
+        counts = ", ".join(f"{k} {v}" for k, v in tools.most_common(6))
+        lines.append(f"[{work[0].ord}–{work[-1].ord}] WORK {sum(tools.values())} calls: {counts}")
+    errors = [u.lines[0] for u in work if u.kind == "error"]
+    lines += ["    " + e[:260] for e in errors[:5]]
+    if len(errors) > 5:
+        lines.append(f"    … {len(errors) - 5} more errors")
+    for u in work:
+        if u.kind in ("compaction", "report"):
+            lines += u.lines
+        lines += [line for name, line in u.tools
+                  if name in FINAL_REPORT_TOOLS or (name in DISPATCH_TOOLS and not u.final)]
+    prose = [u.prose for u in work if u.prose]
+    if len(prose) > 1:
+        lines.append(f"    ({len(prose) - 1} earlier assistant messages omitted;"
+                     f" first: {capped(prose[0], 300)})")
+    if prose:
+        lines.append(prose[-1])
+    unit = Unit(lines, messages=len(work), ord_=work[0].ord)
+    unit.kind = "work"
+    return [unit]
+
+
+def git_actions(conn, session_id: int) -> list[tuple[int, list[str]]]:
+    """(ord, actions) for each shell call that commits, pushes or opens or merges a PR."""
+    out = []
+    for ord_, args in conn.execute(
+            "SELECT m.ord, t.arguments FROM tool_calls t JOIN messages m ON m.id = t.message_id"
+            " WHERE m.session_id = ? AND lower(t.name) = 'bash' ORDER BY m.ord", (session_id,)):
+        found = GIT_ACTION.findall(arg_field(args, "command"))
+        if found:
+            out.append((ord_, list(dict.fromkeys(f.strip() for f in found))))
+    return out
+
+
+def session_facts(conn, session, units: list[Unit]) -> list[str]:
+    """Header lines a reader orients by: span, compactions, commits and pushes, loops."""
+    session_id, native_id = session[0], session[2]
+    last = conn.execute("SELECT max(ts) FROM messages WHERE session_id = ?",
+                        (session_id,)).fetchone()[0]
+    git = [f"[{ord_}] " + " + ".join(found) for ord_, found in git_actions(conn, session_id)]
+    commands = Counter(u.prose[:60] for u in units if u.kind == "user" and u.prose.startswith("/"))
+    looped = [f"{k} ×{v}" for k, v in commands.most_common() if v >= LOOP_MIN]
+    compactions = [str(u.ord) for u in units if u.kind == "compaction"]
+    styles = [re.sub(r"^\[\d+\] OUTPUT STYLE (.*) in effect \(.*", rf"\1 [{u.ord}]", u.lines[0])
+              for u in units if u.kind == "style"]
+    n_subagents = conn.execute("SELECT count(*) FROM sessions WHERE parent_native_id = ?",
+                               (native_id,)).fetchone()[0]
+    facts = [f"last activity={last}  subagents={n_subagents}",
+             "compactions at ords: " + (", ".join(compactions) or "none"),
+             "commits / pushes / PR actions: " + ("; ".join(git[:25]) or "none")
+             + (f"; … {len(git) - 25} more" if len(git) > 25 else "")]
+    if styles:
+        facts.append("output style (expand its ord for the text): " + "; ".join(styles))
+    if looped:
+        facts.append("repeated slash commands: " + "; ".join(looped))
+    return facts
+
+
+def wrap(text: str) -> str:
+    lines = []
+    for line in text.split("\n"):
+        chunks = [line[i:i + WRAP_CHARS] for i in range(0, len(line), WRAP_CHARS)] or [""]
+        lines += [chunks[0]] + ["    ↪ " + c for c in chunks[1:]]
+    return "\n".join(lines)
 
 
 def paginate(units: list[Unit], page_chars: int) -> list[list[Unit]]:
@@ -1240,23 +1478,59 @@ def log_access(dest: Path, run_id: int | None, harness: str, native_id: str, **f
         fconn.close()
 
 
-def read_pages(conn, session, args) -> list[list[Unit]]:
-    units = build_read_units(conn, session, user_chars=args.user_chars,
-                             assistant_chars=args.assistant_chars, args_chars=args.args_chars)
-    return paginate(units, args.page_chars)
+def read_units(conn, session, *, mode="full", budget=FULL_BUDGET, user_chars=8000,
+               assistant_chars=8000, args_chars=200) -> tuple[str, list[Unit], list[Unit]]:
+    """(mode used, units shown, every unit). `auto` outlines only what will not fit `budget`."""
+    units = build_read_units(conn, session, user_chars=user_chars,
+                             assistant_chars=assistant_chars, args_chars=args_chars)
+    if mode == "auto":
+        mode = "full" if sum(u.size() for u in units) <= budget else "outline"
+    return mode, (outline(units) if mode == "outline" else units), units
+
+
+def read_pages(conn, session, args) -> tuple[str, list[list[Unit]], list[Unit]]:
+    mode, shown, units = read_units(conn, session, mode=args.mode, budget=args.budget,
+                                    user_chars=args.user_chars,
+                                    assistant_chars=args.assistant_chars,
+                                    args_chars=args.args_chars)
+    return mode, paginate(shown, args.page_chars), units
+
+
+def session_header(session, detail: str) -> list[str]:
+    _id, harness, native_id, cwd, _project, kind, started_at, model = session
+    return [f"session {native_id}  harness={harness}  kind={kind}  started={started_at}",
+            f"model={model}  cwd={cwd}  {detail}"]
+
+
+def whole_text(conn, session, mode, shown: list[Unit], units: list[Unit]) -> str:
+    """The whole session as one wrapped text — what a fan-out reader gets."""
+    header = [*session_header(session, f"mode={mode}"), *session_facts(conn, session, units),
+              f"`review.py expand {session[2]} <ord>` shows the full text behind any [ord]", ""]
+    return wrap("\n".join(header + [u.text for u in shown])) + "\n"
 
 
 def cmd_read(args) -> int:
     dest = resolve_dest(args.dest)
     conn = connect(dest)
     session = resolve_session(conn, args.session)
-    _id, harness, native_id, cwd, _project, kind, started_at, model = session
-    pages = read_pages(conn, session, args)
+    harness, native_id = session[1], session[2]
+    mode, pages, units = read_pages(conn, session, args)
 
-    header = [
-        f"session {native_id}  harness={harness}  kind={kind}  started={started_at}",
-        f"model={model}  cwd={cwd}  pages={len(pages)} at --page-chars {args.page_chars}",
-    ]
+    header = session_header(
+        session, f"pages={len(pages)} at --page-chars {args.page_chars}  mode={mode}")
+    if args.all:
+        for n in range(1, len(pages) + 1):  # the whole text holds every page
+            log_access(dest, args.run_id, harness, native_id, kind="page", page=n,
+                       page_count=len(pages), page_chars=args.page_chars)
+        print(whole_text(conn, session, mode, [u for p in pages for u in p], units), end="")
+        return 0
+    if args.around is not None:
+        lo, hi = args.around - args.window, args.around + args.window
+        near = [u for page in pages for u in page if lo <= u.ord <= hi]
+        print(whole_text(conn, session, mode, near, units), end="")
+        return 0
+    if args.page == 1 or args.index:
+        header += session_facts(conn, session, units)
     if args.index:
         rows = [[n, f"{p[0].ord}–{p[-1].ord}", sum(u.messages for u in p),
                  sum(u.size() for u in p)] for n, p in enumerate(pages, 1)]
@@ -1925,6 +2199,15 @@ def main(argv: list[str] | None = None) -> int:
     pick = rd.add_mutually_exclusive_group()
     pick.add_argument("--page", type=int, default=1, help="page to print (default 1)")
     pick.add_argument("--index", action="store_true", help="print the page table only")
+    pick.add_argument("--around", type=int, metavar="ORD",
+                      help="only the messages within --window ords of this one")
+    pick.add_argument("--all", action="store_true",
+                      help="the whole session at once, long lines wrapped (for a fan-out reader)")
+    rd.add_argument("--mode", choices=("full", "outline", "auto"), default="full",
+                    help="outline: one block per human turn, scripted loops folded; auto: "
+                         "outline only when the full render exceeds --budget")
+    rd.add_argument("--budget", type=int, default=FULL_BUDGET)
+    rd.add_argument("--window", type=int, default=12, help="ords either side, for --around")
     rd.add_argument("--page-chars", type=int, default=PAGE_CHARS,
                     help=f"page size in characters (default {PAGE_CHARS})")
     rd.add_argument("--user-chars", type=int, default=8000)

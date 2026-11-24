@@ -338,8 +338,8 @@ write_prior() {
 # Builds the shared snapshot both reviewers see: PR metadata, the full diff, and
 # a detached worktree at the PR head so file reads land on the right revision.
 cmd_prepare() {
-  local pr="" task="" claude_model="opus" claude_effort="high"
-  local codex_model="gpt-6.1-sol" codex_effort="high" timeout_s=2400
+  local pr="" task="" claude_model="claude-opus-5-5" claude_effort="medium"
+  local codex_model="gpt-6.2-sol" codex_effort="medium" timeout_s=2400
   local since="" context_repos=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -607,9 +607,14 @@ cmd_run() {
   # --setting-sources "" keeps the PR's .claude/settings.json and the user's allow
   # rules out; --tools removes Skill/WebFetch/Agent outright; dontAsk denies any
   # Bash outside the read-only built-ins and this allow-list (curl, gh, rm…).
+  local ro_git=(diff show log blame) claude_allow="Read,Grep,Glob" claude_git="" v
+  for v in "${ro_git[@]}"; do claude_allow+=",Bash(git $v:*)"; claude_git+="${claude_git:+, }\`git $v\`"; done
+  # Prepended to every Claude round, so its first call is not a denied `ls` or `cat`.
+  local claude_tools_note="**Tools in this run:** Read, Grep and Glob, and Bash only for $claude_git. \
+Every other shell command (ls, cat, grep, find, rg, sed) is denied — read and search with Read, Grep and Glob."
   local claude_iso=(--permission-mode dontAsk --setting-sources "" --strict-mcp-config
     --tools "Read,Grep,Glob,Bash"
-    --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git show:*),Bash(git log:*),Bash(git blame:*)"
+    --allowedTools "$claude_allow"
     --settings '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
     --add-dir "$RUN_DIR")
   local context_dirs=()
@@ -643,7 +648,7 @@ cmd_run() {
     (
       cd "$WORKTREE" || exit 1
       rc=0
-      run_with_timeout "$AGENT_TIMEOUT" claude -p "$(cat "$dir/claude.prompt.md")" \
+      run_with_timeout "$AGENT_TIMEOUT" claude -p "$claude_tools_note"$'\n\n'"$(cat "$dir/claude.prompt.md")" \
         --model "$CLAUDE_MODEL" --effort "$CLAUDE_EFFORT" \
         --output-format json --json-schema "$(cat "$schema_file")" \
         "${claude_iso[@]}" ${context_dirs[@]+"${context_dirs[@]}"} \
@@ -770,8 +775,8 @@ case "${1:-}" in
 usage: dual_review.sh <command>
   preflight
   prepare --pr <url|number> --task <text>
-          [--claude-model opus] [--claude-effort high]
-          [--codex-model gpt-6.1-sol] [--codex-effort high] [--timeout 2400]
+          [--claude-model claude-opus-5-5] [--claude-effort medium]
+          [--codex-model gpt-6.2-sol] [--codex-effort medium] [--timeout 2400]
           [--since <prior run_dir>] [--context-repo <path>]...
   run     [--only claude|codex] <run_dir> <round> <findings|verdicts|comment-verdicts>
   status  <run_dir> <round>

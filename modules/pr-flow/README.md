@@ -3,7 +3,8 @@
 Branch + worktree → PR → watch until green → (merge when told) → teardown.
 One skill (`skills/pr-flow/SKILL.md`), one script beside it (`pr-flow.py`), one
 PostToolUse hook that hints — never blocks — when a tracked file is edited on a
-protected branch in a repo's main checkout.
+protected branch in a repo's main checkout, and after any `git push` that the
+push needs `pr-flow watch` before it is reported.
 
 Verbs: `start <slug> [--base <branch>] [--carry [<path>...] | --leave-dirty]`, `open`,
 `watch [--merge | --merge-if-only <prefix>...]`, `teardown [branch]`, `gc`. A global
@@ -50,16 +51,23 @@ rebase-merged branch, or a branch-protection rule unmet). `--merge` reads the
 repo's allowed methods and uses a merge commit, else rebase, else squash; the
 conflict and behind-base hints follow the same choice, so a rebase-merged repo
 is told to rebase onto the base and `push --force-with-lease`, because GitHub
-cannot rebase-merge a branch carrying a merge commit. A green head that is
+cannot rebase-merge a branch carrying a merge commit. A branch in a stack (its
+base is not a protected branch, or open PRs are based on it) is told the same,
+with the PRs above it to rebase in turn. A green head that is
 behind its base is reported with a hint, since "require branches to be up to
 date" protection refuses such a merge. An empty
 `statusCheckRollup` is either no CI for this PR (none configured, or every
 workflow's `paths` filter misses the change) or the gap right after `open`'s
 push before GitHub Actions registers its check runs. `watch` tells them apart
 with `gh api repos/{owner}/{repo}/actions/runs?head_sha=`: a matching workflow
-registers a run within seconds, so zero runs on a head whose
+usually registers a run within seconds, so zero runs on a head whose
 `mergeStateStatus` is `CLEAN`, held for `--no-runs-confirm` seconds (default
-20), is a verified green that `--merge` acts on. Otherwise the empty rollup is
+20), is a verified green that `--merge` acts on — except in a repo with a
+workflow that runs on every pull request (an `on: pull_request` with no
+`paths`/`paths-ignore` filter). There zero runs only means GitHub has not
+dispatched the run yet, which has taken over ten minutes, so `watch` skips the
+shortcut and waits out the grace window, and `--merge` refuses the unverified
+result. Otherwise the empty rollup is
 polled, at most every `--no-checks-poll` seconds (default 15, no backoff), for
 up to `--no-checks-grace` seconds (default 300, reset whenever the head moves)
 before `watch` treats it as an unverified green — a check that shows up during

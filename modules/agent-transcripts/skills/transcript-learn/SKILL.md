@@ -135,7 +135,8 @@ it cost real debugging; leave the rest open, since a later run may add evidence.
 
 ### 6. One agent per repo, in parallel
 
-Dispatch one child agent per repo with lessons to apply, all in one message. A child sees
+Dispatch one child agent per repo with lessons to apply, all in one message: Opus on
+Claude Code, `large-default` on any other harness. A child sees
 none of your conversation, so its brief holds: the repo, the output of
 `lessons --repo <repo> --open --json`, what the user allows there (pull request, merge
 when green, neither), the run's command path, and this procedure:

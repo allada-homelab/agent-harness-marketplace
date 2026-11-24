@@ -96,10 +96,11 @@ with `python3` from anywhere inside the repository. The last line is always
 | Verb | Use |
 |---|---|
 | `new <type> <slug> [--title T]` | scaffold a concept; exit 3 lists near-duplicates to update instead (`--force` only when they truly differ) |
-| `stamp <id> --by okf-wiki/<model> [--generated] [--verified]` | after a content change pass both; after a re-check pass `--verified`; it refuses while anchors fail |
+| `stamp <id> [--by <actor>] [--generated] [--verified]` | after a content change pass both; after a re-check pass `--verified`; it refuses while anchors fail |
 | `validate [ids]` | conformance; fix every ERROR |
 | `anchor <id>` | evaluate the Verify anchors |
 | `fresh [ids]` | FRESH / TOUCHED / STALE / UNANCHORED / UNVERIFIED from git: TOUCHED means an anchor file changed but the anchors still pass (not ⚠); STALE (⚠) means an anchor failed or its matched text changed |
+| `todo` | one line per concept needing work (`ERROR <id>: ...`, STALE, UNVERIFIED, UNANCHORED) then `okf: todo none` or `okf: todo <n> concepts`; exit 0; TOUCHED and WARN are not work |
 | `mv <old> <new>` | rename and rewrite every inbound link |
 | `tags [tag...] [--suggest]` | every tag by use count; with tags, the concepts carrying each; `--suggest` lists spelling and plural variants to merge, redundant and malformed tags |
 | `retag <old> <new>`, `retag <old> --drop` | rename or merge a tag across every concept, or remove it |
@@ -131,7 +132,9 @@ The agents are `okf-wiki:scribe`, `okf-wiki:explorer`, `okf-wiki:auditor` and
 `okf-wiki:lander`. On Claude Code use the Agent tool with that
 `subagent_type`, in the background for the scribe and the lander. On pi and dsh use
 `delegate_agent` with that `agent_type`; on dsh also pass `run_in_background: true` for the
-scribe and the lander. Every brief but the lander's must include the absolute path of
+scribe and the lander. On Hermes, `delegate_task` has no agent types: one `tasks` entry per
+agent, `goal` is the brief, `context` is the body of `../../agents/<name>.md` (scribe and
+lander in the background). Every brief but the lander's must include the absolute path of
 `okf.py`. If no agent tool exists, follow the agent's steps yourself from
 `../../agents/<name>.md`.
 

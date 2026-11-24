@@ -141,6 +141,13 @@ def test_review_threads_and_changes_requested(repo):
     r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")])], "threads_unresolved": 2})
     assert r.returncode == 12
     assert "2 unresolved" in r.stdout
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")])], "threads_unresolved": 2,
+                                     "threads_outdated": 1})
+    assert r.returncode == 12
+    assert "1 unresolved review thread(s) (1 outdated, not counted)" in r.stdout
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")])], "threads_unresolved": 2,
+                                     "threads_outdated": 2})
+    assert r.returncode == 0
     r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], review="CHANGES_REQUESTED")]})
     assert r.returncode == 12
 
@@ -364,6 +371,23 @@ def test_sync_hint_merges_the_base_in_when_the_merge_method_tolerates_it(repo, a
     assert "git merge origin/main" in r.stdout and "--force-with-lease" not in r.stdout
 
 
+def test_sync_hint_rebases_a_branch_other_prs_are_stacked_on(repo):
+    _, wt = opened(repo)
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], mergeable="CONFLICTING")],
+                                     "stacked": {"feat/w": ["https://github.com/o/r/pull/9"]}})
+    assert r.returncode == 11
+    assert "git rebase origin/main" in r.stdout and "--force-with-lease" in r.stdout
+    assert "pull/9" in r.stdout and "git merge origin/main" not in r.stdout
+
+
+def test_sync_hint_rebases_a_stack_layer_onto_its_parent_branch(repo):
+    root, wt = opened(repo)
+    git("config", "branch.feat/w.pr-flow-base", "feat/parent", cwd=root)
+    r = run("watch", cwd=wt, replay={"pr_view": [pr(checks=[check("SUCCESS")], mergeable="CONFLICTING")]})
+    assert r.returncode == 11
+    assert "git rebase origin/feat/parent" in r.stdout and "git merge" not in r.stdout
+
+
 def test_attempts_exhausted_message_counts_rounds_correctly(repo):
     _, wt = opened(repo)
     for _ in range(5):
@@ -397,6 +421,36 @@ def test_no_workflow_runs_and_clean_is_verified_green_and_merges(repo):
     # The merge went through and watch tore the worktree (and the fake's log) down with it.
     assert last(r).startswith("pr-flow: watch merged")
     assert not wt.exists()
+
+
+def test_no_runs_is_not_proof_when_a_workflow_runs_on_every_pr(repo):
+    # GitHub can dispatch a pull_request run minutes late (or never fire the event). With an
+    # unfiltered pull_request workflow in the repo, zero runs is "not started yet": watch must
+    # not call it a verified green, and --merge must refuse.
+    root, wt = opened(repo)
+    wf = wt / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "tests.yml").write_text("name: tests\non:\n  push:\n    branches: [main]\n  pull_request:\njobs: {}\n")
+    r = run("watch", "--merge", "--no-runs-confirm", "0", "--no-checks-grace", "0", cwd=wt,
+            replay={"pr_view": [pr(checks=[])], "workflow_runs": 0})
+    assert r.returncode == 0, r.stderr
+    assert "no CI applies" not in r.stdout
+    assert "refusing --merge" in r.stdout
+    calls = [json.loads(l) for l in (wt / ".gh-log").read_text().splitlines()]
+    assert not any(c[0] == "api" and "/actions/runs" in c[1] for c in calls)
+
+
+def test_paths_filtered_pr_workflow_still_allows_the_no_ci_green(repo):
+    # The docs-only case the shortcut exists for: every pull_request workflow is paths-filtered.
+    _, wt = opened(repo)
+    wf = wt / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yaml").write_text("on:\n  pull_request:\n    paths:\n      - 'src/**'\njobs: {}\n")
+    r = run("watch", "--merge", "--no-runs-confirm", "0", cwd=wt,
+            replay={"pr_view": [pr(checks=[])], "workflow_runs": 0})
+    assert r.returncode == 0, r.stderr
+    assert "no CI applies" in r.stdout
+    assert last(r).startswith("pr-flow: watch merged")
 
 
 def test_no_workflow_runs_but_not_clean_falls_back_to_unverified_grace(repo):

@@ -9,6 +9,7 @@ the derived sqlite index over everything exported, `transcript-query` reads it t
 questions about tool use, sessions and activity across harnesses, `transcript-sweep`
 scans it for sessions worth a closer look, `transcript-review` judges those sessions one
 at a time, `transcript-analyze` reads one whole session and writes an analysis of it,
+`transcript-mine` runs analyze's fan-out read over the last N days in one command,
 `transcript-learn` turns what sessions taught into changes to each repo's agent knowledge,
 and the optional `transcript-decide` labels turns and sessions with a decision model.
 The raw files are
@@ -18,6 +19,8 @@ one script that ships beside the ingest skill.
 Because the index holds the user's whole chat history, `transcript-query` is built around
 aggregates: its helper caps every cell and every result set, so answering a question does not
 empty transcript prose into the context asking it.
+Its cost recipes rank sessions, models, subagent types and tools by cache-weighted token
+units, and charge each tool result for every later API call that reads it again.
 
 The query skill ships four scripts. `query.py` runs one arbitrary capped SELECT. `search.py`
 answers "which sessions talk about X" and adds two knobs for a real hunt: `--exclude-injected`
@@ -28,7 +31,9 @@ work dir, with `--next` to pull the messages after the head window. `cluster.py`
 sessions by shared failure signature, and `verdict.schema.json` validates a fan-out of excerpt
 readers. The ingest `annotate` pass marks a message `injected` when it is a `system` message or
 a non-`tool_result` message repeated across several sessions — the standing-instruction
-signature — so those scripts can filter it out.
+signature — so those scripts can filter it out. A user row under 200 characters is never
+marked, so a short reply the human typed in many sessions ("yes", "commit and push") stays
+visible; still, never use the flag to decide whether the human said something.
 
 ## The sweep
 
@@ -71,6 +76,25 @@ run logged a read of every page and every cited quote occurs in its message. `th
 groups recorded analyses by outcome, problem category and label, and recommendation
 target. Its commands live in `transcript-review`'s script, which they share code with. A
 session longer than four pages is split across child agents.
+
+The same skill reads weeks of sessions through a fan-out. `corpus.py sizes` splits each
+session's characters into human turns, assistant prose, system rows and tool traffic.
+`corpus.py plan` picks three strata (the sessions where the human typed most, a seeded
+random control, and whole scripted runs found by their shared template opening), renders
+each with `review.py read --all`, and packs them into reader-sized batches in the cache's
+work dir. That view re-creates one session as a single file: every human turn, assistant prose, one line per
+tool call, results hidden behind short hints, system rows by kind (a skill body as one
+line, a compaction as a marked boundary with what the agent was doing, a background
+subagent's report shown and linked to its session), and, for sessions too large to read
+whole, an outline that folds scripted loops. `review.py expand` shows the full text behind
+any line, including a tool call's arguments. `corpus.py anchors` lists the moments to start
+a deep read from (corrections, interrupts, "tests pass" claims, and each push or merge with
+the human turn before it), `corpus.py thread <PR|ticket|branch>` follows one piece of work
+across sessions, and `review.py read --around <ord>` opens one moment in context. The skill ships the reader and synthesis
+briefs the fan-out uses, and a table of which setup answers which question.
+`/transcript-mine 7` runs the whole fan-out over the last seven days with these defaults:
+refresh the index, plan, read, synthesize, verify, and report, asking before
+`transcript-learn` lands anything.
 
 ## The learning pass
 

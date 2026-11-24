@@ -29,12 +29,11 @@ def reason(ev):
     secs = float(m.group(1)) * UNITS[m.group(2)]
     if secs < THRESHOLD:
         return None
-    return (f"sleep-guard: blocked a foreground `sleep {m.group(1)}{m.group(2)}`. A fixed wait holds the "
-            "whole turn and still guesses at timing. Wait on the condition instead, so it returns the "
-            "moment the thing is ready:\n"
-            "  timeout 300 bash -c 'until <check>; do sleep 5; done'\n"
-            "or start the long-running work in the background and read its output later (on dsh: bash "
-            "with run_in_background, then job_output). Fixed delays under 5s are allowed.")
+    return (f"sleep-guard: blocked a foreground `sleep {m.group(1)}{m.group(2)}`.\n"
+            "Waiting for a subagent? Do not poll: end your turn; dsh delivers \"Background subagent … finished\" to you.\n"
+            "Waiting for a command or CI? Use its own watch (`pr-flow watch`, `gh pr checks --watch`) or "
+            "`timeout 300 bash -c 'until <check>; do sleep 5; done'`.\n"
+            "On dsh `job_output` is a tool, not a shell command. Fixed delays under 5s are allowed.")
 
 
 def main():

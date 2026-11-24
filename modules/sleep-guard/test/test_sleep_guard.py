@@ -26,7 +26,7 @@ def run(command, tool="Bash", **extra):
 def test_blocks_foreground_polling_sleep(command):
     p = run(command)
     assert p.returncode == 2
-    assert "until <check>" in p.stderr and "run_in_background" in p.stderr
+    assert "until <check>" in p.stderr and "Background subagent" in p.stderr and "job_output` is a tool" in p.stderr
 
 
 @pytest.mark.parametrize("command", [

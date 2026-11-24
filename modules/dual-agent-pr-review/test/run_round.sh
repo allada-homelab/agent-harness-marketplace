@@ -24,6 +24,7 @@ echo "── dual_review.sh run: status and exit reporting ──"
 BIN="$SANDBOX/bin"; mkdir -p "$BIN"
 cat > "$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
+[[ -z "${CLAUDE_PROMPT_OUT:-}" ]] || printf '%s' "$2" > "$CLAUDE_PROMPT_OUT"
 [[ "${CLAUDE_MODE:-ok}" == ok ]] || exit 7
 echo '{"structured_output":{"summary":"s","findings":[]}}'
 STUB
@@ -97,6 +98,10 @@ check "a good review of code that mentions failure strings stays ok" "ok" "$(sta
 
 RD=$(new_run 8); CODEX_MODE=ok CLAUDE_MODE=fail "$BASH" "$SCRIPT" run "$RD" round1 findings >/dev/null 2>&1
 check "a claude failure records its real exit code" "exit 7" "$(status "$RD" claude)"
+
+RD=$(new_run 10); CLAUDE_PROMPT_OUT="$RD/sent.md" CODEX_MODE=ok "$BASH" "$SCRIPT" run "$RD" round1 findings >/dev/null 2>&1
+check "claude's prompt opens with the tools it may use" "**Tools in this run:** Read, Grep and Glob, and Bash only for \`git diff\`" "$(head -1 "$RD/sent.md" 2>/dev/null)"
+check "the round's own prompt follows the tools note" "review" "$(tail -1 "$RD/sent.md" 2>/dev/null)"
 
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

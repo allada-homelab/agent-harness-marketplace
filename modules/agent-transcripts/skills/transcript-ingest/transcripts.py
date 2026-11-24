@@ -484,7 +484,9 @@ def export_sources(
 # 11: text the harness injected as a user turn is a `system` row (native author fields);
 #     Claude mid-turn prompts, custom titles and API errors, dsh compaction summaries and
 #     interrupts are kept; Claude parents resolve through records that are not indexed.
-PARSER_VERSION = 11
+# 12: a Claude output style's text is a `system` row.
+#     A resumed session's shorter prefix copy in another project directory is dropped.
+PARSER_VERSION = 12
 
 # Migrations keyed on PRAGMA user_version (SQLITE-008). MIGRATIONS[0] is the
 # schema as of 0.6.3, idempotent for a database that already has it.
@@ -913,6 +915,18 @@ def _session_start_contexts(att) -> list[str]:
     return [s for s in found if isinstance(s, str) and s.strip()]
 
 
+def _output_style_text(att) -> list[str]:
+    """The output style the agent was told to follow, as one row: its text is a prompt
+    that shapes every reply, so a reader judging those replies needs to see it."""
+    if not isinstance(att, dict) or att.get("type") != "output_style_instructions":
+        return []
+    style = att.get("style") or {}
+    prompt = style.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return []
+    return [f"Output style: {style.get('name') or '?'}\n\n{prompt}"]
+
+
 def _claude_injected(kind, text: str) -> bool:
     """A user turn the harness wrote, by its native author: `origin.kind` is set on
     records since late 2026, and a task notification is injected whatever the version."""
@@ -1000,7 +1014,7 @@ def parse_claude(path: Path, relpath: str) -> ParsedFile:
                 messages.append(queued[-1])
             continue
         if rtype == "attachment":
-            for text in _session_start_contexts(att):
+            for text in _session_start_contexts(att) + _output_style_text(att):
                 if text in contexts_seen:
                     continue
                 contexts_seen.add(text)
@@ -1403,6 +1417,8 @@ COVERAGE: dict[str, dict[str, str]] = {
         ), _PARSED),
         "rec:attachment/hook_success": "parsed: SessionStart additionalContext only",
         "rec:attachment/hook_additional_context": "parsed: SessionStart additionalContext only",
+        "rec:attachment/output_style_instructions": "parsed: the style's text, once per change",
+        "rec:attachment/pdf_reference": "skip: uploaded-file reference; the user message carries the text",
         "block:thinking": _REASONING,
         "block:redacted_thinking": _REASONING,
         "block:image": _IMAGE,
@@ -1426,13 +1442,13 @@ COVERAGE: dict[str, dict[str, str]] = {
         **dict.fromkeys((f"rec:attachment/{t}" for t in (
             "agent_listing_delta", "auto_mode", "auto_mode_exit", "bash_output_audience_note",
             "batching_reminder_sent", "command_permissions", "compact_file_reference",
-            "credential_org", "date", "date_change", "deferred_tools_delta",
+            "credential_org", "critical_system_reminder", "date", "date_change", "deferred_tools_delta",
             "deferred_tools_record", "diagnostics", "dynamic_skill", "edited_text_file",
             "environment", "file", "goal_status", "hook_blocking_error", "hook_cancelled",
             "hook_non_blocking_error", "hook_system_message", "inlined_image_paths",
             "instructions", "invoked_skills", "max_turns_reached", "mcp_instructions_delta",
             "model", "nested_memory", "opened_file_in_ide", "output_style",
-            "output_style_instructions", "plan_file_reference", "plan_mode", "plan_mode_exit",
+            "plan_file_reference", "plan_mode", "plan_mode_exit",
             "plan_mode_reentry", "prompt_snapshot", "read_truncation_notice",
             "remote_session_change", "selected_lines_in_ide", "session_context",
             "session_cron_carry", "silent_turn_reminder", "skill_listing", "skill_mention",
@@ -1459,6 +1475,7 @@ COVERAGE: dict[str, dict[str, str]] = {
                         "parsed: from its tool/call row, which carries the same call"),
         "block:reasoning": _REASONING,
         **dict.fromkeys(("block:image", "block:tool-result>image"), _IMAGE),
+        "block:file": "skip: attachment reference, no text",
         **dict.fromkeys((f"rec:{t}" for t in (
             "assistant/chunk", "reasoning-chunks", "text-chunks", "tool-call-chunks",
         )), _STREAM),
@@ -1528,10 +1545,30 @@ def _duplicate_session_id(conn, harness: str, native_id: str, parsed: ParsedFile
     return row[0] if row else None
 
 
+def _is_prefix_copy(conn, old_id: int, n_old: int, parsed: ParsedFile) -> bool:
+    """Whether the stored session and `parsed` share their first message and the last
+    message the shorter one holds, i.e. one is the other cut short. Claude leaves that
+    when a session is resumed from another project directory (a renamed checkout): the
+    old directory keeps the log up to the resume, the new one gets all of it."""
+    k = min(n_old, len(parsed.messages))
+    if k == 0:
+        return False
+    stored = {ord_: tuple(rest) for ord_, *rest in conn.execute(
+        "SELECT ord, native_id, role, text FROM messages WHERE session_id = ? AND ord IN (0, ?)",
+        (old_id, k - 1),
+    )}
+    new = parsed.messages
+    return all(new[o].native_id is not None
+               and stored.get(o) == (new[o].native_id, new[o].role, new[o].text)
+               for o in (0, k - 1))
+
+
 def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool:
     """Insert the parsed session, its messages and tool calls. Returns False (and
     inserts nothing) when a session with matching CONTENT for (harness, native_id)
-    already exists under a different file — see `_duplicate_session_id`.
+    already exists under a different file — see `_duplicate_session_id` — or when this
+    file is a shorter prefix copy of a stored one (`_is_prefix_copy`); a shorter stored
+    copy is replaced instead.
 
     Two host project directories can alias the same repo checkout — e.g. a plain
     symlink and a dotted one both pointing at the same clone — each holding a
@@ -1548,6 +1585,20 @@ def _insert_parsed(conn, file_id: int, harness: str, parsed: ParsedFile) -> bool
     s = parsed.session
     if _duplicate_session_id(conn, harness, s.native_id, parsed) is not None:
         return False
+    # A resumed session's stale prefix copy: only the longest copy is kept, whichever
+    # file is parsed first, or every reader of that id meets two sessions.
+    for old_id, n_old, old_relpath in conn.execute(
+        "SELECT s.id, count(m.id), f.relpath FROM sessions s JOIN files f ON f.id = s.file_id"
+        " LEFT JOIN messages m ON m.session_id = s.id"
+        " WHERE s.harness = ? AND s.native_id = ? GROUP BY s.id",
+        (harness, s.native_id),
+    ).fetchall():
+        if not _is_prefix_copy(conn, old_id, n_old, parsed):
+            continue
+        if n_old >= len(parsed.messages):
+            return False
+        _fts_forget(conn, [old_relpath])
+        conn.execute("DELETE FROM sessions WHERE id = ?", (old_id,))
     cur = conn.execute(
         "INSERT INTO sessions (harness, native_id, file_id, cwd, project_key, kind,"
         " parent_native_id, started_at, ended_at, model, title, fingerprint)"
@@ -2031,6 +2082,13 @@ def _norm_key(text: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest() if key else ""
 
 
+# A repeated user row shorter than this is a human reply or command ("yes", "go", "commit and
+# push", "/compact"), not a standing instruction: harness injections are system rows since
+# parser v11, and repeated instruction text is long. 770 short human rows were flagged
+# before this bound (seen 2026-11-16).
+INJECTED_USER_MIN_CHARS = 200
+
+
 def annotate(
     dest_root: Path,
     min_sessions: int = 3,
@@ -2044,7 +2102,9 @@ def annotate(
     context), or when its normalized text appears, outside the excluded roles, in
     `min_sessions` or more distinct sessions — the signature of a standing
     instruction the harness prepends to every session (e.g. the AGENTS.md
-    "always check for a dev container first" rule). `tool_result` messages are
+    "always check for a dev container first" rule). A user row shorter than
+    `INJECTED_USER_MIN_CHARS` is never flagged that way: it is something the human
+    typed, however often they type it. `tool_result` messages are
     excluded by default so a recurring *error* (identical text across sessions) is
     not mistaken for boilerplate and hidden from issue hunts.
 
@@ -2075,8 +2135,8 @@ def annotate(
         f"INSERT INTO annotate_target SELECT id FROM messages WHERE norm_key IN ("
         f" SELECT norm_key FROM messages WHERE norm_key != ''{role_clause}"
         f" GROUP BY norm_key HAVING COUNT(DISTINCT session_id) >= ?)"
-        f"{role_clause}",
-        params,
+        f"{role_clause} AND NOT (role = 'user' AND length(text) < ?)",
+        (*params, INJECTED_USER_MIN_CHARS),
     )
     flagged = conn.execute("SELECT count(*) FROM annotate_target").fetchone()[0]
     conn.execute(

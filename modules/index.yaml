@@ -4,7 +4,7 @@
 # `tags` are for client-side exclusion. Regenerate: bin/render-index.py --write
 modules:
 - name: agent-transcripts
-  version: 0.13.0
+  version: 0.20.1
   kinds:
   - skills
   - dsh-plugin
@@ -24,9 +24,9 @@ modules:
     tags:
     - observability
     command: false
-    summary: Read one agent session transcript end to end, with tool results hidden until asked for, and
-      record a whole-session analysis of its goal, turning points, what went well and badly, why, and
-      what to change.
+    summary: Read agent session transcripts end to end, with tool results hidden until asked for — one
+      session in depth, or many through parallel readers over compact re-creations — and record what went
+      well and badly, why, and what to change.
   - name: transcript-decide
     path: modules/agent-transcripts/skills/transcript-decide/SKILL.md
     harness:
@@ -97,6 +97,19 @@ modules:
       a correction the user had to make, a procedure redone by hand, a fact rediscovered — then land each
       one in its repo where the next session will see it (AGENTS.md/CLAUDE.md, the repo wiki, a repo skill
       with a script, or a hook), one pull request per repo.
+  - name: transcript-mine
+    path: modules/agent-transcripts/skills/transcript-mine/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - observability
+    command: true
+    summary: One-step fan-out review of the last N days of agent sessions (default 7) — refresh the index,
+      pick and batch sessions, read them with parallel Sonnet readers, cluster what they found with one
+      Opus synthesizer (large-default for both off Claude), verify, and report the recurring problems
+      with fixes.
   - name: transcript-query
     path: modules/agent-transcripts/skills/transcript-query/SKILL.md
     harness:
@@ -133,7 +146,7 @@ modules:
       tool errors, retry loops, duplicate calls, shell commands a dedicated tool covers, and oversized
       results or sessions in the findings store beside it.
 - name: artifacts
-  version: 0.1.8
+  version: 0.2.0
   kinds:
   - skills
   - dsh-plugin
@@ -159,7 +172,7 @@ modules:
       tool — as one self-contained file the user opens locally; design, dataviz and diagramming guidance
       plus a check-and-deliver flow.
 - name: best-practices
-  version: 0.12.0
+  version: 0.13.0
   kinds:
   - skills
   - dsh-plugin
@@ -331,7 +344,7 @@ modules:
     summary: Rebuilds one best-practices rule set (uv, containers or python) from its upstream docs at
       pinned versions.
 - name: browser
-  version: 0.1.3
+  version: 0.1.5
   kinds:
   - skills
   - dsh-plugin
@@ -380,7 +393,7 @@ modules:
     summary: Review a GitHub pull request with parallel reviewers and a confidence scorer, and post one
       comment holding only the high-confidence issues.
 - name: dual-agent-pr-review
-  version: 0.1.17
+  version: 0.1.20
   kinds:
   - skills
   - dsh-plugin
@@ -430,8 +443,46 @@ modules:
     tags: []
     command: true
     summary: Guided seven-phase feature development with codebase understanding and architecture focus.
+- name: local-workers
+  version: 0.2.0
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  description: 'Explicitly requested delegation to self-hosted models: the pi agent through the pi-run
+    script (resumable, forkable sessions), the d3-ultra decision model for batched yes/no, choice and
+    score questions, a mixed local+cloud fleet skill, and a replay benchmark against merged fixes'
+  skills:
+  - name: complete-tasks-mixed-tier
+    path: modules/local-workers/skills/complete-tasks-mixed-tier/SKILL.md
+    harness:
+    - claude
+    tags: []
+    command: false
+    summary: Own a piece of work end-to-end by decomposing it and fanning it out to a mixed fleet of parallel
+      workers — local pi-run runs where a piece suits the local model, Sonnet or Opus subagents for pieces
+      above its ceiling — while you hold the plan, gate every result on the real artifact, and synthesize.
+  - name: delegate
+    path: modules/local-workers/skills/delegate/SKILL.md
+    harness:
+    - claude
+    tags: []
+    command: false
+    summary: 'Hand work to David''s self-hosted models — the pi-run script (the pi coding agent on the
+      local LLM, with resumable and forkable sessions) and the decide MCP tool (the d3-ultra decision
+      model: batched yes/no, choice and score questions).'
+  - name: replay-eval
+    path: modules/local-workers/skills/replay-eval/SKILL.md
+    harness:
+    - claude
+    tags: []
+    command: true
+    summary: Benchmark the local model on David's own codebase by replaying already-merged fixes — check
+      out the commit before a fix, re-implement it with pi-run from the issue alone, and grade the result
+      against the merged change as ground truth (MATCH / PARTIAL / MISS).
 - name: okf-wiki
-  version: 0.1.17
+  version: 0.1.20
   kinds:
   - skills
   - dsh-plugin
@@ -527,7 +578,7 @@ modules:
     summary: Write an implementation plan that a less capable model (Sonnet, Haiku, a cheap subagent)
       will execute without the planner present.
 - name: pr-flow
-  version: 0.2.21
+  version: 0.2.27
   kinds:
   - skills
   - dsh-plugin
@@ -552,7 +603,7 @@ modules:
     summary: Use whenever a task will change files in a git repository, or needs a worktree — creating
       one, setting it up, working in one or removing it.
 - name: rea
-  version: 0.2.0
+  version: 0.2.1
   kinds:
   - skills
   - dsh-plugin
@@ -576,8 +627,45 @@ modules:
     - reverse-engineering
     command: true
     summary: Reverse-engineer a compiled target with REA (Reverse Engineer Anything).
+- name: repo-sweep
+  version: 0.1.1
+  kinds:
+  - skills
+  - dsh-plugin
+  harness:
+  - claude
+  - pi
+  - dsh
+  description: 'Whole-repository review sweep on any harness: split the repo into parts, fan out finders
+    over five lenses, prove every finding, track each one in a ledger across runs, and (on request) open
+    fix pull requests.'
+  skills:
+  - name: repo-sweep
+    path: modules/repo-sweep/skills/repo-sweep/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - quality
+    - review
+    command: true
+    summary: Read-only review sweep of a whole repository, with a ledger that tracks every finding across
+      runs.
+  - name: repo-sweep-fix
+    path: modules/repo-sweep/skills/repo-sweep-fix/SKILL.md
+    harness:
+    - claude
+    - dsh
+    - pi
+    tags:
+    - github
+    - quality
+    - review
+    command: true
+    summary: Fix the confirmed findings in the repo-sweep ledger.
 - name: simplify
-  version: 0.3.0
+  version: 0.3.1
   kinds:
   - skills
   - dsh-plugin
@@ -601,7 +689,7 @@ modules:
     summary: Review changed code for reuse, simplification, efficiency and altitude (code at the wrong
       layer) cleanups, then apply the fixes.
 - name: sleep-guard
-  version: 0.1.0
+  version: 0.1.1
   kinds:
   - dsh-plugin
   - hooks
@@ -635,26 +723,29 @@ modules:
     summary: Write prose about 80% of the way to ASD-STE100 (Simplified Technical English), the controlled
       language from aerospace maintenance documentation.
 - name: switchboard
-  version: 0.6.1
+  version: 0.7.2
   kinds:
   - skills
   - dsh-plugin
   - hooks
   harness:
   - claude
-  description: 'Coordination for concurrent Claude Code sessions on one machine: who is doing what, threaded
-    messages between sessions, a todo board, a ledger of shared-state changes, and enforced leases on
-    shared resources.'
+  - pi
+  - dsh
+  description: 'Coordination for concurrent agent sessions (Claude Code, pi, dsh) on one machine: who
+    is doing what, threaded messages between sessions, a todo board, a ledger of shared-state changes,
+    and enforced leases on shared resources.'
   skills:
   - name: switchboard
     path: modules/switchboard/skills/switchboard/SKILL.md
     harness:
     - claude
+    - dsh
+    - pi
     tags:
     - coordination
     - sessions
     command: false
-    summary: Coordinates concurrent Claude Code sessions on this machine through the `switchboard` CLI
-      — an overview of every session and what it is working on, each session's history of worktrees, branches,
-      PRs and tickets, status posts and messages, a shared todo board, a ledger of shared-state changes,
-      and leases on shared local resources such as a dev stack.
+    summary: Coordinates concurrent agent sessions on this machine through the `switchboard` CLI — who
+      is on what, messages between sessions, a todo board, a ledger of shared-state changes, and leases
+      on shared local resources such as a dev stack.

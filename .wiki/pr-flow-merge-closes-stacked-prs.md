@@ -3,11 +3,12 @@ type: gotcha
 title: pr-flow merge closes PRs stacked on the merged branch
 description: pr-flow teardown (and watch --merge) push-deletes the branch on origin, and GitHub then closes every PR based on it; retarget stacked PRs to main before merging.
 tags: [pr-flow, github, stacked-prs, teardown]
-generated: {by: okf-wiki/opus, at: 2026-09-26T14:22:38Z}
+generated: {by: okf-wiki/deepseek, at: 2026-11-22T08:04:01Z}
 verified:
   - {by: okf-wiki/opus, at: 2026-09-26T14:22:38Z, commit: 6ac844bcd7e8}
   - {by: okf-wiki/haiku, at: 2026-10-10T03:19:25Z, commit: 246b99c1bbb2}
   - {by: okf-wiki/deepseek, at: 2026-10-25T07:09:54Z, commit: 2596aa106bc7}
+  - {by: okf-wiki/deepseek, at: 2026-11-22T08:04:01Z, commit: 2660987e2dbc}
 sources:
   - {id: s1, resource: modules/pr-flow/skills/pr-flow/pr-flow.py, title: teardown runs git push origin --delete}
   - {id: s2, resource: https://github.com/allada-homelab/python-template/pull/88, title: stacked PR closed when its base feat/sha-pin-actions was merged and deleted}
@@ -44,12 +45,15 @@ Already closed: in the stacked worktree `git merge origin/main`, push, then
 ## Why
 
 pr-flow deletes the remote branch on purpose, so merged branches do not pile up;
-the SKILL documents the deletion but not its effect on PRs stacked on top. This is
-GitHub behavior, not a pr-flow bug, so a change to pr-flow's teardown (for example
-leaving the remote branch alone when a PR targets it) is the only code-side fix.
+the SKILL now documents stacked-PR handling for conflicts (rebase with
+`--force-with-lease`, then rebase each stacked PR the same way), but still not
+the close-on-delete effect — nothing warns that a merge closes PRs based on the
+deleted branch. This is GitHub behavior, not a pr-flow bug, so a change to
+pr-flow's teardown (for example leaving the remote branch alone when a PR targets
+it) is the only code-side fix.
 
 ## Verify
 
 - `modules/pr-flow/skills/pr-flow/pr-flow.py` :: `"push", "-q", "origin", "--delete", branch`
 - `modules/pr-flow/skills/pr-flow/pr-flow.py` :: `pr-flow-base`
-- `modules/pr-flow/skills/pr-flow/SKILL.md` :: /[Ss]tacked/ => 0
+- `modules/pr-flow/skills/pr-flow/SKILL.md` :: /[Ss]tacked/ => 1

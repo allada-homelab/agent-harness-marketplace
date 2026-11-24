@@ -15,7 +15,7 @@ is how the browser gets running, and which one fits depends on the task:
 | Option | Command | Browser | Use when |
 |---|---|---|---|
 | headless | `browserctl run --mode auto` (default) | skill's own Chromium | unattended automation; no human in the loop |
-| hybrid | `browserctl run --mode hybrid` | skill's own Chromium | a human must log in, do MFA/CAPTCHA, or watch |
+| hybrid | `browserctl run --mode hybrid` | skill's own Chromium, in a window | a human must log in, do MFA/CAPTCHA, watch, or click alongside you — needs a machine with a GUI |
 | attach | `browserctl attach --cdp <port>` | a browser *the user* opened | the user wants their own browser driven |
 
 The tool is `browserctl` — on a fleet host it is on
@@ -27,19 +27,23 @@ the browser is externally owned and must NOT be repointed.
 ## Procedure
 
 1. **Check once per task:** `browserctl doctor`. A non-zero exit names what is
-   missing; stop and tell the user rather than working around it.
+   missing; stop and tell the user rather than working around it. Never launch
+   Chrome without its sandbox (`--no-sandbox`): pages are untrusted code.
 2. **Pick an identity.** `scratch` for untrusted or unknown sites; a named
    identity for a service the user has already logged into. `browserctl
    identities` lists what exists.
 3. **Pick a session name once** and pass `--session <name>` on every call
    (omit it and the name derives from the working directory — fine for one
-   task, wrong when two tasks run in one directory). An `auto` session is
-   closed after 30 minutes idle; the login stays in the profile, so a later
-   command just starts it again.
+   task, wrong when two tasks run in one directory). Tasks running at the same
+   time also need different identities: a profile opens in one browser only. An
+   `auto` session is closed after 30 minutes idle; the login stays in the
+   profile, so a later command just starts it again.
 4. **Drive:** `browserctl run --identity work --session t1 -- <agent-browser
    command>`. The vocabulary is in `./references/commands.md`. Always
    `snapshot -i` after navigating; act on `@eN` refs from the latest snapshot
-   only — refs go stale on any page change.
+   only — refs survive in-page updates but not a navigation. In a `hybrid`
+   window the operator may click too: `snapshot -i` before every action there,
+   because their last click may have changed the page under your refs.
 5. **Hit a login, MFA or CAPTCHA?** Follow `./references/handoff.md`: `close`
    the session, rerun the same `open` in `--mode hybrid`, ask the operator to
    finish in the window, wait for their reply, then continue in the same
