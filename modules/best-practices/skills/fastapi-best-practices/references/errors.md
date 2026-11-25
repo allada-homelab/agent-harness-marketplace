@@ -8,9 +8,10 @@
 - FAPI-052 — Register a catch-all `Exception` handler for a uniform `500` body; don't log in it
 - FAPI-053 — Use a structured `detail` (dict with a code) for machine-readable errors
 - API-003 — Return RFC 9457 `application/problem+json` bodies for public HTTP API errors
+- API-005 — Declare error responses in `responses=` so OpenAPI shows the problem+json shape
 <!-- /toc -->
 
-Detailed entries for `FAPI-050..FAPI-053`. Each follows the four-part
+Detailed entries for `FAPI-050..FAPI-053`, `API-003` and `API-005`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 Citations point at the
@@ -245,3 +246,49 @@ documentation.
 where FAPI-053's structured `detail` is enough. Don't change the error
 shape of an API that is already published without a new version
 (FAPI-006): clients that parse `{"detail": ...}` break.
+
+---
+
+## API-005 — Declare error responses in `responses=` so OpenAPI shows the problem+json shape
+
+**What.** For every non-2xx status a route can return on purpose (404, 409,
+and the 422 you reshaped in FAPI-051), declare it in the decorator's
+`responses=` with the problem model (API-003) and the
+`application/problem+json` media type. Share one dict across routes.
+
+**Why.** FastAPI documents only the success response and a default 422
+`HTTPValidationError`. A route that raises `Problem(404, ...)` has no
+`404` in `app.openapi()`, so a client generated from it (API-004) has no
+error type and every failure is an untyped exception. The model alone
+isn't enough: `{"model": P}` advertises `application/json`, while the API
+returns `application/problem+json`. FastAPI's docs: "The `model` key is
+not part of OpenAPI", and the schema is only documentation, the handler
+still sends the body.
+
+**How.**
+
+```python
+from pydantic import BaseModel
+
+class ProblemOut(BaseModel):
+    type: str
+    title: str
+    status: int
+    detail: str
+
+REF = {"$ref": "#/components/schemas/ProblemOut"}
+PROBLEM = {"model": ProblemOut, "content": {"application/problem+json": {"schema": REF}}}
+ERRORS = {404: PROBLEM, 409: PROBLEM, 422: PROBLEM}
+
+@app.get("/items/{item_id}", responses=ERRORS)
+async def get_item(item_id: int) -> Item: ...
+```
+
+With this, `app.openapi()` lists `application/problem+json` (and
+`application/json`) for those codes with `$ref ProblemOut` (fastapi
+0.165.0).
+
+**When NOT to apply.** An API with no external or generated clients, or
+whose errors stay as FastAPI's default `{"detail": ...}`. Declaring only
+the codes a route returns: a 404 on a route that cannot 404 is a false
+contract.

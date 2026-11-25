@@ -68,7 +68,7 @@ See [`references/dependencies.md`](./references/dependencies.md).
 - **FAPI-030** — Declare dependencies as `Annotated[T, Depends(fn)]` and reuse via type aliases.
 - **FAPI-031** — Wrap `yield` dependencies in `try/finally` so cleanup runs on error.
 - **FAPI-032** — Use `Security(fn, scopes=[...])` (not `Depends`) for OAuth2 scope-bearing auth.
-- **FAPI-095** — Use `Depends(fn, scope="function")` when a `yield` dependency must close before the response is sent (the default closes after it). _(requires fastapi>=0.121)_
+- **FAPI-095** — Use `Depends(fn, scope="function")` when a `yield` dependency must close before the response is sent (the default closes after it). _(requires fastapi>=0.121.1)_
 
 ## Rules — Path operations
 
@@ -89,6 +89,7 @@ See [`references/errors.md`](./references/errors.md).
 - **FAPI-052** — Register a catch-all `Exception` handler for a uniform `500` body; don't log in it (the server already does).
 - **FAPI-053** — Use a structured `detail` (dict with a code) for machine-readable errors.
 - **API-003** — Return RFC 9457 `application/problem+json` bodies (`type`, `title`, `status`, string `detail`) for public HTTP API errors.
+- **API-005** — Declare non-2xx responses with `responses={404: {"model": Problem, "content": {"application/problem+json": ...}}}` so OpenAPI and generated clients see the error body; `model` alone advertises `application/json`.
 
 ## Rules — Security
 

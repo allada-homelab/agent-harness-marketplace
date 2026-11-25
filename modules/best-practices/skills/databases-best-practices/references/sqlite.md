@@ -21,9 +21,11 @@
 - SQLITE-016 — Read back generated values with RETURNING, and fetch every row before COMMIT
 - SQLITE-017 — Insert-or-update with UPSERT (`ON CONFLICT … DO UPDATE`), never `INSERT OR REPLACE`
 - SQLITE-018 — Check a database with `PRAGMA quick_check` before trusting it, and treat anything but `ok` as failure
+- SQLITE-019 — Back up a live database with `Connection.backup()` or `VACUUM INTO`, never a file copy of a WAL database
+- SQLITE-020 — Turn `PRAGMA trusted_schema` OFF on every connection that opens a file from another trust domain or registers SQL functions
 <!-- /toc -->
 
-Detailed entries for `SQLITE-001..SQLITE-018`. Each follows the four-part
+Detailed entries for `SQLITE-001..SQLITE-020`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 The rules describe one design: one process with many threads, WAL, one
@@ -985,3 +987,107 @@ def check_database(path: str) -> None:
 file costs real time. Keep it for restores, copies, crash recovery and
 scheduled checks. `quick_check` skips `UNIQUE` and index-content checks;
 run `integrity_check` when you can afford O(N log N).
+
+---
+
+## SQLITE-019 — Back up a live database with `Connection.backup()` or `VACUUM INTO`, never a file copy of a WAL database
+
+**What.** To back up a database that anything has open, use
+`sqlite3.Connection.backup()` (or `VACUUM INTO 'new-file'`) and write to a
+new file. Don't `cp`/`shutil.copy` the `.db` file of a WAL database, and
+never copy it without its `-wal` file. Check the result with SQLITE-018.
+
+**Why.** In WAL mode, committed transactions live in the `-wal` file until
+a checkpoint, so the `.db` file alone is an old state. Checked live on
+Python 3.14.10 / SQLite 3.53.1: after 1000 committed rows the directory held
+a 4 KiB `live.db` and a 4.3 MB `live.db-wal`. `shutil.copy` of `live.db`
+gave a file where `SELECT count(*) FROM t` raised `no such table: t`: the
+backup looked fine and held nothing. `backup()` and `VACUUM INTO` both
+returned all 1000 rows and passed `quick_check`. A copy taken during a
+write can also mix old and new pages.
+
+Source: <https://sqlite.org/wal.html>
+
+> If a database file is separated from its WAL file, then transactions that were previously committed to the database might be lost, or the database file might become corrupted.
+> — SQLite 3.53.1 docs
+
+> The backup copy then might contain some old and some new content, and thus be corrupt.
+> — SQLite 3.53.1 docs (howtocorrupt)
+
+> The VACUUM INTO command is transactional in the sense that the generated output database is a consistent snapshot of the original database.
+> — SQLite 3.53.1 docs
+
+**How.**
+
+```python
+import sqlite3
+from contextlib import closing
+
+
+def backup_database(src_path: str, dest_path: str) -> None:
+    with (
+        closing(sqlite3.connect(src_path, autocommit=True)) as src,
+        closing(sqlite3.connect(dest_path, autocommit=True)) as dst,
+    ):
+        src.backup(dst)  # consistent snapshot; other connections keep working
+```
+
+`VACUUM INTO 'backup.db'` does the same in one statement, writes a compact
+file, and fails if the target exists and is not empty. `backup()` uses fewer
+CPU cycles and can copy in steps (`pages=`).
+
+**When NOT to apply.** A database with no open connection and no leftover
+`-wal` file can be copied like any file; so can a filesystem snapshot (LVM,
+ZFS) that is atomic for the whole directory. If you must copy files, copy
+`.db` and `-wal` together while nothing writes.
+
+---
+
+## SQLITE-020 — Turn `PRAGMA trusted_schema` OFF on every connection that opens a file from another trust domain or registers SQL functions
+
+**What.** Run `PRAGMA trusted_schema = OFF` right after `connect()`, before
+any other statement. It is a per-connection setting and defaults to ON.
+
+**Why.** The schema of a database file is SQL: views, triggers, `CHECK`
+constraints, `DEFAULT`s and generated columns can all call SQL functions.
+With the default ON, an uploaded, restored or shared file can name any
+function your process registered (`create_function`) or any loaded
+extension, and SQLite runs it with attacker-chosen arguments the first
+time the view is read or the trigger fires. Checked live on Python 3.14.10 /
+SQLite 3.53.1: a file with `CREATE VIEW vw AS SELECT app_shell(v) FROM t`
+and an `AFTER INSERT` trigger calling `app_shell(new.v)` made the app's
+Python function run on `SELECT * FROM vw` and on an `INSERT`. After
+`PRAGMA trusted_schema=OFF` both statements raised
+`OperationalError: unsafe use of app_shell()` and the function never ran.
+Built-in functions, `CHECK` and generated columns kept working.
+
+Source: <https://sqlite.org/pragma.html#pragma_trusted_schema>
+
+> In order to maintain backwards compatibility, this setting is ON by default. There are advantages to turning it off, and most applications will be unaffected if it is turned off. For that reason, all applications are encouraged to switch this setting off on every database connection as soon as that connection is opened.
+> — SQLite 3.53.1 docs
+
+> any database file which might have ever been writable by an agent in a different security domain should be treated as suspect.
+> — SQLite 3.53.1 docs (security)
+
+**How.**
+
+```python
+import sqlite3
+
+
+def open_untrusted(path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(path, autocommit=True)
+    conn.execute("PRAGMA trusted_schema = OFF")  # before create_function or any query
+    conn.create_function("normalize", 1, lambda s: s.casefold(), deterministic=True)
+    return conn
+```
+
+Add `PRAGMA quick_check` (SQLITE-018) for files you did not write.
+
+**When NOT to apply.** The app opens only databases it created itself and
+registers no functions or extensions: the risk is nil, though the docs
+still recommend OFF. Under OFF, a view, trigger or `CHECK` in your own
+schema that calls one of your own Python functions fails with
+`unsafe use of <name>()` (Python cannot flag a function as innocuous), so
+keep such logic in built-in SQL or in Python code. The pragma needs
+SQLite 3.31.0 (2020); every supported distro ships a newer one.

@@ -6,9 +6,10 @@
 - GO-012 — Never build SQL by string concatenation or `fmt.Sprintf` — use placeholders
 - GO-013 — Escape untrusted HTML with `html/template`, never `text/template`
 - GO-014 — Use `crypto/rand` for secrets, tokens, and password material; `math/rand` is not a security RNG
+- GO-026 — Open externally supplied file names through `os.Root`, not `filepath.Join` + `os.Open`
 <!-- /toc -->
 
-Detailed entries for `GO-012..GO-014`. Each follows the four-part
+Detailed entries for `GO-012..GO-014` and `GO-026`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 ---
@@ -90,10 +91,12 @@ max)`). `math/rand` (and
 `math/rand/v2`) is a deterministic PRNG for simulation and tests; anything an
 attacker can observe or predict must not come from it.
 
-**Why.** `math/rand`'s generator state is recoverable from its output and each
-process is seeded from a small value, so two services starting at the same wall
-clock can mint identical "unique" IDs, and values are predictable to someone
-observing a few outputs. A token an attacker can predict defeats auth, reset,
+**Why.** `math/rand`'s generator state is recoverable from its output, so its
+values are predictable to someone observing a few outputs. Auto-seeding does not
+change that: Go 1.20 seeds the global source with a random value, and the
+`math/rand/v2` docs still say "This package's outputs might be easily predictable
+regardless of how it's seeded" ([Go 1.20 notes](https://go.dev/doc/go1.20#mathrand),
+[math/rand/v2](https://pkg.go.dev/math/rand/v2)). A token an attacker can predict defeats auth, reset,
 and CSRF protection — the class of bug behind real account-takeover incidents.
 `crypto/rand` produces values that are not feasibly distinguishable from
 uniform randomness.
@@ -116,3 +119,56 @@ tool there (and a *seeded* `rand.New(rand.NewSource(...))` is a feature for
 reproducible tests, not a bug). The moment a value becomes a security boundary
 — login tokens, password-reset links, CSRF tokens, unguessable UUIDs,
 encryption keys — it must come from `crypto/rand`.
+
+---
+
+## GO-026 — Open externally supplied file names through `os.Root`, not `filepath.Join` + `os.Open`
+
+**What.** When a file name comes from outside the process (a request path,
+an archive entry, an upload name, a manifest) and must stay inside one
+directory, open the directory with `os.OpenRoot` and open, create and
+remove files through the `*os.Root` methods. `os.OpenInRoot(dir, name)`
+does it for one file. Don't confine a name with `filepath.Join`,
+`filepath.IsLocal` or `os.DirFS`.
+
+**Why.** `filepath.Join(base, "../secret.txt")` happily leaves `base`, and a
+symlink inside `base` leaves it without any `..` at all. Checked live on go1.27.4
+with `public/` holding `link.txt -> ../secret.txt`: `os.ReadFile(filepath.Join(pub, name))`
+returned `SECRET` for both `../secret.txt` and `link.txt`, and
+`filepath.IsLocal("link.txt")` was true. `root.Open` returned
+`path escapes from parent` for both. A check-then-open guard (`EvalSymlinks` +
+`IsLocal`) still loses to a symlink swapped in between; `os.Root` resolves
+inside the open directory, so there is no gap.
+
+Source: <https://pkg.go.dev/os#Root>
+
+> If any component of a file name passed to a method of Root references a location outside the root, the method returns an error.
+> — Go 1.27 docs
+
+> As a good rule of thumb, code which calls filepath.Join to combine a fixed directory and an externally-provided filename should probably use os.Root instead.
+> — go.dev/blog/osroot
+
+**How.**
+
+```go
+root, err := os.OpenRoot(uploadDir)
+if err != nil {
+    return err
+}
+defer root.Close()
+
+f, err := root.Open(name) // name from the request; "../x" or an escaping symlink is an error
+if err != nil {
+    return err
+}
+defer f.Close()
+```
+
+An archive extractor calls `root.Mkdir`/`root.Create` for each entry
+name the same way.
+
+**When NOT to apply.** The name is trusted, or the user picked the location
+(a CLI's `-o path`): the Go blog says not to use `os.Root` there. `os.Root`
+does not stop bind mounts, `/proc` or device files, rejects absolute
+symlinks, and on Unix `Root.Chmod`/`Chown`/`Chtimes` can race. It does not
+replace validating the name's content (length, allowed characters).

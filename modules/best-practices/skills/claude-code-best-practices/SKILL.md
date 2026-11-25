@@ -118,6 +118,7 @@ See [`references/subagents.md`](./references/subagents.md).
 - **CC-055** — Delegate for isolation or parallelism, not for history-dependent work; damp over-delegation where the model needs it.
 - **CC-056** — Review subagents report correctness and requirement gaps, not style.
 - **CC-057** — `skills:` preloads full skill content; list only skills the subagent uses.
+- **CC-083** — A recurring subagent gets `memory: project` for notes that persist across runs; it adds Read/Write/Edit and does nothing while auto memory is off. _(requires claude-code>=2.1.33)_
 
 ## Rules — Hooks and permissions
 
@@ -160,6 +161,7 @@ See [`references/mcp.md`](./references/mcp.md).
 - **CC-077** — Disconnect unused MCP servers; check per-tool cost with `/context all`.
 - **CC-078** — Pair each MCP server with a skill that teaches how to use it.
 - **CC-079** — No secrets in a committed `.mcp.json`; know that scopes override rather than merge.
+- **CC-082** — MCP server authors: keep server instructions and tool descriptions short with critical text first; Claude Code cuts them at 4,096 characters (16,384 for a tool loaded through tool search).
 
 ## Rules — API prompts
 
@@ -173,7 +175,7 @@ See [`references/prompts.md`](./references/prompts.md).
 - **PROMPT-006** — Don't ask for reasoning in the response; read summarized thinking.
 - **PROMPT-007** — Remove legacy steering the target model's guidance names: aggressive tool prompting, and model-specific verification and "think carefully" lines.
 - **PROMPT-008** — Tune verbosity and progress updates per model.
-- **PROMPT-009** — Change effort per message; a top-level change invalidates the cache.
+- **PROMPT-009** — Change effort per message (beta header `mid-conversation-output-config-2026-07-01`, supported models only); a top-level change invalidates the cache.
 - **PROMPT-010** — Keep history append-only; use mid-conversation system messages.
 - **PROMPT-011** — Wrap pasted content in `<pasted_content>` tags with a random ID, explained in the system prompt.
 - **PROMPT-012** — Say whether to act or advise.
@@ -188,3 +190,4 @@ See [`references/prompts.md`](./references/prompts.md).
 - **PROMPT-021** — Omit `temperature`, `top_p` and `top_k`: Claude 4.7 and later accept only the defaults, and API version `2026-10-21` rejects them on every model.
 - **PROMPT-022** — Cap a whole agentic loop with the advisory `output_config.task_budget` (beta); `max_tokens` stays the hard per-request limit.
 - **PROMPT-023** — Opus 5.5 multi-app agents: tell the model to explore the connected apps before acting.
+- **PROMPT-024** — Opus 5.5 multiagent harnesses: append `elapsed 340s / 1200s` (or elapsed time plus one "time matters" sentence) to each message so the team parallelizes and finishes sooner; the budget is advisory.

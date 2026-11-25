@@ -63,6 +63,7 @@ See [`references/http.md`](./references/http.md).
 - **GO-011** — Outbound HTTP: carry context and give the client a timeout; never lean on `http.DefaultClient`'s zero timeout.
 - **GO-020** — Shut down `http.Server` gracefully on SIGINT/SIGTERM via `signal.NotifyContext` + `srv.Shutdown`; treat `http.ErrServerClosed` as the clean sentinel.
 - **GO-021** — Route with `http.ServeMux` patterns (`"GET /items/{id}"`, `{path...}`, `{$}`) and `r.PathValue`; the module's `go` line must be 1.22+ or patterns silently 404.
+- **GO-027** — Cap request bodies with `http.MaxBytesReader` before reading them; map `*http.MaxBytesError` to 413.
 
 ## Rules — Security
 
@@ -71,6 +72,7 @@ See [`references/security.md`](./references/security.md).
 - **GO-012** — Never build SQL by concatenation or `fmt.Sprintf` — use `database/sql` placeholders.
 - **GO-013** — Escape untrusted HTML with `html/template`, never `text/template`.
 - **GO-014** — Use `crypto/rand` for secrets, tokens, and password-material; `math/rand` is not a security RNG.
+- **GO-026** — Open externally-supplied file names through `os.OpenRoot`/`os.Root` (Go 1.24+), not `filepath.Join` + `os.Open`; `..` and symlink escapes then return errors.
 
 ## Rules — Modules & dependencies
 

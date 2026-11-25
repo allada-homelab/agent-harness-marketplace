@@ -110,6 +110,7 @@ See [`references/typing.md`](./references/typing.md).
 - **PY-093** — Under basedpyright, suppress with `# pyright: ignore[rule]`; pyright ignores the code in `# type: ignore[code]`, so it silences the whole line.
 - **PY-122** — Type your own SQL and shell-command sinks as `LiteralString` (PEP 675) with values passed separately, so pyright/basedpyright reject strings built from runtime input (mypy does not enforce it). _(requires python>=3.11 or typing-extensions>=4.1)_
 - **PY-098** — Use `sentinel("NAME")` (PEP 661) instead of `_MISSING = object()` — readable repr, survives copy/pickle, narrows in type checkers. _(requires python>=3.15 or typing-extensions>=4.16)_
+- **PY-124** — Use `enum.StrEnum` instead of `class C(str, Enum)`: the mixin's `str()` and f-string give `C.X`, not the value, on 3.11+; migrating changes that output (ruff `UP042`).
 
 ## Rules — Linting & formatting
 
@@ -163,10 +164,11 @@ See [`references/async.md`](./references/async.md).
 - **PY-099** — Await or schedule every coroutine call; a bare `f()` creates a coroutine that never runs and only warns `coroutine ... was never awaited`. Type checkers flag it (`reportUnusedCoroutine`, mypy `unused-coroutine`). _(when: asyncio)_
 - **PY-068** — Prefer `async with asyncio.timeout(N):` (3.11+) for block-level timeouts (`wait_for` uses it internally since 3.12) and catch `TimeoutError` outside the block. `asyncio.wait(timeout=)` and `as_completed(timeout=)` leave unfinished tasks running, so cancel them yourself. _(when: asyncio)_
 - **PY-079** — Free-threaded Python (PEP 703 / PEP 779) — informational guard-rail: not production-ready until your entire dep graph declares free-threading support. (3.14 reduced single-thread overhead to ~5–10%.)
-- **PY-083** — On Python 3.14+, use `concurrent.interpreters.InterpreterPoolExecutor` for CPU-bound work needing process-like isolation at thread-like cost. _(requires python>=3.14)_
+- **PY-083** — On Python 3.14+, use `concurrent.futures.InterpreterPoolExecutor` for CPU-bound work needing process-like isolation at thread-like cost. _(requires python>=3.14)_
 - **PY-084** — Use `asyncio.get_running_loop()`, never `asyncio.get_event_loop()` — the latter raises `RuntimeError` on 3.14+ with no running loop. _(when: asyncio)_
 - **PY-100** — Configure the event loop with `asyncio.run(..., loop_factory=...)` / `asyncio.Runner(loop_factory=...)`, not `set_event_loop_policy`, a policy subclass or `uvloop.install()`; the policy system is deprecated and slated for removal in 3.16. _(when: asyncio)_ _(requires python>=3.12)_
 - **PY-085** — Introspect stuck async apps with `python -m asyncio ps <pid>` / `pstree <pid>` (3.14+) instead of adding instrumentation. _(when: asyncio)_ _(requires python>=3.14)_
+- **PY-123** — Catch `TaskGroup` failures with `except*` (`except ValueError:` never matches the wrapping `ExceptionGroup`, even for one failed task); no `return`/`break`/`continue` inside `except*`, and one `try` can't mix `except` and `except*`. _(when: asyncio)_
 
 ## Rules — Logging
 

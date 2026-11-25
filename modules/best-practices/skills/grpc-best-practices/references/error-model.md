@@ -92,6 +92,27 @@ for _, d := range st.Details() {
 }
 ```
 
+For a request rejected on several fields by a hand-written check (one the
+`buf.validate` interceptor of GRPC-013 cannot express: cross-field rules,
+uniqueness against the database), return `INVALID_ARGUMENT` with one
+`errdetails.BadRequest` that lists every bad field, so a client can mark
+each input instead of parsing the message or fixing one field per round
+trip:
+
+```go
+st, err := status.New(codes.InvalidArgument, "invalid request").WithDetails(&errdetails.BadRequest{
+    FieldViolations: []*errdetails.BadRequest_FieldViolation{
+        {Field: "email", Description: "must contain @"},
+        {Field: "address.zip", Description: "must be 5 digits"},
+    },
+})
+```
+
+`Field` is the dot-separated path of the proto field. Include at most one
+`BadRequest` ([AIP-193](https://google.aip.dev/193): "Each type of detail
+payload must be included at most once"); the GRPC-013 interceptor already
+attaches `buf.validate.Violations`, so don't duplicate it.
+
 **When NOT to apply.** Terminal, self-explanatory errors (`NOT_FOUND` with the
 ID in the message) don't need detail — add it the moment a client must branch.
 Always check the error returned by `WithDetails` (it can fail for unregistered

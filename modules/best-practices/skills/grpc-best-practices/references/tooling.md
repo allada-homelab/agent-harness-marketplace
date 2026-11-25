@@ -7,6 +7,7 @@
 - GRPC-015 — Enable server reflection in dev for grpcurl/grpcui; wire health checking (`grpc.health.v1`) for production probes
 - GRPC-024 — Serve channelz on an internal admin port to debug connection state
 - GRPC-025 — Drain on shutdown: health `NOT_SERVING` first, then `GracefulStop` with a forced `Stop` deadline
+- GRPC-028 — Enable client-side health checking with `healthCheckConfig` and import the `health` package
 <!-- /toc -->
 
 Detailed entries for `GRPC-014..GRPC-015`. Each follows the four-part
@@ -188,3 +189,53 @@ first step; the order only helps clients that watch health. Streams that
 never end on their own (subscriptions, `Watch`) always hit the forced
 `Stop`. If they need a clean close, end them from your own shutdown code
 before `GracefulStop`.
+
+---
+
+## GRPC-028 — Enable client-side health checking with `healthCheckConfig` and import the `health` package
+
+**What.** For a client that balances across several backends (`round_robin`,
+`dns:///`), set `"healthCheckConfig": {"serviceName": "<service>"}` in the
+default service config, and blank-import `google.golang.org/grpc/health` in
+the client binary. Servers need the `grpc.health.v1` service (GRPC-015) with
+that service name set to `SERVING`/`NOT_SERVING`.
+
+**Why.** Without it a client keeps sending RPCs to a backend that is up but
+not serving (starting, draining, dependency down), because the TCP
+connection is fine. With it the client opens the `Watch` stream and stops
+routing to `NOT_SERVING` subchannels. In grpc-go the check function is
+registered by the `health` package's `init`; a client that does not import
+that package ignores the config and only logs it. Checked live on grpc-go
+v1.85.0 with two backends, one reporting `svc` `NOT_SERVING`: with the
+import, 20 of 20 RPCs went to the healthy one; without it, 11 went to the
+`NOT_SERVING` backend and the log showed `Health check is requested but
+health package is not imported.`
+
+Source: <https://grpc.io/docs/guides/health-checking/>
+
+> If a healthy service becomes unhealthy the client will no longer send requests for that service
+> — grpc.io health-checking guide
+
+**How.**
+
+```go
+import (
+    "google.golang.org/grpc"
+    _ "google.golang.org/grpc/health" // registers the client-side check; without it the config is ignored
+)
+
+const svcConfig = `{
+  "loadBalancingConfig": [{"round_robin": {}}],
+  "healthCheckConfig": {"serviceName": "users.v1.UserService"}
+}`
+
+conn, err := grpc.NewClient("dns:///users.example.com:50051",
+    grpc.WithTransportCredentials(creds),
+    grpc.WithDefaultServiceConfig(svcConfig),
+)
+```
+
+**When NOT to apply.** One backend, or `pick_first`, which disables health
+checking. A server without the health service answers `UNIMPLEMENTED` and the
+client turns checking off for it. Each connection holds an extra `Watch`
+stream to the server.

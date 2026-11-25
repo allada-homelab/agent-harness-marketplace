@@ -1998,11 +1998,16 @@ Cite: [Dockerfile reference — COPY --parents](https://docs.docker.com/referenc
 
 ## DOCKER-032 — Cap heavy `RUN` steps with build-time resource limits
 
-**Requires.** buildkit>=0.31, dockerfile>=1.25
+**Requires.** buildx>=0.35, buildkit>=0.31, dockerfile>=1.25
 
-**What.** `docker buildx build --resource cpu=2,memory=4g` (BuildKit
-≥0.31 + frontend ≥1.25), or the `resource` attribute in a bake target,
-caps CPU and memory for build steps.
+**What.** `docker buildx build --resource memory=4g --resource
+cpu-quota=200000 --resource cpu-period=100000` (Buildx ≥0.35, BuildKit
+≥0.31, frontend ≥1.25), or the `resources` map in a bake target, caps
+CPU and memory for the containers that run `RUN` steps. Each flag takes
+one `key=value`; the keys are `memory`, `memory-swap`, `cpu-shares`,
+`cpu-period`, `cpu-quota`, `cpuset-cpus` and `cpuset-mems`. There is no
+`cpu` key: `--resource cpu=2` fails with `unknown resource "cpu"`
+(Buildx 0.38.0). The limits apply only on Linux.
 
 **Why.** On a shared builder, one runaway compile (a `cargo build -j`,
 a `webpack` run) can starve every other concurrent build, turning CI into
@@ -2012,8 +2017,23 @@ serializing the whole pipeline.
 **How.**
 
 ```bash
-docker buildx build --resource cpu=2,memory=4g -t myapp .
+# 2 CPUs' worth of CFS quota and 4 GiB of memory per RUN container
+docker buildx build --resource memory=4g \
+  --resource cpu-quota=200000 --resource cpu-period=100000 -t myapp .
 ```
+
+```hcl
+target "default" {
+  resources = {
+    memory    = "4g"
+    cpu-quota = 200000
+  }
+}
+```
+
+Sources: [buildx build `--resource`](https://docs.docker.com/reference/cli/docker/buildx/build/#resource),
+[Bake reference](https://docs.docker.com/build/bake/reference/),
+[buildx v0.35.0 release notes](https://github.com/docker/buildx/releases/tag/v0.35.0).
 
 **When NOT to apply.** Dedicated single-build runners where the build
 *should* use the whole machine — limits just slow it down. Most builds on

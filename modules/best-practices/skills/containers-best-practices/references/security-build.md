@@ -28,6 +28,7 @@
 - SEC-024 — Run the daemon rootless (or with userns-remap) on hosts that run untrusted workloads
 - SEC-030 — Don't strip default confinement from containers (`privileged`, `seccomp=unconfined`, `apparmor=unconfined`, `label=disable`)
 - SEC-027 — Scan the built image in CI and fail the job on severity
+- SEC-031 — Run production containers with a read-only root filesystem
 <!-- /toc -->
 
 Detailed explanation for each `SEC-NNN` rule. Covers `.dockerignore`,
@@ -1771,5 +1772,48 @@ on. A finding you've triaged as not exploitable belongs in the scanner's
 ignore file (`.trivyignore`) with a reason, not in a lower threshold.
 Don't gate a security hotfix on unrelated pre-existing findings; ship it,
 then fix those.
+
+---
+
+## SEC-031 — Run production containers with a read-only root filesystem
+
+**What.** Set `read_only: true` (`docker run --read-only`) on long-lived
+services and mount a `tmpfs:` (or a named volume) for each path the process
+must write. Find those paths by starting the service read-only and reading
+the `Read-only file system` errors.
+
+**Why.** With a writable root filesystem, code execution in the container
+lets an attacker drop tools, edit the application and rewrite config for
+the container's lifetime. Checked live: as root in `nginx:alpine`,
+`touch /usr/local/bin/x` succeeded; with `--read-only` it failed with
+`Read-only file system`. The common breakage is a service that writes at
+startup: `nginx:alpine` with `read_only: true` and no `tmpfs` exited 1 with
+`mkdir() "/var/cache/nginx/client_temp" failed (30: Read-only file system)`.
+OWASP's Docker cheat sheet lists it as RULE #8.
+
+**How.**
+
+```yaml
+services:
+  api:
+    image: ghcr.io/org/api@sha256:...
+    user: "10001:10001"          # DOCKER-005
+    read_only: true
+    tmpfs:
+      - /tmp                     # world-writable (1777), root-owned: fine for a non-root user
+      - /var/cache/nginx         # one entry per path the app needs; add uid=/mode= if it should be owner-only
+```
+
+Check it by starting the stack and watching for `Read-only file system` in
+the logs; add one `tmpfs` per path, not a blanket writable mount. Pair
+with COMPOSE-023.
+
+Cite: [OWASP Docker Security Cheat Sheet — Rule #8](https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html).
+
+**When NOT to apply.** Images that write to many unpredictable paths
+(databases write to their data volume, which stays a named volume;
+`postgres` also needs `/var/run/postgresql`), dev containers, and
+anything that self-updates at runtime. `tmpfs` contents are lost on
+restart; use a named volume for state that must survive.
 
 ---

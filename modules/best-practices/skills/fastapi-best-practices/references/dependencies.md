@@ -120,7 +120,7 @@ correct there; `Security` only earns its place when scopes are involved.
 
 ## FAPI-095 — Use `Depends(scope="function")` when a `yield` dependency must close before the response is sent
 
-**Requires.** fastapi>=0.121
+**Requires.** fastapi>=0.121.1
 
 **What.** Since FastAPI 0.118.0, the code after `yield` in a dependency
 runs *after* the response is sent; that is the default

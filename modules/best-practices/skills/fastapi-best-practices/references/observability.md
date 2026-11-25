@@ -220,7 +220,12 @@ collector at that default must set the variable explicitly. FastAPI's
 auto-configuration supports only the `otlp`/`none` exporters over
 `http/protobuf`; anything else fails its setup with a logged warning and
 the app runs without export, so configure those providers yourself and
-pass `telemetry={"auto_configure": False}`. Pick one HTTP layer: when
+pass `telemetry={"auto_configure": False}`. The native error logs carry
+each unhandled exception's type, message and stack trace (FastAPI also
+emits a `fastapi.validation.failed` warning per rejected request, without
+the invalid input); messages can hold secrets or PII, so redact them in the
+provider's log processors or set `telemetry={"logs": False}` when the
+exporter leaves your trust boundary. Pick one HTTP layer: when
 `FastAPIInstrumentor`'s middleware is present, the native HTTP telemetry
 steps aside. In the fallback the
 providers are wired by hand rather than by `opentelemetry-instrument`

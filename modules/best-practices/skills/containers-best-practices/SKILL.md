@@ -104,7 +104,7 @@ See [`references/dockerfile.md`](./references/dockerfile.md).
 - **DOCKER-029** — Run `docker build --check` as a Dockerfile lint step in CI (Buildx ≥0.15, Dockerfile ≥1.8); it exits non-zero on violations, `# check=error=true` (with a full-version syntax pin) fails ordinary builds too, and `skip=` names are case-sensitive. _(when: dockerfile)_
 - **DOCKER-030** — Make image builds bit-for-bit reproducible via `SOURCE_DATE_EPOCH` + `--output type=image,...,rewrite-timestamp=true` (BuildKit ≥0.13); a changing epoch invalidates the cache from `WORKDIR` on. _(when: dockerfile)_
 - **DOCKER-031** — Use `COPY --parents` (Dockerfile ≥1.20) to preserve source directory structure instead of flattening or post-copy `mkdir`. _(when: dockerfile)_
-- **DOCKER-032** — Cap heavy `RUN` steps with build-time resource limits (`--resource cpu=,memory=`) on shared builders. _(when: dockerfile)_ _(requires buildkit>=0.31, dockerfile>=1.25)_
+- **DOCKER-032** — Cap heavy `RUN` steps with build-time resource limits (`--resource memory=` / `cpu-quota=`, one key per flag; there is no `cpu` key) on shared builders. _(when: dockerfile)_ _(requires buildx>=0.35, buildkit>=0.31, dockerfile>=1.25)_
 - **DOCKER-033** — Pin `RUN --network=none` on steps that must not touch the network, to enforce reproducibility. _(when: dockerfile)_
 - **DOCKER-035** — Bind-mount build-only inputs (`RUN --mount=type=bind`, output written outside the read-only mount) instead of `COPY`ing them into a layer and the build cache. _(when: dockerfile)_
 
@@ -186,6 +186,7 @@ See [`references/compose.md`](./references/compose.md).
 - **COMPOSE-028** — Treat remote compose sources (`include: oci://`, `extends`, `-f oci://`) as code: pin by `@sha256:` digest, review the fully resolved `docker compose config`, audit the transitive chain, host on a registry you control — and require Compose ≥2.40.2 (or v5) for CVE-2025-62725. _(when: compose)_ _(requires compose>=2.40.2)_
 - **COMPOSE-029** — Set `init: true` on services whose image runs the app as PID 1 without an init — signals get forwarded and zombies reaped; doesn't replace DOCKER-006 for images you build. _(when: compose)_
 - **COMPOSE-042** — Raise `stop_grace_period` on databases, queue consumers and workers that flush on SIGTERM; Compose SIGKILLs after 10 s by default. _(when: compose)_
+- **COMPOSE-043** — Gate tests on `docker compose up -d --wait --wait-timeout N`, not `sleep`; it fails the job on an unhealthy or timed-out service, but only as well as the services' healthchecks. _(when: compose)_
 - **COMPOSE-030** — Gate CI on `docker compose config --quiet` over the deploy's exact `-f` files and env — catches schema typos, undefined services and unset `${VAR:?}`, not bad values or host state. _(when: compose)_
 
 ## Rules — Buildx & cache backends
@@ -238,6 +239,7 @@ See [`references/security-build.md`](./references/security-build.md).
 - **SEC-023** — Prefer a hardened/minimal verified base (Docker Hardened Images — Apache-2.0, distroless runtime variants — Chainguard, distroless) for production runtimes. _(when: dockerfile)_
 - **SEC-024** — Run the daemon rootless (or with userns-remap, enabled on a fresh install — it hides existing objects and blocks `--privileged` / host namespaces without `--userns=host`) on hosts that run untrusted workloads; neither replaces DOCKER-005. _(when: docker-host)_
 - **SEC-030** — Don't strip default confinement from containers: no `privileged: true`, `seccomp=unconfined`, `apparmor=unconfined` or `label=disable` on compose services or `docker run` (dev containers: DEVC-017).
+- **SEC-031** — Run production containers with `read_only: true` (`--read-only`) plus a `tmpfs:` per writable path; a writable rootfs lets a compromised process drop tools and edit the app, but services that write at startup (nginx cache dirs) fail until each path is mounted.
 - **SEC-027** — Scan the built image in CI and fail on severity (`trivy image --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed <digest>`); Trivy exits 0 on findings by default. _(when: ci-build)_
 
 ## Rules — Python + uv
@@ -248,14 +250,14 @@ and SEC-010, SEC-011).
 
 - **UV-001** — Install `uv` via `COPY --from=ghcr.io/astral-sh/uv:VERSION@sha256:DIGEST /uv /uvx /bin/`. Pin the literal version+digest pair (SEC-010) and verify it with `gh attestation verify`; the uv image is distroless, so the copy carries no extra weight. _(when: uv)_
 - **UV-002** — Two-pass sync: bind-mount manifests + `uv sync --locked --no-install-project` first; then copy source + `uv sync --locked`. Dependency layer caches independently from source edits. Declare `ARG TARGETARCH` in the stage before using it in a cache `id=`. _(when: uv)_
-- **UV-003** — Set `ENV UV_LINK_MODE=copy` whenever a BuildKit cache mount is used — silences the cross-filesystem hard-link warning that fires on every install otherwise. _(when: uv)_
+- **UV-003** — Set `ENV UV_LINK_MODE=copy` whenever a BuildKit cache mount is used — silences the cross-filesystem link warning (the default is `clone` on macOS/Linux, `hardlink` on Windows) that fires on every install otherwise. _(when: uv)_
 - **UV-004** — Set `ENV UV_COMPILE_BYTECODE=1` (or pass `--compile-bytecode`) for production images; trades a bit of build time for noticeably faster cold starts. _(when: uv)_
 - **UV-005** — `--locked` asserts the lockfile is up to date with `pyproject.toml`; `--frozen` skips that check. Default to `--locked` everywhere; use `--frozen` only in workspace pass-1 where members aren't yet present. _(when: uv)_
 - **UV-006** — For minimal final images, use the copy-from-builder pattern: install with `--no-editable` in a builder stage, then `COPY --from=builder /app/.venv /app/.venv` into a clean final stage — source doesn't ship. Single stage: mount uv per `RUN` (`--mount=from=ghcr.io/astral-sh/uv:…,source=/uv,target=/bin/uv`) so the binary never ships. _(when: uv)_
 - **UV-007** — Set `UV_PYTHON_DOWNLOADS=0` (use the base image's Python, don't download another) and optionally `UV_PROJECT_ENVIRONMENT` pointed at the system prefix (install into system Python, skip the `.venv` indirection) for system-Python builds. _(when: uv)_
 - **UV-008** — Workspace pattern: pass 1 uses `uv sync --frozen --no-install-workspace` (members not yet copied), pass 2 uses `uv sync --locked` after the source is in place. _(when: uv)_
 - **UV-009** — Point `UV_TOOL_BIN_DIR` at the system bin dir when installing CLI tools via `uv tool install` on bases other than uv's derived images (those already set it), so the binaries land on `PATH` instead of uv's default executable dir (`$HOME/.local/bin`). _(when: uv)_
-- **UV-010** — Use `ENV UV_NO_DEV=1` and the `UV_NO_INSTALL_*` env vars instead of repeating flags across the two-pass sync. _(when: uv)_
+- **UV-010** — Use `ENV UV_NO_DEV=1` and the `UV_NO_INSTALL_*` env vars instead of repeating flags across the two-pass sync. _(when: uv)_ _(requires uv>=0.11.20)_
 - **UV-011** — Migrate off the removed `bookworm` uv base tags to `trixie` (uv 0.10.0 dropped `bookworm`/`bookworm-slim`). _(when: uv)_
 - **UV-012** — When bind-mounting a uv project for development (`-v .:/app`, compose `- .:/app`), add an anonymous volume `/app/.venv` after it so the image-built venv isn't hidden by the host's; after a rebuild run `docker compose up -V`. Prefer `develop.watch` with `ignore: .venv/` (COMPOSE-015); dev containers use DEVC-014. _(when: uv)_
 

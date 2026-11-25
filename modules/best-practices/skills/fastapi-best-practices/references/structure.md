@@ -178,6 +178,14 @@ remember to reset them). `app.state` is scoped to the application
 instance, which makes the lifetime explicit and lets tests mount a
 configured app.
 
+An HTTP client is the usual case: `httpx.get()` or a per-request
+`AsyncClient()` opens a new connection (TCP and TLS) for every call, while
+one client created in `lifespan` reuses pooled connections (httpx: "HTTPX
+has to establish a new connection for every single request" with the
+top-level API; [clients](https://www.python-httpx.org/advanced/clients/)).
+Create it once in `lifespan` (FAPI-094 shows a typed version) and close it
+by exiting its `async with`.
+
 `app.state` is still per-process. With `--workers N`, each worker runs
 its own lifespan and holds its own copy. A counter or cache you mutate
 there silently diverges across workers, exactly like a global. Keep

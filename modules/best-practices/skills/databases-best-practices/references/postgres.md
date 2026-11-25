@@ -8,11 +8,12 @@
 - PG-004 — Test that the models match the migrated schema (Alembic compare_metadata); migrations are reviewed, not trusted from autogenerate
 - PG-005 — Test each migration's upgrade → downgrade → upgrade round trip against the real Postgres image
 - PG-013 — Lock every row a transaction will change with SELECT … FOR UPDATE, in one consistent order (ORDER BY id)
-- PG-014 — Give app connections a statement_timeout and lock_timeout; give migrations a short lock_timeout
+- PG-014 — Give app connections a statement_timeout, lock_timeout and idle_in_transaction_session_timeout; give migrations a short lock_timeout
 - PG-015 — Build indexes on live tables with CREATE INDEX CONCURRENTLY in an Alembic autocommit block, and rebuild an INVALID one
+- PG-016 — Add enum values in an Alembic autocommit block and use them only after it
 <!-- /toc -->
 
-Detailed entries for `PG-001`, `PG-003..PG-005` and `PG-013..PG-015`. Each follows
+Detailed entries for `PG-001`, `PG-003..PG-005` and `PG-013..PG-016`. Each follows
 the four-part **What / Why / How / When NOT to apply** shape. Numbers
 missing from the sequence are reserved; don't reuse them.
 
@@ -376,11 +377,11 @@ Hot rows serialize every transaction that touches them. For queues use
 
 ---
 
-## PG-014 — Give app connections a statement_timeout and lock_timeout; give migrations a short lock_timeout
+## PG-014 — Give app connections a statement_timeout, lock_timeout and idle_in_transaction_session_timeout; give migrations a short lock_timeout
 
-**What.** Every application connection starts with a `statement_timeout`
-and a shorter `lock_timeout`, set from settings through the driver's
-startup `options`. A migration sets `SET LOCAL lock_timeout` before DDL.
+**What.** Every application connection starts with a `statement_timeout`,
+a shorter `lock_timeout` and an `idle_in_transaction_session_timeout`, set
+from settings through the driver's startup `options`. A migration sets `SET LOCAL lock_timeout` before DDL.
 A transaction that is known to run long raises its own limit with
 `SET LOCAL`, which ends with the transaction.
 
@@ -395,6 +396,17 @@ behind the `ALTER` and was cancelled by its 1 s `statement_timeout`. With
 (`LockNotAvailable: canceling statement due to lock timeout`), and the
 deploy can retry.
 
+A session that opens a transaction and then goes quiet (a handler that
+awaits an HTTP call after its first `UPDATE`) is not running a statement,
+so `statement_timeout` never fires; it keeps its row locks and its pool
+connection, and blocks vacuum of dead rows. Checked live on PostgreSQL
+18.7: a second session's `UPDATE` of the locked row failed after its 6 s
+`lock_timeout` while the first sat `idle in transaction`; with
+`-c idle_in_transaction_session_timeout=2s` the server terminated the idle
+session and the second `UPDATE` went through after 2.0 s. The terminated
+client's next query raised `IdleInTransactionSessionTimeout: terminating
+connection due to idle-in-transaction timeout`.
+
 Source: <https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-STATEMENT-TIMEOUT>
 
 > Abort any statement that takes more than the specified amount of time. … A value of zero (the default) disables the timeout.
@@ -405,6 +417,9 @@ Source: <https://www.postgresql.org/docs/18/runtime-config-client.html#GUC-STATE
 
 > Note that if statement_timeout is nonzero, it is rather pointless to set lock_timeout to the same or larger value, since the statement timeout would always trigger first.
 > — PostgreSQL 18.6 docs
+
+> This option can be used to ensure that idle sessions do not hold locks for an unreasonable amount of time. Even when no significant locks are held, an open transaction prevents vacuuming away recently-dead tuples that may be visible only to this transaction; so remaining idle for a long time can contribute to table bloat.
+> — PostgreSQL 18.7 docs (`idle_in_transaction_session_timeout`)
 
 **How.** Extend PG-001's engine:
 
@@ -417,9 +432,15 @@ def make_engine(settings: Settings) -> AsyncEngine:
         pool_pre_ping=True,
         pool_recycle=1800,
         # libpq startup options: applied to every new connection, before any query
-        connect_args={"options": "-c statement_timeout=30s -c lock_timeout=5s"},
+        connect_args={
+            "options": "-c statement_timeout=30s -c lock_timeout=5s"
+            " -c idle_in_transaction_session_timeout=60s"
+        },
     )
 ```
+
+`pool_pre_ping` (PG-001) replaces a connection the server terminated; the
+request that held it fails and must roll back and retry.
 
 In a migration, before DDL on a busy table:
 
@@ -440,7 +461,10 @@ migrations, backups and admin work. Batch jobs and reports that
 legitimately run long set their own higher limit rather than going
 without one. A pooler between the app and Postgres may not pass startup
 `options` through; check the setting on a live connection
-(`SHOW statement_timeout`), or use `ALTER ROLE … SET` instead.
+(`SHOW statement_timeout`), or use `ALTER ROLE … SET` instead. Set the
+idle limit above the longest legitimate pause between statements in a
+transaction; waiting on a user inside an open transaction is the bug it
+catches.
 
 ---
 
@@ -517,3 +541,63 @@ migration transaction is simpler and rolls back cleanly. The concurrent
 build "takes significantly longer to complete" and waits for every
 transaction that might use the table, so one long-open transaction stalls
 it. Partitioned tables don't support it directly; build per partition.
+
+---
+
+## PG-016 — Add enum values in an Alembic autocommit block and use them only after it
+
+**What.** A migration that runs `ALTER TYPE … ADD VALUE` wraps it in
+`op.get_context().autocommit_block()`. Statements that use the new value
+(`UPDATE`, `INSERT`, a `DEFAULT`, an index predicate) come after the
+block, so they run in a new transaction. Use `IF NOT EXISTS` so a rerun
+after a failure is safe.
+
+**Why.** PostgreSQL lets `ADD VALUE` run in a transaction block, but the
+value is unusable until that transaction commits. Alembic runs a migration
+in one transaction, so a migration that adds a value and then uses it fails
+midway. Checked live on PostgreSQL 18.7 with Alembic 1.20.1: `ALTER TYPE
+state ADD VALUE 'archived'` followed by `UPDATE job SET s = 'archived'` in
+the same migration transaction raised `UnsafeNewEnumValueUsage: unsafe use
+of new value "archived" of enum type state`. A column `DEFAULT` or a plain
+`SELECT` hit the same error (`HINT: New enum values must be committed
+before they can be used.`). With the `ALTER TYPE` inside `autocommit_block()`
+and the `UPDATE` after it, the migration ran and the row held `archived`.
+
+Sources: <https://www.postgresql.org/docs/18/sql-altertype.html>,
+<https://www.postgresql.org/docs/18/datatype-enum.html> ("Existing values cannot be removed from an enum type"),
+<https://alembic.sqlalchemy.org/en/latest/api/runtime.html#alembic.runtime.migration.MigrationContext.autocommit_block>
+
+> If ALTER TYPE ... ADD VALUE (the form that adds a new value to an enum type) is executed inside a transaction block, the new value cannot be used until after the transaction has been committed.
+> — PostgreSQL 18.7 docs
+
+> As is necessary, the database transaction preceding the block is unconditionally committed.
+> — Alembic 1.20.1 docs
+
+**How.**
+
+```python
+from alembic import op
+
+revision = "0003"
+down_revision = "0002"
+
+
+def upgrade() -> None:
+    with op.get_context().autocommit_block():
+        op.execute("ALTER TYPE state ADD VALUE IF NOT EXISTS 'archived'")
+    # a new transaction: the value is usable now
+    op.execute("UPDATE job SET s = 'archived' WHERE finished_at < now() - interval '90 days'")
+
+
+def downgrade() -> None:
+    raise NotImplementedError("PostgreSQL cannot drop an enum value")
+```
+
+As in PG-015, the block commits the migration transaction, so keep the
+`ADD VALUE` in its own migration file and use `transaction_per_migration`.
+
+**When NOT to apply.** If the migration only adds the value and nothing in
+it uses the value, plain `ALTER TYPE … ADD VALUE` in the migration
+transaction is fine (PG12+). Enum values cannot be dropped; to remove or
+reorder values, create a new type and migrate the column. If a value set
+changes often, a lookup table with a foreign key avoids the whole problem.
