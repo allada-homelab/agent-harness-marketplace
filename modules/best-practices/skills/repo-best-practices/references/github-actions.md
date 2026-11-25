@@ -7,9 +7,12 @@
 - REPO-010 — Workflows start from `permissions: {}` and each job requests only the `GITHUB_TOKEN` scopes it needs
 - REPO-011 — Lock workflow dependencies in `.github/workflows/actions.lock` and verify it in CI
 - REPO-013 — Turn on CodeQL code scanning with default setup
+- REPO-016 — Pin `runs-on` to a versioned runner image, not `-latest`
+- REPO-017 — Cancel superseded CI runs with `concurrency` and `cancel-in-progress`
+- REPO-018 — Set `timeout-minutes` on every job
 <!-- /toc -->
 
-Detailed entries for `REPO-009..REPO-011` and `REPO-013`. Each follows the four-part
+Detailed entries for `REPO-009..REPO-011`, `REPO-013` and `REPO-016..REPO-018`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 Citations point at the [zizmor docs](https://docs.zizmor.sh/)
@@ -201,3 +204,95 @@ compiled language, a matrix or a different schedule use advanced setup (a
 CodeQL workflow) instead; switching to default setup disables that
 workflow. Repositories with no CodeQL-supported language gain nothing,
 though enabling it there costs no Actions minutes.
+
+---
+
+## REPO-016 — Pin `runs-on` to a versioned runner image, not `-latest`
+
+**What.** Write `runs-on: ubuntu-24.04` (or the `macos-`/`windows-`
+equivalent) instead of `ubuntu-latest`. Move the pin in a reviewed PR,
+before the image is deprecated.
+
+**Why.** `-latest` is a moving label. The runner-images README: "The
+`-latest` migration process is gradual and happens over 1-2 months" and
+"During this process, any workflow using the `-latest` label, may see
+changes in the OS version", so the same commit can pass on one run and
+fail on the next after a distro, glibc or preinstalled-tool bump, with no
+diff to blame. The same page says "To avoid unwanted migration, users can
+specify a specific OS version in the yaml file". On 2026-11-25,
+`ubuntu-latest` is Ubuntu 26.04 while many workflows were written for
+24.04.
+
+**How.**
+
+```yaml
+jobs:
+  check:
+    runs-on: ubuntu-24.04   # bump deliberately when the image nears deprecation
+```
+
+**When NOT to apply.** Jobs that exist to test against the newest OS
+(a canary job on `-latest` is fine), or a job that only runs a container
+image where the host OS does not matter. Pinned images are deprecated
+too ("we only support the latest 2 versions of an OS"), so schedule the
+bump.
+
+---
+
+## REPO-017 — Cancel superseded CI runs with `concurrency` and `cancel-in-progress`
+
+**What.** In a CI workflow triggered by `pull_request` or pushes to
+topic branches, add a workflow-level `concurrency` group keyed on the
+workflow and the ref, with `cancel-in-progress: true`.
+
+**Why.** Without it, every push to a PR starts a full run on a commit
+that is already stale. They all keep running and queue behind each
+other, so the run that matters waits and hosted minutes are spent on
+results no one reads. GitHub: "Use `concurrency` to ensure that only a
+single job or workflow using the same concurrency group will run at a
+time", and "To also cancel any currently running job or workflow in the
+same concurrency group, specify `cancel-in-progress: true`."
+
+**How.**
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # cancel only PR runs; main keeps every run
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+```
+
+**When NOT to apply.** Never cancel runs on the default branch (a
+cancelled run leaves a commit with no result), tag/release workflows,
+deploys or migrations (a cancel mid-deploy leaves a half-applied
+change); give those a group without `cancel-in-progress`, so they queue.
+Note a group keeps at most one pending run, so a third push replaces the
+pending second run (docs: "any existing `pending` job or workflow in the
+same concurrency group will be canceled").
+
+---
+
+## REPO-018 — Set `timeout-minutes` on every job
+
+**What.** Give each job an explicit `timeout-minutes`, about 2-3 times its
+normal duration, so a stuck job fails fast.
+
+**Why.** The default is "360" ("The maximum number of minutes to let a
+job run before GitHub automatically cancels it. Default: 360"). A test
+that deadlocks or a download that never returns holds the runner, and any
+concurrency group slot (REPO-017), for up to 6 hours, burns billed
+minutes, and shows as "running" instead of failing.
+
+**How.**
+
+```yaml
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+```
+
+**When NOT to apply.** Never omit it. Jobs that legitimately run for
+hours (large builds, long soak tests) get a ceiling above their normal
+runtime, not the default. A step-level `timeout-minutes` covers one
+unreliable step.

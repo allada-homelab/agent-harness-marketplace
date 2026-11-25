@@ -193,8 +193,10 @@ different filesystems — which they do when the cache is a mount and
 the venv is in the image's layer FS — set `UV_LINK_MODE=copy` to silence
 warnings and avoid cross-filesystem hard-link attempts.
 
-**Why.** uv defaults to hard-linking files from the cache into the venv
-to save space. Hard links don't cross filesystems, so when the cache is
+**Why.** uv links files from the cache into the venv to save space: the
+default is `clone` (copy-on-write) on macOS and Linux and `hardlink` on
+Windows, and since uv 0.10.5 a failed reflink falls back to a hard link
+before copying. Neither crosses filesystems, so when the cache is
 mounted from a tmpfs/overlay (BuildKit cache mount) and the venv is on
 the image's writable layer, uv falls back to copy *and* prints a warning
 on every install. The warning is noisy in CI logs; setting the env var
@@ -213,9 +215,11 @@ The official guide says: "Changing the `UV_LINK_MODE` silences warnings
 about not being able to link files since the cache and sync target are
 on separate file systems."
 
-Other valid values: `hardlink` (default, fast but same-filesystem only),
-`clone` (reflink — Btrfs/XFS only), `symlink` (rare). `copy` is the safe
-default for container builds.
+Other valid values: `clone` (default on macOS/Linux; copy-on-write),
+`hardlink` (default on Windows; same filesystem only), `symlink` (rare,
+breaks when the cache is cleaned). `copy` is the safe choice for
+container builds. Source: [`link-mode` setting](https://docs.astral.sh/uv/reference/settings/#link-mode),
+[uv 0.10.5 changelog](https://github.com/astral-sh/uv/blob/main/changelogs/0.10.x.md).
 
 **When NOT to apply.** When the venv sits inside the same mount as the
 cache (rare in containers). A venv in a *separate* volume does not
@@ -473,7 +477,7 @@ same interpreter, or check `sys.path` in the final image.
 **When NOT to apply.**
 
 - Debian/Ubuntu/RHEL base images with apt/yum-installed Python packages — `uv sync` will delete them.
-- When you specifically want uv-managed Python versions for parity with dev (Astral's uv-managed builds differ slightly from the official `python:` image — same versions, different patches).
+- When you specifically want uv-managed Python versions for parity with dev (Astral's uv-managed builds differ slightly from the official `python:` image — same versions, different patches). Then add `ENV UV_PYTHON_CACHE_DIR=/root/.cache/uv/python` beside the `RUN --mount=type=cache,target=/root/.cache/uv` mount: by default the downloaded archive (about 34 MB for CPython 3.12) is not cached, so every cache-miss rebuild fetches it again ([uv Docker guide](https://docs.astral.sh/uv/guides/integration/docker/#caching)).
 - When you want isolation between system Python and project deps. Then prefer the default `.venv`-in-workspace approach (UV-002).
 
 ---
@@ -656,6 +660,8 @@ ENTRYPOINT ["ruff", "check"]
 ---
 
 ## UV-010 — Use `ENV UV_NO_DEV=1` and `UV_NO_INSTALL_*` instead of repeating flags
+
+**Requires.** uv>=0.11.20
 
 **What.** Since uv 0.8.7, `UV_NO_DEV=1` is a first-class environment
 variable (the official Docker guide now leads with it), and

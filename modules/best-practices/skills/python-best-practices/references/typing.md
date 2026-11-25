@@ -24,6 +24,7 @@
 - PY-093 — Under basedpyright, suppress with `# pyright: ignore[rule]`, not `# type: ignore[code]`
 - PY-122 — Type your own SQL and shell sinks as `LiteralString`
 - PY-098 — Use `sentinel("NAME")` (PEP 661) instead of `_MISSING = object()`
+- PY-124 — Use `enum.StrEnum`, not `class C(str, Enum)`
 <!-- /toc -->
 
 Detailed entries for `PY-010..PY-019` plus selected newer rules
@@ -115,18 +116,22 @@ fork with stricter defaults). For projects already on `mypy`, stay
 unless concrete conformance gaps block you.
 
 Two fast new checkers have landed. **pyrefly** (Meta) reached a stable
-**1.0** in May 2026 — >90% typing-spec conformance and roughly 10–50× the
-speed of mypy/pyright — and is a legitimate option to evaluate for new
-projects that don't need mypy plugins. Astral's `ty` is still in beta
-(lower spec conformance) and has **no plugin system planned**, even
-post-1.0 — which permanently blocks migration for any project relying on
-the Django, SQLAlchemy, or attrs mypy plugins. So the recommendation
+**1.0** on 2026-05-12 — 87.8% on the typing-spec conformance suite
+(pyright 97.8%, mypy 58.3%, ty 53.2%; [pyrefly's comparison, 2026-03-10](https://pyrefly.org/blog/typing-conformance-comparison/))
+and, per its README, 15× faster than mypy and pyright on PyTorch — and is
+a legitimate option to evaluate for new projects that don't need mypy
+plugins. Astral's `ty` is still in beta (0.0.x) with lower conformance and
+no plugin API: Astral closed "Reimplement popular Mypy Plugins" as not
+planned and tracks dedicated support per library instead
+([ty#291](https://github.com/astral-sh/ty/issues/291), [ty#1018](https://github.com/astral-sh/ty/issues/1018)
+for Django), so projects relying on the Django, SQLAlchemy, or attrs mypy
+plugins cannot move yet. So the recommendation
 holds — pyright/basedpyright by default, mypy for plugin-dependent stacks
 — with pyrefly now the speed-focused alternative worth a look.
 
 **Why.** Two factors:
 
-1. **Typing-spec conformance.** Pyright tracks ~95% of the typing spec; mypy is around 60%. Concretely: recent additions like `TypeVar` defaults (PEP 696), `ParamSpec` (PEP 612), variadic generics (PEP 646) work in pyright before mypy.
+1. **Typing-spec conformance.** Pyright passes 97.8% of the typing-spec conformance suite; mypy 58.3%. Concretely: recent additions like `TypeVar` defaults (PEP 696), `ParamSpec` (PEP 612), variadic generics (PEP 646) work in pyright before mypy.
 2. **Speed.** Pyright is written in TypeScript and runs incrementally; it's notably faster than mypy on large codebases. (`mypyc`-compiled mypy 1.x has closed some of this gap, but pyright still leads on cold runs.)
 
 Why not just always pyright? Two real constraints:
@@ -137,8 +142,8 @@ Why not just always pyright? Two real constraints:
 **How.**
 
 ```toml
-# pyproject.toml — pyright via basedpyright
-[tool.pyright]
+# pyproject.toml — basedpyright (it also reads [tool.pyright])
+[tool.basedpyright]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"
 include = ["src", "tests"]
@@ -1195,10 +1200,12 @@ not honoured.
 inside the brackets, so `# type: ignore[arg-type]` silences *every*
 diagnostic on the line. It is a bare ignore wearing a rule code
 (PY-016), and `reportUnnecessaryTypeIgnoreComment` can only flag it
-once the line has no errors at all. Verified on basedpyright 1.40.1:
-`x: int = "a"  # type: ignore[nonsense-code]` is silenced, while
+once the line has no errors at all. On basedpyright 1.40.2,
+`x: int = "a"  # type: ignore[nonsense-code]` is silenced under
+`"standard"` and `"strict"` (where `enableTypeIgnoreComments` is on), and
 `# pyright: ignore[reportUnusedVariable]` on the same error lets it
-through *and* flags the ignore as unnecessary. Observed in practice: a
+through under every mode; under `"recommended"` and `"all"` it is also
+flagged as an unnecessary ignore. Observed in practice: a
 `cur.execute(sql, …)  # type: ignore[arg-type]` passed under
 `"strict"`, then failed under `"recommended"` with "Argument of type
 `str` cannot be assigned to parameter `query` of type
@@ -1308,5 +1315,39 @@ pickled. Backport caveat: pyright 1.1.414 does not know
 `typing_extensions.sentinel` yet ("unknown import symbol"). Until it
 does, import the soft-deprecated alias `typing_extensions.Sentinel`,
 which both pyright and mypy accept.
+
+---
+
+## PY-124 — Use `enum.StrEnum`, not `class C(str, Enum)`
+
+**What.** Define string-valued enums as `class Color(enum.StrEnum)`. Don't
+mix `str` into `Enum` yourself.
+
+**Why.** On 3.11+ a `(str, Enum)` member formats as its name:
+`f"{Color.RED}"`, `str(Color.RED)` and `"%s" % Color.RED` all give
+`'Color.RED'`, not `'red'` (live on 3.11, 3.12, 3.13, 3.14). Code that
+builds a URL, a log field, a cache key or a SQL parameter from the member
+gets the wrong string. `StrEnum` formats as its value (`'red'`) and is
+still a `str`, so it compares and JSON-encodes as before. Ruff's `UP042`
+flags the old form, but its fix is unsafe because the output changes.
+
+**How.**
+
+```python
+import enum
+
+class Color(enum.StrEnum):
+    RED = "red"
+
+assert f"{Color.RED}" == "red" == str(Color.RED)
+```
+
+When migrating, grep for code that relied on the `'Color.RED'` text
+(f-strings, `str()`, `%s`, logs, stored keys) before applying the fix.
+
+**When NOT to apply.** Code that must run on Python <3.11 (no
+`StrEnum`; use `StrEnum` from `strenum` or keep the mixin and define
+`__str__ = str.__str__`). An enum that deliberately shows its name in
+`str()`, in which case keep `(str, Enum)` and add a comment saying so.
 
 ---

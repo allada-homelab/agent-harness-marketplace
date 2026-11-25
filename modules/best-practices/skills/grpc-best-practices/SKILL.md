@@ -48,7 +48,7 @@ See [`references/proto-design.md`](./references/proto-design.md).
 See [`references/error-model.md`](./references/error-model.md).
 
 - **GRPC-004** — Return canonical `google.rpc.Code` values mapped from your domain; never invent codes or leak HTTP/transport assumptions.
-- **GRPC-005** — Add machine-readable detail (`google.rpc.ErrorInfo` via `status.WithDetails`) so clients branch on data, not message strings.
+- **GRPC-005** — Add machine-readable detail (`google.rpc.ErrorInfo`, and `BadRequest` for field-level failures, via `status.WithDetails`) so clients branch on data, not message strings.
 - **GRPC-006** — Translate internal errors to gRPC status only at the service boundary; log the cause, return generic `INTERNAL` for unknown failures.
 
 ## Rules — Deadlines
@@ -89,6 +89,7 @@ See [`references/tooling.md`](./references/tooling.md).
 - **GRPC-015** — Enable server reflection in dev for grpcurl/grpcui; wire health checking (`grpc.health.v1`) for production probes.
 - **GRPC-024** — Serve channelz on an internal admin port and inspect it with `grpcdebug`; never on the public port. _(requires grpc-go>=1.12 (preview: channelz))_
 - **GRPC-025** — Drain on shutdown: health `NOT_SERVING` first, then `GracefulStop` with a forced `Stop` after a budget; open streams block `GracefulStop`.
+- **GRPC-028** — Turn on client-side health checking with `healthCheckConfig` in the service config and blank-import `google.golang.org/grpc/health`, or the config is ignored.
 
 ## Rules — Performance
 
@@ -96,3 +97,4 @@ See [`references/performance.md`](./references/performance.md).
 
 - **GRPC-016** — Reuse one client connection per backend process (HTTP/2 multiplexes); never dial per call; set keepalive.
 - **GRPC-017** — Set `MaxRecvMsgSize`/`MaxSendMsgSize` deliberately; the 4 MiB default fails loudly — stream or batch instead of unbounded limits.
+- **GRPC-027** — Create channels with `grpc.NewClient`; `grpc.Dial`/`DialContext` are deprecated and default to the `passthrough` resolver, so DNS-based `round_robin` hits one backend.

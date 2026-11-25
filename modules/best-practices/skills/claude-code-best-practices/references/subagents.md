@@ -11,9 +11,10 @@
 - CC-055 — Delegate for isolation or parallelism, not history
 - CC-056 — Review subagents report correctness gaps, not style
 - CC-057 — Preload only skills the subagent uses
+- CC-083 — Give a recurring subagent `memory: project`, and remember it adds write tools
 <!-- /toc -->
 
-Detailed entries for `CC-051..CC-057` — subagent definitions in
+Detailed entries for `CC-051..CC-057` and `CC-083` — subagent definitions in
 `.claude/agents/*.md` (and plugin `agents/`). Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
@@ -124,6 +125,14 @@ can be done in a handful of tool calls.
 Do not delegate work you can finish in a handful of tool calls yourself.
 ```
 
+The prompt line is advisory. For a hard ceiling in unattended runs, set
+`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` (default 20; past it the Agent tool
+fails with `Concurrent subagent limit reached`) and
+`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` (default 3 layers; `1` turns nesting
+off) in the `env` block of `settings.json`. Both need Claude Code v2.1.217
+or later, and the depth default was 1 on v2.1.217-v2.1.218
+([env vars](https://code.claude.com/docs/en/env-vars)).
+
 **When NOT to apply.** Models that under-delegate (Opus 4.8 spawns fewer
 subagents by default) don't need the damping line.
 
@@ -159,3 +168,45 @@ costs its whole length.
 **How.** `skills: [reviewing-migrations]`, not every skill in the repo.
 
 **When NOT to apply.** Never.
+
+---
+
+## CC-083 — Give a recurring subagent `memory: project`, and remember it adds write tools
+
+**Requires.** claude-code>=2.1.33
+
+**What.** For a subagent that does the same job repeatedly (a reviewer, a
+triager), set `memory: project` in its frontmatter so it keeps its own
+notes between conversations in `.claude/agent-memory/<name>/`. Use `user`
+for notes that should follow you across projects and `local` for
+project-specific notes that stay out of git.
+
+**Why.** A subagent starts every run without the conversation or the main
+session's auto memory, so a correction you gave a reviewer last week is
+gone. The field fixes that, but it also enables Read, Write and Edit on the
+subagent so it can manage its memory files, which undoes a read-only
+`tools:` list (CC-052). And it only works while auto memory is on: with
+`autoMemoryEnabled: false` or `CLAUDE_CODE_DISABLE_AUTO_MEMORY` set, the
+field has no effect and the subagent runs without memory.
+
+**How.**
+
+```markdown
+---
+name: code-reviewer
+description: Reviews diffs for correctness bugs. Use after non-trivial edits.
+tools: Read, Grep, Glob
+memory: project
+---
+
+Before you review, read your memory for patterns you have seen in this
+repo. After you review, save what you learned and why it matters.
+```
+
+Review the notes in version control like any other checked-in
+instruction file (CC-024).
+
+**When NOT to apply.** One-off subagents; subagents that must never write
+(drop `memory`, or use a hook to confine its writes); teams where each
+developer's notes would diverge (`project` is shared via git, `local` is
+not). Below v2.1.33 the field is ignored.

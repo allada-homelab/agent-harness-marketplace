@@ -120,7 +120,7 @@ select = [
 
 **Why.** Each family catches a different class of real bug:
 
-- **`B` (bugbear)** — catches `def foo(x=[])` (mutable default arg), `except:` (bare except), `assert isinstance` discipline, and other footguns. The single highest-value family to select in full.
+- **`B` (bugbear)** — catches `def foo(x=[])` (mutable default arg), `except:` (bare except), `assert isinstance` discipline, and other footguns. The single highest-value family to select in full. It includes `B905`: `zip()` of two or more iterables needs an explicit `strict=True` (or `strict=False` when unequal lengths are intended), because by default `zip` silently truncates to the shortest input.
 - **`I` (isort)** — sorted, grouped imports. Reduces merge conflicts in import blocks.
 - **`UP` (pyupgrade)** — `Union[X, Y]` → `X | Y`, `typing.List` → `list`, `super(MyClass, self)` → `super()`. Enforces PY-010 mechanically.
 - **`S` (bandit)** — flags `pickle.loads`, `eval`, `subprocess(shell=True)`, hardcoded passwords. Real security wins.

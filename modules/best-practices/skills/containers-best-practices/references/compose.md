@@ -41,6 +41,7 @@
 - COMPOSE-029 — Set `init: true` on services whose image has no init process
 - COMPOSE-042 — Raise `stop_grace_period` for services that flush on shutdown
 - COMPOSE-030 — Validate the merged model in CI with `docker compose config --quiet`
+- COMPOSE-043 — Gate tests on `docker compose up --wait`, not a sleep
 <!-- /toc -->
 
 Detailed explanation for each `COMPOSE-NNN` rule.
@@ -1073,36 +1074,22 @@ location = /__proxy_healthz {
 }
 ```
 
-Compose side — but `nginx:*-alpine` does **not** ship `wget` or `curl`,
-so the healthcheck `test:` needs a probe that's actually installed:
+Compose side. The official `nginx:*-alpine` images ship `curl` and
+BusyBox `wget` (with `--spider`), so either works as the probe; checked
+2026-11-25 on `nginx:alpine` (nginx 1.31.10, curl 8.23.0) and
+`nginx:1.27-alpine`. Check `which curl wget` in any other base image
+before you rely on a probe binary.
 
 ```yaml
 services:
   proxy:
-    image: nginx:1.27-alpine
-    # nginx alpine has no wget/curl — use a tiny inline probe via /dev/tcp + nc
-    # ... or install curl in your own image build:
-    #   FROM nginx:1.27-alpine
-    #   RUN apk add --no-cache curl
+    image: nginx:1.31-alpine
     healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          wget -q --spider http://127.0.0.1/__proxy_healthz ||
-          curl -fsS http://127.0.0.1/__proxy_healthz ||
-          exit 1
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/__proxy_healthz"]
       interval: 10s
       timeout: 3s
       retries: 3
       start_period: 5s
-```
-
-The portable approach is to `apk add --no-cache curl` (≈10 KB on alpine)
-in your own derived image and use the curl-only form:
-
-```yaml
-healthcheck:
-  test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/__proxy_healthz || exit 1"]
 ```
 
 For Traefik / Envoy, use their built-in endpoints — no shell probe
@@ -1940,9 +1927,11 @@ sub-application; it can be developed and tested independently
 larger project with one line. It's the right primitive for the
 "shared infra block reused across several apps" pattern.
 
-**Remote sources.** Compose ≥2.34 can also resolve a Compose
-application published as an OCI artifact — `include: - oci://registry/org/app:tag`
-in a file, or `docker compose -f oci://registry/org/app:tag up` on the CLI
+**Remote sources.** Compose can also resolve a Compose application
+published as an OCI artifact — `include: - oci://registry/org/app:tag`
+in a file ([include how-to](https://docs.docker.com/compose/how-tos/multiple-compose-files/include/)),
+or `docker compose -f oci://registry/org/app:tag up` on the CLI, which
+shipped in [Compose v2.30.0](https://github.com/docker/compose/releases/tag/v2.30.0)
 (and Git sources the same way).
 
 **Security note.** [CVE-2025-62725](https://github.com/docker/compose/security/advisories/GHSA-gv8h-7v7w-r22q)
@@ -2471,5 +2460,41 @@ It validates schema shape and references, not values the engine reads
 later: `restart: sometimes` passed with rc=0 in the same test. It also
 can't see host state (ports in use, missing bind-mount sources, images
 that don't exist). Keep a smoke `up` for those.
+
+---
+
+## COMPOSE-043 — Gate tests on `docker compose up --wait`, not a sleep
+
+**What.** In CI and test scripts, start the stack with
+`docker compose up -d --wait --wait-timeout <seconds>` and run the tests
+after it returns, instead of `up -d` followed by `sleep N` or a poll loop.
+
+**Why.** `up -d` returns when containers have started, not when they are
+ready, so the first test hits a database that isn't accepting connections.
+A fixed sleep is wrong both ways: too short and the job is flaky, too long
+and every run pays for it. `--wait` blocks until each service is running
+or, if it defines a healthcheck, healthy, and fails the command otherwise.
+Checked on Compose v5.6.0: a service whose healthcheck took 5 s returned rc=0
+after 8.3 s; a service that never passed its healthcheck returned rc=1 with
+`container <name> is unhealthy`; with `--wait-timeout 5` and a healthcheck
+that kept failing, rc=1 with `application not healthy after 5s`.
+
+**How.**
+
+```bash
+docker compose -p "ci-${GITHUB_RUN_ID}" up -d --wait --wait-timeout 120
+pytest tests/integration
+docker compose -p "ci-${GITHUB_RUN_ID}" down -v
+```
+
+`--wait` implies `-d`. A failed wait prints the unhealthy service; follow it
+with `docker compose logs` in the job's failure step.
+
+Cite: [docker compose up](https://docs.docker.com/reference/cli/docker/compose/up/).
+
+**When NOT to apply.** Services without a healthcheck: `--wait` returns once
+the container is running, which is not the same as ready (COMPOSE-011 puts
+healthchecks on the services that need waiting for). Interactive
+development, where a plain `up` with logs is what you want.
 
 ---

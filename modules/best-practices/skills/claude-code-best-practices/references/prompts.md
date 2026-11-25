@@ -27,9 +27,10 @@
 - PROMPT-021 — Omit sampling parameters
 - PROMPT-022 — Cap an agentic loop with `task_budget`
 - PROMPT-023 — Opus 5.5: explore connected apps before acting
+- PROMPT-024 — Opus 5.5 multiagent harnesses: send elapsed time against a budget
 <!-- /toc -->
 
-Detailed entries for `PROMPT-001..PROMPT-023` — system prompts and
+Detailed entries for `PROMPT-001..PROMPT-024` — system prompts and
 messages sent to current Claude models through the API (Fable 5.1,
 Mythos 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5, and the earlier current
 models). Several rules are model-specific; each says which models. Check
@@ -206,7 +207,9 @@ user-facing progress updates.
 
 **Why.** Opus 5's default responses run longer; Fable 5.1 writes fewer
 progress updates than Fable 5 by default. (Opus 5.5 writes progress
-updates on its own.)
+updates on its own, but at its default `display: "omitted"` they come back
+as empty `thinking` blocks, so an interface that renders them shows
+nothing.)
 
 **How.**
 
@@ -214,22 +217,60 @@ updates on its own.)
 Keep responses brief: lead with the answer, at most a short paragraph of support.
 ```
 
-**When NOT to apply.** Models whose defaults already match what you want.
+To show those updates without the reasoning, send the beta header
+`thinking-display-updates-2026-08-18` and set `display: "updates"`; only
+blocks with non-empty text are progress updates. `"summarized"` returns them
+too, mixed with reasoning summaries you can't tell apart. Models write
+fewer updates at higher effort and in long tool chains
+([thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)).
+
+```python
+client.beta.messages.stream(
+    model="claude-opus-5-5",
+    max_tokens=64000,
+    thinking={"type": "adaptive", "display": "updates"},
+    messages=messages,
+    tools=tools,
+    betas=["thinking-display-updates-2026-08-18"],
+)
+```
+
+**When NOT to apply.** Models whose defaults already match what you want,
+and interfaces that show no progress text.
 
 ---
 
 ## PROMPT-009 — Change effort per message, not top-level
 
-**What.** To vary effort within a conversation, use per-message effort
-rather than changing the top-level `effort` between requests.
+**What.** To vary effort within a conversation on a model that supports
+it, use per-message effort rather than changing the top-level
+`output_config.effort` between requests. Per-message effort is a beta:
+send the `mid-conversation-output-config-2026-07-01` header, or the
+request returns 400 (`messages.N.output_config: Extra inputs are not
+permitted`). Supported models: Fable 5.2, Mythos 5.2, Fable 5.1,
+Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5.
 
-**Why.** Changing top-level effort invalidates the prompt cache, so every
-change re-pays the whole prefix.
+**Why.** Changing top-level effort can invalidate all or part of the
+prompt cache, so every change re-pays the prefix. A per-message change
+leaves everything before it unchanged.
 
-**How.** Keep top-level `effort` fixed and set effort on the individual
-message that needs more or less.
+**How.** Keep top-level `effort` fixed and add an effort-only `system`
+message after everything already sent; the new level applies from the
+next user turn with new input:
 
-**When NOT to apply.** Single-request calls.
+```json
+{"role": "system", "content": [], "output_config": {"effort": "low"}}
+```
+
+Keep the message in place on later requests; moving or removing it
+invalidates preserved thinking after it.
+
+Source: [Per-message effort](https://platform.claude.com/docs/en/build-with-claude/effort-per-message).
+
+**When NOT to apply.** Single-request calls. Models without per-message
+effort (for example Fable 5), Sonnet 5.5 with `thinking:
+{"type": "between_tools"}` and Haiku 5.5 with thinking disabled return
+400; there, pick one top-level level and keep it.
 
 ---
 
@@ -530,3 +571,35 @@ Before taking any action, explore broadly with tool calls: list and open the ema
 content: the instruction tells the model to act on what it finds (keep
 that content out, or skip the sentence). Also tightly specified tasks,
 and models other than Opus 5.5 until their own guide says the same.
+
+---
+
+## PROMPT-024 — Opus 5.5 multiagent harnesses: send elapsed time against a budget
+
+**What.** In a harness where an Opus 5.5 lead agent delegates to
+subagents, append one short line to each message you send back to the
+model, giving the elapsed time against a time budget in seconds, for
+example `elapsed 340s / 1200s`. If you can't predict a budget, send the
+elapsed time alone and add one sentence to the system prompt.
+
+**Why.** Opus 5.5 paces itself to the time it is shown. Anthropic's
+evaluations of small agent teams on research tasks found both signals
+made teams finish sooner than a single agent without them, and a team
+given a budget kept answer quality comparable to the single agent's while
+finishing considerably sooner: a budget mostly keeps more agents working in
+parallel, where lowering effort cuts the work itself. Without a signal the
+team has no reason to parallelize. The budget is advisory, and under time
+pressure the model may search and verify a little less.
+
+**How.** Set the budget somewhat above the time you want spent and tune it
+on a sample of your own tasks. Without a budget:
+
+```text
+Time matters here: do not spend time that can be avoided, and the earlier a correct result is obtained, the better.
+```
+
+**When NOT to apply.** Single-agent loops, where a token budget fits better
+(PROMPT-022); models other than Opus 5.5; tasks where thoroughness
+matters more than latency (check quality on your own tasks first). Keep
+your own timeout when you need a hard stop; nothing halts the model at the
+limit.

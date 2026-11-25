@@ -618,12 +618,14 @@ redefining `event_loop`.
 | Plugin | Use when |
 |---|---|
 | `pytest-asyncio` with `asyncio_mode = "auto"` | Pure asyncio codebase; simplest setup |
-| `anyio` plugin (`@pytest.mark.anyio`) | Library code that must work on asyncio AND Trio, or when you need context-var preservation across fixtures |
+| `anyio` plugin (`@pytest.mark.anyio`) | Library code that must work on asyncio AND Trio |
 
-**Why.** Two failure modes:
+**Why.** Plugin conflict. With both plugins installed and both having `auto` mode active, every `async def test_...` is collected by both; the test runs twice (or fails ambiguously). The error messages are unhelpful (`fixture 'event_loop' not found` or similar).
 
-1. **Plugin conflict.** With both plugins installed and both having `auto` mode active, every `async def test_...` is collected by both; the test runs twice (or fails ambiguously). The error messages are unhelpful (`fixture 'event_loop' not found` or similar).
-2. **anyio preserves context vars across fixture phases; pytest-asyncio doesn't.** This matters when you're testing code that uses `contextvars` (request IDs, current user, transaction state) — pytest-asyncio runs each async fixture phase in a new task, losing the context. anyio preserves it across setup → test → teardown. If your code uses contextvars, anyio is the correct choice.
+Context variables are not a reason to pick anyio: on pytest-asyncio 1.5.0
+an async fixture and the test it feeds run in the same task, so a
+`ContextVar` set in the fixture is visible in the test (checked
+2026-11-25).
 
 **How.** Pure asyncio path:
 
@@ -651,7 +653,7 @@ async def test_fetch():
     assert result.status == "ok"
 ```
 
-anyio path (library or contextvars-heavy code):
+anyio path (library code that must also run on Trio):
 
 ```toml
 # remove asyncio_mode from pytest config

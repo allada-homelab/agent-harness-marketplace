@@ -126,8 +126,10 @@ if err := g.Wait(); err != nil {
 **When NOT to apply.** When you want *all* results regardless of errors
 (partial-success semantics) — errgroup aborts propagation on the first error;
 use `errgroup.Group` without `WithContext` or a plain `WaitGroup` if you must
-collect every result. `errgroup` does not bound concurrency (no semaphore): a
-worker pool needs an explicit cap (buffered-channel semaphore) on top. For a
+collect every result. A group runs every `Go` call at once unless you bound it:
+call `g.SetLimit(n)` before the first `Go`, after which `Go` blocks until a slot
+frees and `TryGo` starts the function only if one is free
+([errgroup docs](https://pkg.go.dev/golang.org/x/sync/errgroup#Group.SetLimit)). For a
 trivial loop with no error path or I/O, a plain loop is simpler than any group.
 
 ---

@@ -65,8 +65,10 @@ a `prompt`/`agent` hook).
 `agent`; only `prompt` and `agent` use model judgment. Hooks come from
 settings files, managed settings, plugin `hooks/hooks.json`, and skill or
 agent `hooks:` frontmatter, and they merge — unless managed settings set
-`allowManagedHooksOnly`, which blocks user, project, local and plugin
-hooks.
+`allowManagedHooksOnly`. Then only managed hooks, Agent SDK hooks and hooks
+from plugins that managed settings force-enable run; user, project and
+local hooks, hooks from other plugins and agent-frontmatter hooks are
+blocked.
 
 **Why.** A reviewer who checks only `settings.json` misses hooks that
 plugins and skills add; an author who expects a project hook to run under
@@ -74,6 +76,8 @@ plugins and skills add; an author who expects a project hook to run under
 
 **How.** When auditing, enumerate every source before concluding a hook
 is or isn't present.
+
+Source: [settings reference — What runs under `allowManagedHooksOnly`](https://code.claude.com/docs/en/settings-reference#what-runs-under-allowmanagedhooksonly).
 
 **When NOT to apply.** Never.
 

@@ -190,8 +190,8 @@ don't scan for literal credential strings; a leaked key in a commit is a
 real-world incident, and catching it pre-commit is far cheaper than
 rotating a credential after it's already in git history (and possibly
 mirrored). The stock gitleaks hook alone is no CI gate: its entry is
-`gitleaks git --pre-commit --staged`, and on a clean CI checkout nothing is
-staged. With a fake token committed via `--no-verify`, `pre-commit run
+`gitleaks git --pre-commit --redact --staged --verbose`, and on a clean CI
+checkout nothing is staged. With a fake token committed via `--no-verify`, `pre-commit run
 --all-files` passes and reports "0 commits scanned".
 Source: https://github.com/gitleaks/gitleaks/blob/v8.30.1/README.md
 

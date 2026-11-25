@@ -18,6 +18,7 @@
 - PY-084 — Use `asyncio.get_running_loop()`, never `asyncio.get_event_loop()`
 - PY-100 — Configure the loop with `loop_factory`, not event loop policies
 - PY-085 — Introspect stuck async apps with `python -m asyncio ps` / `pstree`
+- PY-123 — Catch `TaskGroup` failures with `except*`, not `except`
 <!-- /toc -->
 
 Detailed entries for `PY-040..PY-049` plus newer cross-cutting
@@ -1015,7 +1016,7 @@ static PyModuleDef_Slot module_slots[] = {
 
 **Requires.** python>=3.14
 
-**What.** `concurrent.interpreters.InterpreterPoolExecutor` (Python 3.14,
+**What.** `concurrent.futures.InterpreterPoolExecutor` (Python 3.14,
 PEP 734) runs each worker in its own subinterpreter on a background
 thread — process-like isolation (each interpreter has independent state)
 at closer-to-thread overhead, with no separate process to spawn.
@@ -1030,7 +1031,8 @@ choice.
 **How.**
 
 ```python
-from concurrent.interpreters import InterpreterPoolExecutor
+# concurrent.interpreters has no InterpreterPoolExecutor: that import is an ImportError
+from concurrent.futures import InterpreterPoolExecutor
 
 with InterpreterPoolExecutor() as pool:
     results = list(pool.map(cpu_heavy, chunks))
@@ -1156,5 +1158,54 @@ python -m asyncio ps 12345        # flat task list
 **When NOT to apply.** Pre-3.14 runtimes (the subcommands don't exist),
 and environments where you can't attach to the target process (locked-down
 containers without ptrace).
+
+---
+
+## PY-123 — Catch `TaskGroup` failures with `except*`, not `except`
+
+**What.** A `TaskGroup` never re-raises a child's exception itself: it
+raises an `ExceptionGroup` (`BaseExceptionGroup` for non-`Exception`
+errors), even when exactly one task failed. Handle specific failures with
+`except* ConnectionError as eg:` (`eg.exceptions` holds the matches);
+handle everything at a boundary with `except Exception`.
+
+**Why.** `except ConnectionError:` around the `async with` never matches,
+so a retry or fallback written for the pre-3.11 shape is silently
+skipped and the group escapes to the caller. On 3.11 and 3.14 a loop
+`try: await attempt() / except ConnectionError: retry` raised the
+`ExceptionGroup` on the first failure instead of retrying. The docs: "If
+the exception raised from the try block is not an exception group and
+its type matches one of the except* clauses, it is caught and wrapped",
+so one `except*` also still handles a plain exception.
+
+**How.**
+
+```python
+import asyncio
+
+async def attempt() -> None:
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(fetch(url1))
+        tg.create_task(fetch(url2))
+
+async def with_retry() -> None:
+    for _ in range(3):
+        failed = False
+        try:
+            await attempt()
+        except* ConnectionError:
+            failed = True          # `return`/`break`/`continue` are a SyntaxError here
+        if not failed:
+            return
+    raise RuntimeError("giving up")
+```
+
+Unmatched exceptions propagate on in a smaller group, so list every type
+you can handle. A `try` can have `except` or `except*`, not both.
+
+**When NOT to apply.** A top-level boundary that only logs or maps every
+failure to one error (`except Exception`, FAPI-052) needs no `except*`.
+`gather` without `TaskGroup` raises the first exception unwrapped, so
+plain `except` is right there (PY-043).
 
 ---

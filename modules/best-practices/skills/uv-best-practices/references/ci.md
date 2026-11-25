@@ -69,8 +69,8 @@ jobs:
 To get the SHA for a tag:
 
 ```bash
-# v8.2.0 is the current latest; resolve whichever tag you're pinning
-gh api repos/astral-sh/setup-uv/git/refs/tags/v8.2.0 \
+# resolve the tag you are pinning (check the releases page for the latest)
+gh api repos/astral-sh/setup-uv/git/refs/tags/v8.1.0 \
   --jq '.object.sha'
 ```
 

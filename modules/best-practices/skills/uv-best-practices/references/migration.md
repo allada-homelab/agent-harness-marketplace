@@ -26,8 +26,10 @@ and
 
 ## UVP-060 — Use `migrate-to-uv` for poetry / pip-tools / PDM / Hatch — manually verify the resolver-output diff
 
-**What.** For migrating an existing project to uv, use the official
-migration tool:
+**What.** For migrating an existing project to uv, use the community
+[`migrate-to-uv`](https://github.com/osprey-oss/migrate-to-uv) tool
+(maintained at `osprey-oss/migrate-to-uv`, not by Astral; PyPI
+`migrate-to-uv`):
 
 ```bash
 # one-shot migration

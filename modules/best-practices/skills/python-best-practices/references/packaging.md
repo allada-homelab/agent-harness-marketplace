@@ -1494,9 +1494,12 @@ specifically when uv already manages the project.
 
 ```toml
 [build-system]
-requires = ["uv_build>=0.11,<0.12"]
+requires = ["uv_build>=0.13.8,<0.14.0"]   # what `uv init --lib` writes on uv 0.13.8
 build-backend = "uv_build"
 ```
+
+Keep the bounds on the uv minor you use and move them when you upgrade
+uv: a range that excludes every published `uv_build` cannot resolve.
 
 **When NOT to apply.** Anything with C/Rust extensions, custom build
 hooks, or hatch plugins — stay on hatchling / maturin / scikit-build-core

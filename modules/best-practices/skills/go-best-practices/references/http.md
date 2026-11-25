@@ -7,9 +7,10 @@
 - GO-011 — Outbound HTTP: carry context and give the client a timeout
 - GO-020 — Shut down `http.Server` gracefully on SIGINT/SIGTERM
 - GO-021 — Route with `http.ServeMux` method and wildcard patterns; read wildcards with `r.PathValue`
+- GO-027 — Cap request bodies with `http.MaxBytesReader` and answer 413 on `*http.MaxBytesError`
 <!-- /toc -->
 
-Detailed entries for `GO-010..GO-011` and `GO-020`. Each follows the four-part
+Detailed entries for `GO-010..GO-011`, `GO-020..GO-021` and `GO-027`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 ---
@@ -188,8 +189,10 @@ wins, and two conflicting patterns panic at registration instead of one
 shadowing the other at runtime. The trap is the `go` line in `go.mod`,
 not the toolchain version. In a module that says `go 1.21`, `"GET
 /items/{id}"` matches nothing: `GET /items/5` returns 404 and nothing
-reports an error. `PathValue` at least fails the build there
-("requires go1.22 or later (module is go1.21)").
+reports an error. `PathValue` does not fail `go build` there either: on
+go1.27.4 the module builds and runs, and the route 404s. Only `go vet` and
+`go test` (which runs vet's version check) report "http.(*Request).PathValue
+requires go1.22 or later (module is go1.21)".
 
 **How.**
 
@@ -215,3 +218,54 @@ router or your own parsing: wildcards must be whole segments
 (`"/b_{bucket}"` is invalid), and there are no regex constraints. Raise a
 module's `go` line to 1.22 or later before you rely on patterns. Make sure
 `GODEBUG=httpmuxgo121=1` is not set, because it restores the old matching.
+
+---
+
+## GO-027 — Cap request bodies with `http.MaxBytesReader` and answer 413 on `*http.MaxBytesError`
+
+**What.** In every handler that reads a request body (`json.NewDecoder(r.Body)`,
+`io.ReadAll`, form parsing), wrap `r.Body` first:
+`r.Body = http.MaxBytesReader(w, r.Body, limit)`. When the read fails,
+test `errors.As(err, &mbe)` with `var mbe *http.MaxBytesError` and reply
+`413 Request Entity Too Large`, not 400 or 500. Set the limit per route
+from what the route legitimately accepts; do it in a middleware if every
+route shares one limit.
+
+**Why.** `http.Server` limits header size (`MaxHeaderBytes`), not body
+size, and GO-010's timeouts bound how long a client takes, not how much it
+sends. A client on a fast link fits a large body inside any sane
+`ReadTimeout`. Checked live on go1.27.4: a handler that decoded JSON from
+`r.Body` accepted a 64 MiB body and held all of it (`decoded 67108864 bytes
+into memory`); with a 1 MiB `MaxBytesReader` the same request got `413 body
+over 1048576 bytes`. Concurrent requests multiply the memory, so a few
+clients can exhaust the process.
+
+Source: <https://pkg.go.dev/net/http#MaxBytesReader>
+
+> MaxBytesReader prevents clients from accidentally or maliciously sending a large request and wasting server resources.
+> — Go 1.27 docs
+
+**How.**
+
+```go
+func createItem(w http.ResponseWriter, r *http.Request) {
+    r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
+    var in Item
+    if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+        var mbe *http.MaxBytesError
+        if errors.As(err, &mbe) {
+            http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+            return
+        }
+        http.Error(w, "bad request", http.StatusBadRequest)
+        return
+    }
+    // ...
+}
+```
+
+**When NOT to apply.** Upload routes that stream the body to disk or object
+storage in chunks: give them their own, larger limit (or none, with a
+quota) instead of the API default. A reverse proxy that enforces the limit
+on every path to the server already covers it; keep the in-process limit
+anyway if the service is also reachable directly.

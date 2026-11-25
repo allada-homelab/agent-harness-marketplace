@@ -49,3 +49,6 @@ See [`references/github-actions.md`](./references/github-actions.md).
 - **REPO-010** — Start workflows from `permissions: {}` and grant each job only the `GITHUB_TOKEN` scopes it needs.
 - **REPO-011** — Commit a workflow dependency lockfile (`gh actions-lock`) and run `gh actions-lock --verify` in CI. _(requires gh-actions-lock>=0.2 (preview))_
 - **REPO-013** — Turn on CodeQL code scanning with default setup.
+- **REPO-016** — Pin `runs-on` to a versioned image (`ubuntu-24.04`), not `ubuntu-latest`; `-latest` migrates to a new OS over 1-2 months and changes your toolchain without a commit.
+- **REPO-017** — Add `concurrency` keyed on workflow + ref with `cancel-in-progress: true` to PR/CI workflows; never cancel runs on the default branch, releases or deploys.
+- **REPO-018** — Set `timeout-minutes` on every job (a few times its normal runtime); the default is 360, so a hung step holds the runner for 6 hours.

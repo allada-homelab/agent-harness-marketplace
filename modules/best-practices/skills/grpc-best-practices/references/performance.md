@@ -5,9 +5,10 @@
 
 - GRPC-016 — Reuse one client connection per backend; never dial per call; set keepalive
 - GRPC-017 — Set `MaxRecvMsgSize`/`MaxSendMsgSize` deliberately; the 4 MiB default fails loudly
+- GRPC-027 — Create channels with `grpc.NewClient`, not `grpc.Dial` or `DialContext`
 <!-- /toc -->
 
-Detailed entries for `GRPC-016..GRPC-017`. Each follows the four-part
+Detailed entries for `GRPC-016..GRPC-017` and `GRPC-027`. Each follows the four-part
 **What / Why / How / When NOT to apply** shape.
 
 ---
@@ -109,3 +110,47 @@ ratcheting the limit.
 of megabytes (bounded, fits memory) can raise the cap — pair it with a
 documented ceiling agreed on both sides. Server streaming is the right answer
 for multi-hundred-MB payloads; don't size individual messages for that.
+
+---
+
+## GRPC-027 — Create channels with `grpc.NewClient`, not `grpc.Dial` or `DialContext`
+
+**What.** Build the client with `grpc.NewClient(target, opts...)`. It does no
+I/O at creation and connects on first use. Replace `grpc.WithBlock`,
+`WithTimeout` and `FailOnNonTempDialError` with a per-call deadline
+(GRPC-007) and, where the first call must outlast a slow start,
+wait-for-ready (GRPC-026).
+
+**Why.** `Dial` and `DialContext` are marked "Deprecated: use NewClient
+instead. Will be supported throughout 1.x." They also resolve differently:
+`NewClient` defaults to the `dns` resolver, the two older calls to
+`passthrough`, which hands the target string to the dialer unresolved.
+Checked live on grpc-go v1.85.0 with `svc.example.com` (an `--add-host` test name) resolving to two backends
+and a `round_robin` service config: 20 RPCs through `NewClient` went 10/10;
+through `grpc.Dial("svc.example.com:5000")` all 20 went to the first address, and
+`grpc.Dial("dns:///svc.example.com:5000")` split them again. Code that was
+load-balanced behind a headless Service or multi-A record stops being so
+after a copy-paste of an old `Dial` call.
+
+Source: <https://pkg.go.dev/google.golang.org/grpc#NewClient>
+
+> One subtle difference between NewClient and Dial and DialContext is that the former uses "dns" as the default name resolver, while the latter use "passthrough" for backward compatibility.
+> — grpc-go v1.85.0 `clientconn.go`
+
+**How.**
+
+```go
+conn, err := grpc.NewClient("dns:///users.example.com:50051",
+    grpc.WithTransportCredentials(creds),
+    grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`),
+)
+if err != nil {
+    return err
+}
+defer conn.Close()
+```
+
+**When NOT to apply.** Existing `Dial` code keeps working through 1.x; migrate
+it deliberately and test the resolver change. A custom dialer that expects
+the raw target string needs `passthrough:///host:port` as the target with
+`NewClient`. `NewClient` needs grpc-go 1.63 or newer.
