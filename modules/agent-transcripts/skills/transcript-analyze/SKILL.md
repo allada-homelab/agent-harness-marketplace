@@ -252,7 +252,9 @@ Claude Code, and on `large-default` on any other harness: pass the bare name as 
 `model`, never the route string `list_subagent_models` prints (the harness prepends its
 provider, so a full route as `model` is doubled and refused). A batch is at
 most 350,000 characters, about 90,000 tokens, which keeps every reader under 150,000 tokens
-with its brief and the instructions file. Give each reader the batch's file paths, the path to the
+with its brief and the instructions file; a batch file alone exceeds the readers' reading-tool
+cap of 25,000 tokens (Claude Code's `Read`), so the reader brief's first bullet tells readers
+to page with `offset`/`limit` (or the tool's allow-large option) from the first read. Give each reader the batch's file paths, the path to the
 user's standing agent instructions, its output path (`<work dir>/findings/batch-N.json`) and
 the expand command: `uv run --script ../transcript-review/review.py expand <session> <ord>`
 (as an absolute path for the reader). A reader of about

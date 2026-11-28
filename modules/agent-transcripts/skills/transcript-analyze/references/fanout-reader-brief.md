@@ -12,8 +12,10 @@ problems in the agent's *approach*; you fix nothing.
 
 ## Inputs
 
-- Your batch: `<list of rendered session files>`. Read each one completely with your file
-  reading tool, paging through long files. A file holds one session.
+- Your batch: `<list of rendered session files>`. A file holds one session. Read each one
+  completely, but never as one whole-file read: a single read is capped (25,000 tokens on
+  Claude Code's `Read`), and a batch file can be ~90,000. Page with the tool's `offset`/`limit`
+  (or its allow-large option) until the end — expect to page from the first read.
 - The user's standing instructions for agents, if any: `<path to the user's global agent
   instructions, or "none">`. Read them first. A problem that breaks a rule written there is
   a different finding from one no rule covers, and its fix is different.
